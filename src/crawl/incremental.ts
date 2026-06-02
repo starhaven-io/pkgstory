@@ -222,6 +222,10 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     }
   }
   stmts.push(cursorSql);
-  d1Apply(mode, `BEGIN TRANSACTION;\n${stmts.join("\n")}\nCOMMIT;\n`);
+  // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the
+  // batch is idempotent anyway (INSERT OR IGNORE events + recomputed latest/cursor), so
+  // a partial apply is safely re-derived next run. Cursor goes last so it only advances
+  // after the events land. (Same constraint the export slice already follows.)
+  d1Apply(mode, `${stmts.join("\n")}\n`);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }
