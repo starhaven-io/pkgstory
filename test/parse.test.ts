@@ -1,0 +1,103 @@
+import { describe, expect, it } from "vitest";
+import { parseCask } from "../src/parse/cask.ts";
+import { parseFormula, versionFromUrl } from "../src/parse/formula.ts";
+import { versionFromSubject } from "../src/parse/subject.ts";
+
+describe("parseFormula", () => {
+  it("prefers an explicit version stanza and reads revision", () => {
+    const src = `class Foo < Formula
+  url "https://example.com/foo.tar.gz"
+  version "1.2.3"
+  revision 2
+end`;
+    expect(parseFormula(src)).toEqual({
+      version: "1.2.3",
+      revision: 2,
+      versionSrc: "version-stanza",
+    });
+  });
+
+  it("mines the version from a release tarball url", () => {
+    const src = `class Git < Formula
+  url "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.54.0.tar.xz"
+end`;
+    const p = parseFormula(src);
+    expect(p.version).toBe("2.54.0");
+    expect(p.versionSrc).toBe("url");
+  });
+
+  it("reads a git tag option", () => {
+    const src = `class Bar < Formula
+  url "https://github.com/bar/bar.git",
+      tag:      "v3.1.4",
+      revision: "deadbeef"
+end`;
+    expect(parseFormula(src).version).toBe("3.1.4");
+  });
+
+  it("returns null version when nothing is parseable", () => {
+    expect(parseFormula("class X < Formula\nend").version).toBeNull();
+  });
+});
+
+describe("versionFromUrl", () => {
+  it("handles GitHub archive tags", () => {
+    expect(versionFromUrl("https://github.com/a/b/archive/refs/tags/v1.7.1.tar.gz")).toBe("1.7.1");
+  });
+  it("handles releases/download", () => {
+    expect(
+      versionFromUrl("https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-1.7.1.tar.gz"),
+    ).toBe("1.7.1");
+  });
+  it("mines a bare-integer version from the filename", () => {
+    expect(
+      versionFromUrl(
+        "https://github.com/apple-oss-distributions/bsdmake/archive/refs/tags/bsdmake-24.tar.gz",
+      ),
+    ).toBe("24");
+  });
+  it("mines a date-style integer version", () => {
+    expect(
+      versionFromUrl(
+        "https://deb.debian.org/debian/pool/main/c/crm114/crm114_20100106.orig.tar.gz",
+      ),
+    ).toBe("20100106");
+  });
+  it("normalizes an underscore-encoded version", () => {
+    expect(
+      versionFromUrl("https://github.com/conformal/clens/archive/refs/tags/CLENS_0_7_0.tar.gz"),
+    ).toBe("0.7.0");
+  });
+  it("finds the tarball inside a closer.lua mirror query", () => {
+    expect(
+      versionFromUrl(
+        "https://www.apache.org/dyn/closer.lua?path=arrow/apache-arrow-adbc-23/apache-arrow-adbc-23.tar.gz",
+      ),
+    ).toBe("23");
+  });
+});
+
+describe("parseCask", () => {
+  it("reads a version stanza with a build suffix", () => {
+    expect(parseCask('cask "x" do\n  version "1.122.1,abc123"\nend').version).toBe(
+      "1.122.1,abc123",
+    );
+  });
+  it("maps :latest", () => {
+    expect(parseCask('cask "x" do\n  version :latest\nend').version).toBe("latest");
+  });
+});
+
+describe("versionFromSubject", () => {
+  it("parses a plain bump", () => {
+    expect(versionFromSubject("git", "git 2.54.0")).toBe("2.54.0");
+  });
+  it("parses a bump with a trailing PR number", () => {
+    expect(versionFromSubject("visual-studio-code", "visual-studio-code 1.122.1 (#12345)")).toBe(
+      "1.122.1",
+    );
+  });
+  it("ignores non-bump subjects", () => {
+    expect(versionFromSubject("git", "git: remove iconv dependency.")).toBeNull();
+  });
+});

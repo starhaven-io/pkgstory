@@ -1,0 +1,58 @@
+name: Crawl
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Offset off the hour (GitHub delays/​drops top-of-hour crons), ~every 30 min.
+    - cron: "7,37 * * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/crawl.yml
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash -xeuo pipefail {0}
+
+concurrency:
+  group: crawl
+  cancel-in-progress: false # never interrupt a mid-flight D1 write
+
+jobs:
+  crawl:
+    name: Crawl deltas into D1
+    if: github.repository_owner == 'starhaven-io'
+    runs-on: ubuntu-latest
+    environment: cloudflare # holds the Cloudflare token (matches deploy-site)
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Homebrew taps
+        uses: Homebrew/actions/setup-homebrew@main
+        with:
+          # Full (non-shallow) tap clones — brew dropped shallow taps — so the crawler's
+          # `git log <cursor>..HEAD` always reaches the stored cursor. ~1-2 min/run;
+          # caching the taps' .git is a future optimization.
+          core: true
+          cask: true
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 26
+
+      - name: Install wrangler
+        working-directory: site
+        run: npm ci
+
+      - name: Crawl deltas into D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: node src/cli.ts crawl --d1 remote

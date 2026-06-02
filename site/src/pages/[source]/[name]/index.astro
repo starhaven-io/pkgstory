@@ -1,0 +1,140 @@
+---
+export const prerender = false;
+
+import Base from "../../../layouts/Base.astro";
+import Chip from "../../../components/Chip.astro";
+import Sparkline from "../../../components/Sparkline.astro";
+import Version from "../../../components/Version.astro";
+import { getDb, lastChecked, timeline } from "../../../lib/d1.ts";
+import { isoDate, sourceLabel } from "../../../lib/format.ts";
+
+const { source, name } = Astro.params;
+const db = getDb();
+const events = await timeline(db, source!, name!);
+
+if (events.length === 0) {
+  return new Response("Not found", { status: 404 });
+}
+
+// A package page only changes when that package updates; let the edge cache it.
+Astro.response.headers.set(
+  "cache-control",
+  "public, max-age=300, s-maxage=600",
+);
+
+const checkedAt = await lastChecked(db);
+const repo =
+  source === "homebrew-cask"
+    ? "homebrew/homebrew-cask"
+    : "homebrew/homebrew-core";
+const feedHref = `/${source}/${name}/rss.xml`;
+
+const dates = events.map((e) => e.introducedAt).sort((a, b) => a - b);
+const first = dates[0] ?? 0;
+const latest = dates[dates.length - 1] ?? 0;
+
+// Median interval between updates, in days.
+const intervals: number[] = [];
+for (let i = 1; i < dates.length; i++)
+  intervals.push((dates[i]! - dates[i - 1]!) / 86400);
+intervals.sort((a, b) => a - b);
+const median = intervals.length
+  ? intervals.length % 2
+    ? intervals[(intervals.length - 1) / 2]!
+    : (intervals[intervals.length / 2 - 1]! +
+        intervals[intervals.length / 2]!) /
+      2
+  : 0;
+
+const monthFmt = (t: number) =>
+  new Date(t * 1000).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+  });
+---
+
+<Base
+  title={`${name} — pkgstory`}
+  description={`${name} version history (${sourceLabel(source!)})`}
+  feedHref={feedHref}
+  lastCheckedAt={checkedAt}
+>
+  <p><a href="/">← all packages</a></p>
+
+  <div class="pkg-head">
+    <h2>{name}</h2>
+    <Chip source={source!} />
+  </div>
+  <div class="stats">
+    <span><b>{events.length}</b> versions</span>
+    {
+      first > 0 && (
+        <span>
+          since <b>{monthFmt(first)}</b>
+        </span>
+      )
+    }
+    {
+      median > 0 && (
+        <span>
+          ~<b>{Math.round(median)}</b> days between updates
+        </span>
+      )
+    }
+  </div>
+
+  <p class="track">
+    Track <b>{name}</b> — subscribe to the <a href={feedHref}>RSS feed</a> to get
+    an item each time it updates.
+  </p>
+
+  {
+    dates.length > 1 && (
+      <div class="spark-panel">
+        <Sparkline
+          dates={dates}
+          from={first}
+          to={latest}
+          bins={Math.min(60, Math.max(12, events.length))}
+          width={880}
+          height={46}
+          title={`${name} update history`}
+        />
+      </div>
+    )
+  }
+
+  <table>
+    <thead>
+      <tr>
+        <th>Version</th>
+        <th>Updated</th>
+        <th>Commit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {
+        events.map((e) => (
+          <tr>
+            <td>
+              <Version version={e.version} revision={e.revision} />
+            </td>
+            <td class="date">{isoDate(e.introducedAt)}</td>
+            <td>
+              {e.commitSha ? (
+                <a
+                  href={`https://github.com/${repo}/commit/${e.commitSha}`}
+                  title={e.subject}
+                >
+                  {e.commitSha.slice(0, 9)}
+                </a>
+              ) : (
+                "—"
+              )}
+            </td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+</Base>

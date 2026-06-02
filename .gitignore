@@ -1,0 +1,23 @@
+# Build
+dist/
+
+# Node
+node_modules/
+
+# Generated database (rebuilt by `just crawl`)
+*.db
+*.db-shm
+*.db-wal
+
+# Claude Code
+.claude/
+
+# Astro / Wrangler
+.astro/
+.wrangler/
+
+# Typos (override global gitignore)
+!_typos.toml
+
+# macOS
+.DS_Store

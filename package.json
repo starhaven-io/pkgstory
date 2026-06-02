@@ -1,0 +1,28 @@
+{
+  "name": "pkgstory",
+  "version": "0.1.0",
+  "description": "Version history for every package — parsed from package-manager git history, browsable on the web.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "bin": {
+    "pkgstory": "src/cli.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "crawl": "node src/cli.ts crawl",
+    "pkgstory": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.0",
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  }
+}

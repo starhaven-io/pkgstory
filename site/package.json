@@ -1,0 +1,26 @@
+{
+  "name": "pkgstory-site",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro",
+    "deploy": "wrangler deploy --config dist/server/wrangler.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^13.5.5",
+    "@astrojs/rss": "^4.0.12",
+    "astro": "^6.3.7"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.3",
+    "prettier-plugin-astro": "^0.14.1",
+    "wrangler": "^4.96.0"
+  }
+}

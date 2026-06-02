@@ -1,0 +1,122 @@
+---
+export const prerender = false;
+
+import Base from "../layouts/Base.astro";
+import Chip from "../components/Chip.astro";
+import Version from "../components/Version.astro";
+import { home } from "../lib/cache.ts";
+import { isoDate } from "../lib/format.ts";
+
+const { formulae, casks, recent, checkedAt } = await home();
+const total = formulae + casks;
+const lastCheckedAt = checkedAt;
+
+// Short edge cache so the home page stays cheap between crawls (~30 min apart).
+Astro.response.headers.set(
+  "cache-control",
+  "public, max-age=300, s-maxage=600",
+);
+---
+
+<Base
+  title="pkgstory"
+  tagline="Every package has a version story."
+  description="Browse the version history of every Homebrew formula and cask — updates over time, with per-package RSS."
+  lastCheckedAt={lastCheckedAt}
+>
+  <p class="scope">
+    Currently tracking <b>Homebrew</b> — {formulae.toLocaleString()} formulae and
+    {casks.toLocaleString()} casks.
+  </p>
+
+  <input
+    id="q"
+    class="search"
+    type="search"
+    placeholder={`Search ${total.toLocaleString()} packages …`}
+    autocomplete="off"
+    autocapitalize="off"
+    spellcheck="false"
+    aria-label="Search packages"
+  />
+  <div id="results" hidden></div>
+
+  <section id="recent">
+    <h2>Recent updates</h2>
+    <table>
+      <tbody>
+        {
+          recent.map((c) => (
+            <tr>
+              <td class="date">{isoDate(c.introducedAt)}</td>
+              <td>
+                <a href={`/${c.source}/${c.name}/`}>{c.name}</a>
+              </td>
+              <td>
+                <Version version={c.version} revision={c.revision} />
+              </td>
+              <td>
+                <Chip source={c.source} />
+              </td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </section>
+
+  <script>
+    const input = document.getElementById("q") as HTMLInputElement | null;
+    const results = document.getElementById("results");
+    const recentEl = document.getElementById("recent");
+    if (input && results && recentEl) {
+      interface Pkg {
+        n: string;
+        s: string;
+        v: string | null;
+        r: number;
+        c: number;
+      }
+      let data: Pkg[] | null = null;
+      const esc = (s: string) =>
+        s.replace(
+          /[&<>"]/g,
+          (ch) =>
+            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] ??
+            ch,
+        );
+      const load = async (): Promise<Pkg[]> => {
+        if (!data) data = await (await fetch("/packages.json")).json();
+        return data ?? [];
+      };
+      const rowHtml = (p: Pkg): string => {
+        const kind = p.s === "c" ? "cask" : "formula";
+        const src = p.s === "c" ? "homebrew-cask" : "homebrew-formula";
+        const ver = p.r ? `${p.v}_${p.r}` : (p.v ?? "");
+        return `<tr><td><a href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a></td><td><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
+      };
+      input.addEventListener("input", async () => {
+        const q = input.value.trim().toLowerCase();
+        if (!q) {
+          results.hidden = true;
+          results.innerHTML = "";
+          recentEl.hidden = false;
+          return;
+        }
+        const all = await load();
+        const matches = all.filter((p) => p.n.toLowerCase().includes(q));
+        matches.sort((a, b) => {
+          const ap = a.n.toLowerCase().startsWith(q);
+          const bp = b.n.toLowerCase().startsWith(q);
+          if (ap !== bp) return ap ? -1 : 1;
+          return a.n.length - b.n.length || a.n.localeCompare(b.n);
+        });
+        const shown = matches.slice(0, 100);
+        const note = `${matches.length.toLocaleString()} match${matches.length === 1 ? "" : "es"}${matches.length > 100 ? " · showing 100" : ""}`;
+        results.innerHTML = `<p class="muted">${note}</p><table><tbody>${shown.map(rowHtml).join("")}</tbody></table>`;
+        recentEl.hidden = true;
+        results.hidden = false;
+      });
+    }
+  </script>
+</Base>

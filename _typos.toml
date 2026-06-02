@@ -1,0 +1,6 @@
+[files]
+extend-exclude = ["node_modules/", "dist/", "site/node_modules/", "site/dist/", "*.db"]
+
+[default.extend-words]
+# Real Homebrew formula token used as a version-parsing example (CLENS_0_7_0).
+CLENS = "CLENS"

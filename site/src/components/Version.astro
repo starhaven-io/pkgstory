@@ -1,0 +1,12 @@
+---
+import { versionParts } from "../lib/format.ts";
+
+interface Props {
+  version: string;
+  revision: number;
+}
+const { version, revision } = Astro.props;
+const { base, meta } = versionParts(version, revision);
+---
+
+<span class="ver">{base}{meta && <span class="ver-meta">{meta}</span>}</span>

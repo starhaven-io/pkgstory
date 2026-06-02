@@ -1,0 +1,418 @@
+---
+import { isoDateTime } from "../lib/format.ts";
+
+interface Props {
+  title: string;
+  description?: string;
+  // Visible line under the wordmark; falls back to `description`. Lets the
+  // home page show an evocative tagline while `description` stays keyword-rich
+  // for the meta tag.
+  tagline?: string;
+  feedHref?: string;
+  lastCheckedAt?: number | null;
+}
+const { title, description, tagline, feedHref, lastCheckedAt } = Astro.props;
+const checkedIso = lastCheckedAt
+  ? new Date(lastCheckedAt * 1000).toISOString()
+  : null;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    {description && <meta name="description" content={description} />}
+    {
+      feedHref && (
+        <link
+          rel="alternate"
+          type="application/rss+xml"
+          title={title}
+          href={feedHref}
+        />
+      )
+    }
+    <style is:global>
+      :root {
+        --bg: #fbfbf9;
+        --fg: #1b1a17;
+        --muted: #6f6b63;
+        --line: #e7e4dd;
+        --accent: #b5471f;
+        --accent-soft: rgba(181, 71, 31, 0.1);
+        --row-hover: rgba(0, 0, 0, 0.04);
+        --row-zebra: rgba(0, 0, 0, 0.018);
+        --formula: #0e7c66;
+        --formula-bg: rgba(14, 124, 102, 0.1);
+        --cask: #6a40c0;
+        --cask-bg: rgba(106, 64, 192, 0.1);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141417;
+          --fg: #e9e8e4;
+          --muted: #97938b;
+          --line: #2a2a30;
+          --accent: #e8835a;
+          --accent-soft: rgba(232, 131, 90, 0.16);
+          --row-hover: rgba(255, 255, 255, 0.04);
+          --row-zebra: rgba(255, 255, 255, 0.022);
+          --formula: #5fd6b8;
+          --formula-bg: rgba(95, 214, 184, 0.12);
+          --cask: #b79cf2;
+          --cask-bg: rgba(183, 156, 242, 0.12);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scrollbar-gutter: stable;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.55 ui-monospace,
+          SFMono-Regular,
+          "SF Mono",
+          Menlo,
+          Consolas,
+          monospace;
+        -webkit-font-smoothing: antialiased;
+      }
+      main {
+        max-width: 940px;
+        margin: 0 auto;
+        padding: 2.75rem 1.25rem 5rem;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* Header */
+      header.site {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 1.1rem;
+        margin-bottom: 2rem;
+      }
+      .site-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
+      }
+      .site-meta {
+        display: flex;
+        align-items: center;
+        gap: 0.85rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+      .site-meta time {
+        font-variant-numeric: tabular-nums;
+      }
+      .gh {
+        display: inline-flex;
+        color: var(--muted);
+      }
+      .gh:hover {
+        color: var(--accent);
+      }
+      header.site h1 {
+        font-size: 1.5rem;
+        letter-spacing: -0.01em;
+        margin: 0;
+      }
+      header.site h1 a {
+        color: var(--fg);
+      }
+      header.site h1 a::before {
+        content: "❯ ";
+        color: var(--accent);
+      }
+      header.site h1 a:hover {
+        text-decoration: none;
+      }
+      .tagline {
+        color: var(--muted);
+        margin: 0.4rem 0 0;
+      }
+      .scope {
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0 0 0.5rem;
+      }
+      .scope b {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .search {
+        width: 100%;
+        font: inherit;
+        color: var(--fg);
+        background: var(--bg);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.55rem 0.7rem;
+        margin: 0.5rem 0 1.75rem;
+      }
+      .search:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .rss {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 0.15rem 0.5rem;
+        color: var(--muted);
+      }
+      .rss:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+
+      /* Section headings */
+      h2 {
+        font-size: 0.82rem;
+        text-transform: uppercase;
+        letter-spacing: 0.09em;
+        color: var(--muted);
+        font-weight: 700;
+        margin: 2.4rem 0 0.85rem;
+      }
+
+      /* Tables */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.5rem 0.7rem;
+        white-space: nowrap;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 0.6rem;
+      }
+      tbody tr {
+        border-bottom: 1px solid var(--line);
+      }
+      tbody tr:nth-child(even) {
+        background: var(--row-zebra);
+      }
+      tbody tr:hover {
+        background: var(--row-hover);
+      }
+      td:first-child,
+      th:first-child {
+        padding-left: 0.2rem;
+      }
+
+      /* Versions */
+      .ver {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .ver-meta {
+        color: var(--muted);
+        font-weight: 400;
+        opacity: 0.7;
+      }
+      td.num {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      td.date {
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Chips */
+      .chip {
+        display: inline-block;
+        font-size: 0.7rem;
+        letter-spacing: 0.02em;
+        padding: 0.08rem 0.45rem;
+        border-radius: 5px;
+        border: 1px solid transparent;
+      }
+      .chip-formula {
+        color: var(--formula);
+        background: var(--formula-bg);
+      }
+      .chip-cask {
+        color: var(--cask);
+        background: var(--cask-bg);
+      }
+
+      /* Sparkline */
+      .spark {
+        display: block;
+        overflow: visible;
+      }
+      .spark-bar {
+        fill: var(--accent);
+      }
+      .spark-empty {
+        fill: var(--line);
+      }
+      .spark-panel .spark {
+        width: 100%;
+      }
+
+      /* Detail page stats */
+      .stats {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem 1.4rem;
+        color: var(--muted);
+        margin: 0.5rem 0 1.4rem;
+      }
+      .stats b {
+        color: var(--fg);
+        font-weight: 600;
+      }
+      .track {
+        color: var(--muted);
+        font-size: 0.82rem;
+        margin: 0 0 1.5rem;
+      }
+      .pkg-head {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin: 0.2rem 0 0.2rem;
+      }
+      .pkg-head h2 {
+        margin: 0;
+        font-size: 1.25rem;
+        text-transform: none;
+        letter-spacing: -0.01em;
+        color: var(--fg);
+      }
+      .spark-panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.85rem 1rem;
+        margin-bottom: 1.6rem;
+        background: var(--accent-soft);
+      }
+
+      footer {
+        margin-top: 3.5rem;
+        padding-top: 1.1rem;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.78rem;
+      }
+
+      @media (max-width: 680px) {
+        .col-cadence {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="site">
+        <div class="site-bar">
+          <h1><a href="/">pkgstory</a></h1>
+          <div class="site-meta">
+            {
+              lastCheckedAt && checkedIso && (
+                <span>
+                  checked{" "}
+                  <time class="checked" datetime={checkedIso}>
+                    {isoDateTime(lastCheckedAt)}
+                  </time>
+                </span>
+              )
+            }
+            {
+              feedHref && (
+                <a class="rss" href={feedHref}>
+                  rss
+                </a>
+              )
+            }
+            <a
+              class="gh"
+              href="https://github.com/starhaven-io/pkgstory"
+              aria-label="Source on GitHub"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 16 16"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
+                ></path>
+              </svg>
+            </a>
+          </div>
+        </div>
+        <p class="tagline">
+          {tagline ?? description ?? "Every package has a version story."}
+        </p>
+      </header>
+      <slot />
+      <footer>
+        Data licensed under{" "}
+        <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a>.
+        Code licensed under{" "}
+        <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-only</a>.
+      </footer>
+    </main>
+    <script is:inline>
+      // Upgrade the UTC "last checked" stamp to the visitor's locale: relative text
+      // (accurate — computed against the real crawl time), local absolute on hover.
+      for (const el of document.querySelectorAll("time.checked")) {
+        const d = new Date(el.getAttribute("datetime"));
+        if (Number.isNaN(d.getTime())) continue;
+        el.title = d.toLocaleString();
+        const secs = Math.round((Date.now() - d.getTime()) / 1000);
+        const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+        let text = "just now";
+        for (const [unit, s] of [
+          ["day", 86400],
+          ["hour", 3600],
+          ["minute", 60],
+        ]) {
+          if (secs >= s) {
+            text = rtf.format(-Math.round(secs / s), unit);
+            break;
+          }
+        }
+        el.textContent = text;
+      }
+    </script>
+  </body>
+</html>
