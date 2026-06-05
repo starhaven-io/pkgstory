@@ -72,6 +72,24 @@ site-preview:
 lychee: site-build
     lychee --config lychee.toml --root-dir "$(pwd)/site/dist/client" 'site/dist/client/**/*.html' README.md
 
+# Trigger (crawl cron Worker)
+
+# Install trigger Worker dependencies
+trigger-install:
+    cd trigger && npm install
+
+# Run the trigger Worker locally (curl localhost:8787/__scheduled to fire the cron)
+trigger-dev:
+    cd trigger && npm run dev
+
+# Type-check the trigger Worker
+trigger-typecheck:
+    cd trigger && npm run typecheck
+
+# Deploy the trigger Worker to Cloudflare
+trigger-deploy:
+    cd trigger && npm run deploy
+
 # Check
 
 # Run all checks (mirrors CI; skips tools that aren't installed)
@@ -108,6 +126,8 @@ check:
     (cd site && npm run format:check) || failed=1
     echo "--- site-build ---"
     (cd site && npm run build) || failed=1
+    echo "--- trigger-typecheck ---"
+    (cd trigger && npm run typecheck) || failed=1
     if [ ${#skipped[@]} -gt 0 ]; then
         echo ""
         echo "Checks skipped due to missing tools:"

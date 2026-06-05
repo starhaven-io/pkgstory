@@ -1,0 +1,21 @@
+{
+  "name": "pkgstory-crawl-trigger",
+  "version": "0.1.0",
+  "description": "Cloudflare Worker cron that reliably dispatches the pkgstory crawl workflow.",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0"
+  },
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --test-scheduled",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260605.1",
+    "typescript": "^6.0.3",
+    "wrangler": "^4.96.0"
+  }
+}

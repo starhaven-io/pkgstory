@@ -1,0 +1,18 @@
+{
+  "name": "pkgstory-crawl-trigger",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    // starhaven-bot's App ID — not a secret (the private key is).
+    "APP_ID": "3331849"
+  },
+  // Reliable where GitHub's `schedule:` isn't; crawl.yml keeps a coarse fallback.
+  "triggers": {
+    "crons": ["*/30 * * * *"]
+  }
+}
