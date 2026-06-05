@@ -48,10 +48,11 @@ cost:
   precomputed into **Workers KV** by the crawler and served as a single lookup —
   independent of how much traffic arrives.
 
-A scheduled GitHub Action re-crawls every 30 minutes: it derives the delta since
-the last commit it saw, writes only the new version events to D1, and
-republishes the KV blobs. Deploys ship code, not data, so the site stays current
-without a rebuild.
+A GitHub Action re-crawls every 30 minutes: it derives the delta since the last
+commit it saw, writes only the new version events to D1, and republishes the KV
+blobs. A small Cloudflare Worker (`trigger/`) fires that schedule on a reliable
+cron — GitHub's own `schedule:` trigger drops most fires. Deploys ship code, not
+data, so the site stays current without a rebuild.
 
 ## Development
 

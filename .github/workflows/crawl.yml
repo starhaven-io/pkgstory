@@ -2,9 +2,12 @@ name: Crawl
 
 on:
   workflow_dispatch:
+  repository_dispatch:
+    # Fired by the trigger/ Worker as the starhaven-bot App.
+    types: [crawl]
   schedule:
-    # Offset off the hour (GitHub delays/​drops top-of-hour crons), ~every 30 min.
-    - cron: "7,37 * * * *"
+    # Fallback only — the trigger/ Worker drives the real cadence. Offset off the hour.
+    - cron: "23 */6 * * *"
   push:
     branches:
       - main
