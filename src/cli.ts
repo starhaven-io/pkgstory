@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { buildCommitIndex, buildCommitIndexAll } from "./crawl/commit-index.ts";
 import { buildEvents } from "./crawl/events.ts";
 import { crawlSince, crawlSinceD1 } from "./crawl/incremental.ts";
+import { reconcileRemovals } from "./crawl/removals.ts";
 import { buildSnapshots } from "./crawl/snapshot.ts";
 import { finalizeLatest, openDb, setCrawlState } from "./db/db.ts";
 import { exportSlice } from "./db/export.ts";
@@ -17,7 +18,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DB = resolve(here, "../pkgstory.db");
 
 const DEMO: Record<string, string[]> = {
-  "homebrew-formula": ["git", "wget", "jq", "node", "ripgrep", "htop", "curl", "ffmpeg"],
+  // terraform is here on purpose: removed from core (BUSL), it exercises the removed +
+  // disabled lifecycle path in the default demo crawl.
+  "homebrew-formula": [
+    "git",
+    "wget",
+    "jq",
+    "node",
+    "ripgrep",
+    "htop",
+    "curl",
+    "ffmpeg",
+    "terraform",
+  ],
   "homebrew-cask": ["visual-studio-code", "firefox", "rectangle", "iterm2", "docker"],
 };
 
@@ -29,9 +42,11 @@ function list(csv: string | undefined): string[] | null {
     .filter(Boolean);
 }
 
-function finalize(db: DatabaseSync, source: Source, now: number): void {
+function finalize(db: DatabaseSync, source: Source, now: number): number {
   finalizeLatest(db, source.id);
+  const removed = reconcileRemovals(db, source);
   setCrawlState(db, source.id, headSha(source.repoDir), now);
+  return removed;
 }
 
 async function crawl(argv: string[]): Promise<void> {
@@ -110,8 +125,10 @@ async function crawl(argv: string[]): Promise<void> {
       );
       console.log(`  L1: ${snaps.toLocaleString()} snapshots`);
       const events = buildEvents(db, source);
-      finalize(db, source, now);
-      console.log(`  L2: ${events.toLocaleString()} version events\n`);
+      const removed = finalize(db, source, now);
+      console.log(
+        `  L2: ${events.toLocaleString()} version events · ${removed.toLocaleString()} removed\n`,
+      );
     } else {
       const override = source.id === "homebrew-cask" ? list(values.casks) : list(values.formulae);
       const names = override ?? DEMO[source.id] ?? [];
@@ -119,9 +136,9 @@ async function crawl(argv: string[]): Promise<void> {
       const commits = buildCommitIndex(db, source, names);
       const snaps = buildSnapshots(db, source);
       const events = buildEvents(db, source);
-      finalize(db, source, now);
+      const removed = finalize(db, source, now);
       console.log(
-        `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events`,
+        `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events${removed ? ` · ${removed} removed` : ""}`,
       );
     }
   }

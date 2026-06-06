@@ -5,12 +5,23 @@ import { type D1Mode, d1Select, kvPut } from "./d1remote.ts";
 // (home page, search index) then cost a single KV lookup — traffic-independent,
 // so no amount of traffic can run up D1. Rebuilt at the end of every crawl.
 
+// Compact lifecycle marker: r=removed, x=disabled, d=deprecated; omitted when active.
+type StatusCode = "r" | "x" | "d";
+
+function statusCode(removedAt: unknown, lifecycle: unknown): StatusCode | undefined {
+  if (removedAt != null) return "r";
+  if (lifecycle === "disabled") return "x";
+  if (lifecycle === "deprecated") return "d";
+  return undefined;
+}
+
 interface CatalogEntry {
   n: string; // name
   s: "c" | "f"; // cask | formula
   v: string | null; // latest version
   r: number; // latest revision
   c: number; // event count
+  x?: StatusCode; // lifecycle marker (absent = active)
 }
 
 interface RecentItem {
@@ -19,6 +30,7 @@ interface RecentItem {
   version: string;
   revision: number;
   introducedAt: number;
+  x?: StatusCode; // lifecycle marker (absent = active)
 }
 
 interface HomePayload {
@@ -36,18 +48,24 @@ function buildCatalog(mode: D1Mode): CatalogEntry[] {
             CASE source WHEN 'homebrew-cask' THEN 'c' ELSE 'f' END AS s,
             latest_version  AS v,
             latest_revision AS r,
-            event_count     AS c
+            event_count     AS c,
+            removed_at,
+            lifecycle
        FROM packages
       WHERE event_count > 0
       ORDER BY name`,
   );
-  return rows.map((row) => ({
-    n: String(row.n),
-    s: row.s === "c" ? "c" : "f",
-    v: (row.v as string | null) ?? null,
-    r: Number(row.r ?? 0),
-    c: Number(row.c ?? 0),
-  }));
+  return rows.map((row) => {
+    const x = statusCode(row.removed_at, row.lifecycle);
+    return {
+      n: String(row.n),
+      s: row.s === "c" ? "c" : "f",
+      v: (row.v as string | null) ?? null,
+      r: Number(row.r ?? 0),
+      c: Number(row.c ?? 0),
+      ...(x ? { x } : {}),
+    };
+  });
 }
 
 function buildHome(mode: D1Mode, catalog: CatalogEntry[]): HomePayload {
@@ -60,17 +78,22 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[]): HomePayload {
 
   const recent = d1Select(
     mode,
-    `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt
+    `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
+            p.removed_at, p.lifecycle
        FROM version_events ve JOIN packages p ON p.id = ve.package_id
       ORDER BY ve.introduced_at DESC, ve.id DESC
       LIMIT 25`,
-  ).map((row) => ({
-    source: String(row.source),
-    name: String(row.name),
-    version: String(row.version),
-    revision: Number(row.revision ?? 0),
-    introducedAt: Number(row.introducedAt),
-  }));
+  ).map((row) => {
+    const x = statusCode(row.removed_at, row.lifecycle);
+    return {
+      source: String(row.source),
+      name: String(row.name),
+      version: String(row.version),
+      revision: Number(row.revision ?? 0),
+      introducedAt: Number(row.introducedAt),
+      ...(x ? { x } : {}),
+    };
+  });
 
   const checkedRow = d1Select(mode, "SELECT MAX(last_crawled_at) AS at FROM crawl_state");
   const checkedAt = checkedRow[0]?.at != null ? Number(checkedRow[0].at) : null;

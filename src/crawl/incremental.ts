@@ -1,8 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
-import { batchCat, headSha, logSince } from "../git.ts";
+import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
+import { type Lifecycle, parseLifecycle } from "../parse/lifecycle.ts";
 import type { Source } from "../sources/index.ts";
 
 export interface SinceResult {
@@ -23,6 +24,12 @@ export interface DeltaEvent {
 export interface PackageDelta {
   name: string;
   touches: DeltaEvent[]; // time-ordered, only touches that parsed to a version
+  // Current deprecate!/disable! state from the latest live blob in the window. null
+  // means the window had no live blob (only a deletion) — leave the columns as they are.
+  lifecycle: Lifecycle | null;
+  // Set when the package is absent from the tap at HEAD after this window; null when
+  // present (which clears any prior removed flag).
+  removed: { at: number; commit: string } | null;
 }
 
 export interface Delta {
@@ -36,11 +43,13 @@ interface RawTouch {
   blobSha: string;
   commitSha: string;
   subject: string;
+  deleted: boolean;
 }
 
 /**
- * Parse `git log <lastSha>..HEAD` into per-package, time-ordered version touches.
- * Store-agnostic — both the local-SQLite and D1 paths build on this.
+ * Parse `git log <lastSha>..HEAD` into per-package, time-ordered version touches plus
+ * each package's current lifecycle and removal state. Store-agnostic — both the
+ * local-SQLite and D1 paths build on this.
  */
 export function computeDelta(source: Source, lastSha: string): Delta {
   const head = headSha(source.repoDir);
@@ -49,10 +58,12 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const commits = logSince(source.repoDir, lastSha); // oldest-first
   const raw = new Map<string, RawTouch[]>();
   const shas: string[] = [];
+  let anyDeleted = false;
   for (const commit of commits) {
     for (const file of commit.files) {
       const name = source.packageOf(file.path);
-      if (!name || file.status === "D" || /^0+$/.test(file.blobSha)) continue;
+      if (!name) continue;
+      const deleted = file.status === "D" || /^0+$/.test(file.blobSha);
       let list = raw.get(name);
       if (!list) {
         list = [];
@@ -63,23 +74,45 @@ export function computeDelta(source: Source, lastSha: string): Delta {
         blobSha: file.blobSha,
         commitSha: commit.sha,
         subject: commit.subject,
+        deleted,
       });
-      shas.push(file.blobSha);
+      if (deleted) anyDeleted = true;
+      else shas.push(file.blobSha);
     }
   }
 
   const blobs = batchCat(source.repoDir, shas);
+  // Only resolve the HEAD tree when a deletion appeared — the authoritative check that
+  // separates a real removal from a relocation (delete + add in one commit).
+  const present = anyDeleted ? presentPackages(source.repoDir, source.dir, source.packageOf) : null;
+
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
     const parsed: DeltaEvent[] = [];
+    let latestLive: RawTouch | null = null;
+    let lastDeletion: RawTouch | null = null;
     for (const t of touches) {
+      // touches are oldest-first, so these settle on the last of each kind.
+      if (t.deleted) {
+        lastDeletion = t;
+        continue;
+      }
+      latestLive = t;
       const blob = blobs.get(t.blobSha);
       if (blob === undefined) continue;
       const { version, revision } = extractVersion(source.kind, name, t.subject, blob);
-      if (!version) continue;
-      parsed.push({ version, revision, at: t.committedAt, sha: t.commitSha, subject: t.subject });
+      if (version)
+        parsed.push({ version, revision, at: t.committedAt, sha: t.commitSha, subject: t.subject });
     }
-    if (parsed.length > 0) packages.push({ name, touches: parsed });
+
+    const isPresent = present ? present.has(name) : true;
+    const removed =
+      !isPresent && lastDeletion
+        ? { at: lastDeletion.committedAt, commit: lastDeletion.commitSha }
+        : null;
+    const lifecycle = latestLive ? parseLifecycle(blobs.get(latestLive.blobSha) ?? "") : null;
+
+    packages.push({ name, touches: parsed, lifecycle, removed });
   }
   return { head, commits: commits.length, packages };
 }
@@ -136,10 +169,19 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
             event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = ?)
       WHERE id = ?`,
   );
+  const setLifecycle = db.prepare(
+    "UPDATE packages SET lifecycle = ?, lifecycle_date = ?, lifecycle_reason = ? WHERE id = ?",
+  );
+  const setRemoved = db.prepare(
+    "UPDATE packages SET removed_at = ?, removed_commit = ? WHERE id = ?",
+  );
+  const clearRemoved = db.prepare(
+    "UPDATE packages SET removed_at = NULL, removed_commit = NULL WHERE id = ? AND removed_at IS NOT NULL",
+  );
 
   let events = 0;
   db.exec("BEGIN");
-  for (const { name, touches } of delta.packages) {
+  for (const { name, touches, lifecycle, removed } of delta.packages) {
     upsertPkg.run(source.id, name);
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     const { events: newEvents, latest } = foldPackage(
@@ -153,6 +195,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       );
     }
     if (latest) updateLatest.run(latest.version, latest.revision, latest.at, pkg.id, pkg.id);
+    if (lifecycle) setLifecycle.run(lifecycle.state, lifecycle.date, lifecycle.reason, pkg.id);
+    if (removed) setRemoved.run(removed.at, removed.commit, pkg.id);
+    else clearRemoved.run(pkg.id);
   }
   db.exec("COMMIT");
 
@@ -160,10 +205,20 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }
 
+interface Baseline {
+  version: string | null;
+  revision: number;
+  lifecycle: string | null;
+  lifecycleDate: string | null;
+  lifecycleReason: string | null;
+  removedAt: number | null;
+}
+
 /**
  * Incremental crawl into D1 (via wrangler). Reads cursor + baselines from D1, derives
- * the delta from git, and applies only the new events + latest + cursor as one small
- * SQL batch. No local SQLite — works in an ephemeral CI runner.
+ * the delta from git, and applies only the new events + latest + changed lifecycle/
+ * removal + cursor as one small SQL batch. No local SQLite — works in an ephemeral CI
+ * runner.
  */
 export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceResult {
   const cur = d1Select(
@@ -180,8 +235,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     return { status: "up-to-date", events: 0, commits: 0, head: delta.head };
   }
 
-  // Baselines for just the changed packages.
-  const baseline = new Map<string, { version: string | null; revision: number }>();
+  // Baselines (version + lifecycle/removal) for just the changed packages.
+  const baseline = new Map<string, Baseline>();
   const names = delta.packages.map((p) => p.name);
   for (let i = 0; i < names.length; i += 400) {
     const inList = names
@@ -190,22 +245,37 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, lifecycle, lifecycle_date, lifecycle_reason, removed_at FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
         revision: Number(row.latest_revision ?? 0),
+        lifecycle: (row.lifecycle as string | null) ?? null,
+        lifecycleDate: (row.lifecycle_date as string | null) ?? null,
+        lifecycleReason: (row.lifecycle_reason as string | null) ?? null,
+        removedAt: row.removed_at != null ? Number(row.removed_at) : null,
       });
     }
   }
 
   const stmts: string[] = [];
   let events = 0;
-  for (const { name, touches } of delta.packages) {
+  for (const { name, touches, lifecycle, removed } of delta.packages) {
     const base = baseline.get(name);
     const folded = foldPackage(base?.version ?? null, base?.revision ?? 0, touches);
-    if (folded.events.length === 0) continue;
-    const idSub = `(SELECT id FROM packages WHERE source = ${sqlLit(source.id)} AND name = ${sqlLit(name)})`;
+
+    const lifecycleChanged =
+      lifecycle != null &&
+      (lifecycle.state !== (base?.lifecycle ?? null) ||
+        lifecycle.date !== (base?.lifecycleDate ?? null) ||
+        lifecycle.reason !== (base?.lifecycleReason ?? null));
+    const baseRemoved = base?.removedAt ?? null;
+    const removedChanged = removed ? removed.at !== baseRemoved : baseRemoved != null;
+
+    if (folded.events.length === 0 && !lifecycleChanged && !removedChanged) continue;
+
+    const where = `source = ${sqlLit(source.id)} AND name = ${sqlLit(name)}`;
+    const idSub = `(SELECT id FROM packages WHERE ${where})`;
     stmts.push(
       `INSERT OR IGNORE INTO packages (source, name) VALUES (${sqlLit(source.id)}, ${sqlLit(name)});`,
     );
@@ -217,15 +287,27 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     }
     if (folded.latest) {
       stmts.push(
-        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = ${folded.latest.at}, event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE source = ${sqlLit(source.id)} AND name = ${sqlLit(name)};`,
+        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = ${folded.latest.at}, event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
+      );
+    }
+    if (lifecycleChanged && lifecycle) {
+      stmts.push(
+        `UPDATE packages SET lifecycle = ${sqlLit(lifecycle.state)}, lifecycle_date = ${sqlLit(lifecycle.date)}, lifecycle_reason = ${sqlLit(lifecycle.reason)} WHERE ${where};`,
+      );
+    }
+    if (removedChanged) {
+      stmts.push(
+        removed
+          ? `UPDATE packages SET removed_at = ${removed.at}, removed_commit = ${sqlLit(removed.commit)} WHERE ${where};`
+          : `UPDATE packages SET removed_at = NULL, removed_commit = NULL WHERE ${where};`,
       );
     }
   }
   stmts.push(cursorSql);
   // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the
-  // batch is idempotent anyway (INSERT OR IGNORE events + recomputed latest/cursor), so
-  // a partial apply is safely re-derived next run. Cursor goes last so it only advances
-  // after the events land. (Same constraint the export slice already follows.)
+  // batch is idempotent anyway (INSERT OR IGNORE events + recomputed latest/lifecycle/
+  // cursor), so a partial apply is safely re-derived next run. Cursor goes last so it
+  // only advances after the rows land. (Same constraint the export slice already follows.)
   d1Apply(mode, `${stmts.join("\n")}\n`);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }

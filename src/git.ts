@@ -123,6 +123,30 @@ export function headSha(repoDir: string): string {
 }
 
 /**
+ * Package basenames present in `dir` at HEAD. The authoritative "still exists" signal
+ * for removal detection: a package absent from this set has been deleted from the tap.
+ * Read straight from the HEAD tree, so it's immune to the file relocations that make a
+ * commit-status heuristic unreliable (a relocation is a delete + add in one commit).
+ */
+export function presentPackages(
+  repoDir: string,
+  dir: string,
+  packageOf: (path: string) => string | null,
+): Set<string> {
+  const out = execFileSync(
+    "git",
+    ["-C", repoDir, "ls-tree", "-r", "--name-only", "HEAD", "--", `${dir}/`],
+    { encoding: "utf8", maxBuffer: 1024 * 1024 * 256 },
+  );
+  const set = new Set<string>();
+  for (const path of out.split("\n")) {
+    const name = packageOf(path);
+    if (name) set.add(name);
+  }
+  return set;
+}
+
+/**
  * The delta since a cursor: `git log <sinceSha>..HEAD --raw`. Buffered (not
  * streamed) because an incremental window is a handful of commits, not the whole
  * history. Oldest-first so callers can fold versions chronologically.

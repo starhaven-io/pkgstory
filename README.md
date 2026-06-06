@@ -6,7 +6,9 @@
 
 **Every package has a version story.** pkgstory mines a package manager's git
 history into a browsable timeline — which version shipped, and when — for every
-formula and cask.
+formula and cask. When a package is deprecated, disabled, or dropped from the tap
+(like `terraform` after its BUSL relicense), it says so — with the date and
+Homebrew's own reason — instead of trailing off at a stale last version.
 
 **Website:** [pkgstory.dev](https://pkgstory.dev)
 
@@ -30,12 +32,17 @@ four-layer index, drawn so the expensive extraction happens exactly once:
   commit that touched a package file, keyed by basename so Homebrew's historical
   file relocations don't matter. Stores each commit's `blob_sha`, so nothing
   downstream re-walks history.
-- **L1 — snapshots.** The blob at each commit, parsed for `version` and
-  `revision`. Lean today; richer fields (dependencies, bottles, patches) layer
-  in later by re-reading the same blobs — no re-crawl.
+- **L1 — snapshots.** The blob at each commit, parsed for `version`, `revision`,
+  and the package's current `deprecate!`/`disable!` lifecycle. Lean today; richer
+  fields (dependencies, bottles, patches) layer in later by re-reading the same
+  blobs — no re-crawl.
 - **L2 — version events.** Snapshots collapsed into the timeline: one row per
   `(version, revision)` change, so bottle rebuilds and metadata-only commits
   drop out. This is what the site renders.
+
+A `git ls-tree` pass over `HEAD` after each crawl reconciles which packages still
+exist in the tap — so a deletion (terraform) is recorded with its removal date and
+commit, immune to Homebrew's file relocations.
 
 ### Serving it
 

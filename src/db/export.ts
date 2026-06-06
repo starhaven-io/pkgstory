@@ -13,6 +13,11 @@ CREATE TABLE packages (
   latest_revision INTEGER NOT NULL DEFAULT 0,
   latest_at       INTEGER,
   event_count     INTEGER NOT NULL DEFAULT 0,
+  removed_at       INTEGER,
+  removed_commit   TEXT,
+  lifecycle        TEXT,
+  lifecycle_date   TEXT,
+  lifecycle_reason TEXT,
   UNIQUE (source, name)
 );
 CREATE TABLE version_events (
@@ -79,10 +84,10 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     db,
     write,
     "packages",
-    "id,source,name,latest_version,latest_revision,latest_at,event_count",
-    "SELECT id, source, name, latest_version, latest_revision, latest_at, event_count FROM packages",
+    "id,source,name,latest_version,latest_revision,latest_at,event_count,removed_at,removed_commit,lifecycle,lifecycle_date,lifecycle_reason",
+    "SELECT id, source, name, latest_version, latest_revision, latest_at, event_count, removed_at, removed_commit, lifecycle, lifecycle_date, lifecycle_reason FROM packages",
     (r) =>
-      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.event_count)}`,
+      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.event_count)},${lit(r.removed_at)},${lit(r.removed_commit)},${lit(r.lifecycle)},${lit(r.lifecycle_date)},${lit(r.lifecycle_reason)}`,
   );
   dumpTable(
     db,

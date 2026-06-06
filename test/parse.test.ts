@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseCask } from "../src/parse/cask.ts";
 import { parseFormula, versionFromUrl } from "../src/parse/formula.ts";
+import { parseLifecycle } from "../src/parse/lifecycle.ts";
 import { versionFromSubject } from "../src/parse/subject.ts";
 
 describe("parseFormula", () => {
@@ -85,6 +86,59 @@ describe("parseCask", () => {
   });
   it("maps :latest", () => {
     expect(parseCask('cask "x" do\n  version :latest\nend').version).toBe("latest");
+  });
+});
+
+describe("parseLifecycle", () => {
+  it("reads disable! over deprecate! (terraform's BUSL exit)", () => {
+    const src = `class Terraform < Formula
+  url "https://github.com/hashicorp/terraform/archive/refs/tags/v1.5.7.tar.gz"
+  deprecate! date: "2024-04-04", because: "changed its license to BUSL on the next release"
+  disable! date: "2025-04-12", because: "changed its license to BUSL on the next release"
+end`;
+    expect(parseLifecycle(src)).toEqual({
+      state: "disabled",
+      date: "2025-04-12",
+      reason: "changed its license to BUSL on the next release",
+    });
+  });
+
+  it("reads a lone deprecate!", () => {
+    expect(parseLifecycle('  deprecate! date: "2023-01-02", because: "is unmaintained"')).toEqual({
+      state: "deprecated",
+      date: "2023-01-02",
+      reason: "is unmaintained",
+    });
+  });
+
+  it("humanizes a symbol reason", () => {
+    expect(parseLifecycle('  disable! date: "2024-12-31", because: :repo_archived')).toEqual({
+      state: "disabled",
+      date: "2024-12-31",
+      reason: "repo archived",
+    });
+  });
+
+  it("tolerates a bare disable! with no args", () => {
+    expect(parseLifecycle("  disable!")).toEqual({ state: "disabled", date: null, reason: null });
+  });
+
+  it("returns null state for an active formula", () => {
+    expect(parseLifecycle('class Foo < Formula\n  version "1.0"\nend')).toEqual({
+      state: null,
+      date: null,
+      reason: null,
+    });
+  });
+
+  it("ignores the keyword in a comment or caveat string", () => {
+    const src = `class Foo < Formula
+  # disable! is coming next release
+  def caveats
+    "Run disable! to turn it off"
+  end
+end`;
+    expect(parseLifecycle(src).state).toBeNull();
   });
 });
 
