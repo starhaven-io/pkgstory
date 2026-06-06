@@ -23,7 +23,7 @@ const [events, meta] = await Promise.all([
 ]);
 
 if (events.length === 0) {
-  return new Response("Not found", { status: 404 });
+  return Astro.rewrite("/404");
 }
 
 const status = statusOf(meta?.removedAt ?? null, meta?.lifecycle ?? null);
