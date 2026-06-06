@@ -94,11 +94,17 @@ export function buildSnapshots(
   }
 
   const setLifecycle = db.prepare(
-    "UPDATE packages SET lifecycle = ?, lifecycle_date = ?, lifecycle_reason = ? WHERE id = ?",
+    "UPDATE packages SET deprecate_date = ?, deprecate_reason = ?, disable_date = ?, disable_reason = ? WHERE id = ?",
   );
   db.exec("BEGIN");
   for (const [pid, { info }] of lifecycle) {
-    setLifecycle.run(info.state, info.date, info.reason, pid);
+    setLifecycle.run(
+      info.deprecate?.date ?? null,
+      info.deprecate?.reason ?? null,
+      info.disable?.date ?? null,
+      info.disable?.reason ?? null,
+      pid,
+    );
   }
   db.exec("COMMIT");
 

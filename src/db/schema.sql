@@ -14,14 +14,16 @@ CREATE TABLE IF NOT EXISTS packages (
   -- full events join (a per-render scan of the whole catalog otherwise).
   event_count     INTEGER NOT NULL DEFAULT 0,
   -- End-of-life state. removed_at is set (with the deleting commit) once the file is
-  -- gone from the tap at HEAD; lifecycle/date/reason mirror the latest blob's
-  -- deprecate!/disable! stanza (the BUSL-style "why"), retained from the last live
-  -- blob even after removal. NULL lifecycle = active.
+  -- gone from the tap at HEAD. deprecate_/disable_ mirror the latest live blob's
+  -- deprecate!/disable! stanzas verbatim (date may be future/scheduled); the *current*
+  -- state — deprecated/disabled/active — is derived from these against today at read
+  -- time, so a scheduled package flips on its own without a re-crawl.
   removed_at       INTEGER,
   removed_commit   TEXT,
-  lifecycle        TEXT,
-  lifecycle_date   TEXT,
-  lifecycle_reason TEXT,
+  deprecate_date   TEXT,
+  deprecate_reason TEXT,
+  disable_date     TEXT,
+  disable_reason   TEXT,
   UNIQUE (source, name)
 );
 

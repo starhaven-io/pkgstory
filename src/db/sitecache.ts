@@ -8,10 +8,25 @@ import { type D1Mode, d1Select, kvPut } from "./d1remote.ts";
 // Compact lifecycle marker: r=removed, x=disabled, d=deprecated; omitted when active.
 type StatusCode = "r" | "x" | "d";
 
-function statusCode(removedAt: unknown, lifecycle: unknown): StatusCode | undefined {
+// A deprecate!/disable! stanza is only in effect once its date has passed (a future
+// date is a scheduled announcement). Recomputed every crawl, so a scheduled package
+// flips to deprecated/disabled the day its date lands — no re-crawl needed.
+function inEffect(date: unknown, reason: unknown, today: string): boolean {
+  const present = date != null || reason != null;
+  return present && (date == null || String(date) <= today);
+}
+
+function statusCode(
+  removedAt: unknown,
+  deprecateDate: unknown,
+  deprecateReason: unknown,
+  disableDate: unknown,
+  disableReason: unknown,
+  today: string,
+): StatusCode | undefined {
   if (removedAt != null) return "r";
-  if (lifecycle === "disabled") return "x";
-  if (lifecycle === "deprecated") return "d";
+  if (inEffect(disableDate, disableReason, today)) return "x";
+  if (inEffect(deprecateDate, deprecateReason, today)) return "d";
   return undefined;
 }
 
@@ -41,7 +56,7 @@ interface HomePayload {
 }
 
 /** The lean search index — one row per package with events. ~22k-row scan (no join). */
-function buildCatalog(mode: D1Mode): CatalogEntry[] {
+function buildCatalog(mode: D1Mode, today: string): CatalogEntry[] {
   const rows = d1Select(
     mode,
     `SELECT name AS n,
@@ -50,13 +65,20 @@ function buildCatalog(mode: D1Mode): CatalogEntry[] {
             latest_revision AS r,
             event_count     AS c,
             removed_at,
-            lifecycle
+            deprecate_date, deprecate_reason, disable_date, disable_reason
        FROM packages
       WHERE event_count > 0
       ORDER BY name`,
   );
   return rows.map((row) => {
-    const x = statusCode(row.removed_at, row.lifecycle);
+    const x = statusCode(
+      row.removed_at,
+      row.deprecate_date,
+      row.deprecate_reason,
+      row.disable_date,
+      row.disable_reason,
+      today,
+    );
     return {
       n: String(row.n),
       s: row.s === "c" ? "c" : "f",
@@ -68,7 +90,7 @@ function buildCatalog(mode: D1Mode): CatalogEntry[] {
   });
 }
 
-function buildHome(mode: D1Mode, catalog: CatalogEntry[]): HomePayload {
+function buildHome(mode: D1Mode, catalog: CatalogEntry[], today: string): HomePayload {
   let formulae = 0;
   let casks = 0;
   for (const e of catalog) {
@@ -79,12 +101,19 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[]): HomePayload {
   const recent = d1Select(
     mode,
     `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
-            p.removed_at, p.lifecycle
+            p.removed_at, p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
        FROM version_events ve JOIN packages p ON p.id = ve.package_id
       ORDER BY ve.introduced_at DESC, ve.id DESC
       LIMIT 25`,
   ).map((row) => {
-    const x = statusCode(row.removed_at, row.lifecycle);
+    const x = statusCode(
+      row.removed_at,
+      row.deprecate_date,
+      row.deprecate_reason,
+      row.disable_date,
+      row.disable_reason,
+      today,
+    );
     return {
       source: String(row.source),
       name: String(row.name),
@@ -103,8 +132,11 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[]): HomePayload {
 
 /** Rebuild and publish the site-cache KV blobs from current D1 state. */
 export function refreshSiteCache(mode: D1Mode): { packages: number } {
-  const catalog = buildCatalog(mode);
-  const home = buildHome(mode, catalog);
+  // Effective state is date-relative; stamp it once so a scheduled package's chip
+  // appears the day its deprecate/disable date lands, on the next crawl.
+  const today = new Date().toISOString().slice(0, 10);
+  const catalog = buildCatalog(mode, today);
+  const home = buildHome(mode, catalog, today);
   kvPut(mode, "catalog", JSON.stringify(catalog));
   kvPut(mode, "home", JSON.stringify(home));
   return { packages: catalog.length };

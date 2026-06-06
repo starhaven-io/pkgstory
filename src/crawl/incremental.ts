@@ -24,7 +24,7 @@ export interface DeltaEvent {
 export interface PackageDelta {
   name: string;
   touches: DeltaEvent[]; // time-ordered, only touches that parsed to a version
-  // Current deprecate!/disable! state from the latest live blob in the window. null
+  // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
   lifecycle: Lifecycle | null;
   // Set when the package is absent from the tap at HEAD after this window; null when
@@ -170,7 +170,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       WHERE id = ?`,
   );
   const setLifecycle = db.prepare(
-    "UPDATE packages SET lifecycle = ?, lifecycle_date = ?, lifecycle_reason = ? WHERE id = ?",
+    "UPDATE packages SET deprecate_date = ?, deprecate_reason = ?, disable_date = ?, disable_reason = ? WHERE id = ?",
   );
   const setRemoved = db.prepare(
     "UPDATE packages SET removed_at = ?, removed_commit = ? WHERE id = ?",
@@ -195,7 +195,14 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       );
     }
     if (latest) updateLatest.run(latest.version, latest.revision, latest.at, pkg.id, pkg.id);
-    if (lifecycle) setLifecycle.run(lifecycle.state, lifecycle.date, lifecycle.reason, pkg.id);
+    if (lifecycle)
+      setLifecycle.run(
+        lifecycle.deprecate?.date ?? null,
+        lifecycle.deprecate?.reason ?? null,
+        lifecycle.disable?.date ?? null,
+        lifecycle.disable?.reason ?? null,
+        pkg.id,
+      );
     if (removed) setRemoved.run(removed.at, removed.commit, pkg.id);
     else clearRemoved.run(pkg.id);
   }
@@ -208,9 +215,10 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
 interface Baseline {
   version: string | null;
   revision: number;
-  lifecycle: string | null;
-  lifecycleDate: string | null;
-  lifecycleReason: string | null;
+  deprecateDate: string | null;
+  deprecateReason: string | null;
+  disableDate: string | null;
+  disableReason: string | null;
   removedAt: number | null;
 }
 
@@ -245,14 +253,15 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision, lifecycle, lifecycle_date, lifecycle_reason, removed_at FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
         revision: Number(row.latest_revision ?? 0),
-        lifecycle: (row.lifecycle as string | null) ?? null,
-        lifecycleDate: (row.lifecycle_date as string | null) ?? null,
-        lifecycleReason: (row.lifecycle_reason as string | null) ?? null,
+        deprecateDate: (row.deprecate_date as string | null) ?? null,
+        deprecateReason: (row.deprecate_reason as string | null) ?? null,
+        disableDate: (row.disable_date as string | null) ?? null,
+        disableReason: (row.disable_reason as string | null) ?? null,
         removedAt: row.removed_at != null ? Number(row.removed_at) : null,
       });
     }
@@ -266,9 +275,10 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
 
     const lifecycleChanged =
       lifecycle != null &&
-      (lifecycle.state !== (base?.lifecycle ?? null) ||
-        lifecycle.date !== (base?.lifecycleDate ?? null) ||
-        lifecycle.reason !== (base?.lifecycleReason ?? null));
+      ((lifecycle.deprecate?.date ?? null) !== (base?.deprecateDate ?? null) ||
+        (lifecycle.deprecate?.reason ?? null) !== (base?.deprecateReason ?? null) ||
+        (lifecycle.disable?.date ?? null) !== (base?.disableDate ?? null) ||
+        (lifecycle.disable?.reason ?? null) !== (base?.disableReason ?? null));
     const baseRemoved = base?.removedAt ?? null;
     const removedChanged = removed ? removed.at !== baseRemoved : baseRemoved != null;
 
@@ -292,7 +302,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     }
     if (lifecycleChanged && lifecycle) {
       stmts.push(
-        `UPDATE packages SET lifecycle = ${sqlLit(lifecycle.state)}, lifecycle_date = ${sqlLit(lifecycle.date)}, lifecycle_reason = ${sqlLit(lifecycle.reason)} WHERE ${where};`,
+        `UPDATE packages SET deprecate_date = ${sqlLit(lifecycle.deprecate?.date ?? null)}, deprecate_reason = ${sqlLit(lifecycle.deprecate?.reason ?? null)}, disable_date = ${sqlLit(lifecycle.disable?.date ?? null)}, disable_reason = ${sqlLit(lifecycle.disable?.reason ?? null)} WHERE ${where};`,
       );
     }
     if (removedChanged) {

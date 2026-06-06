@@ -90,44 +90,55 @@ describe("parseCask", () => {
 });
 
 describe("parseLifecycle", () => {
-  it("reads disable! over deprecate! (terraform's BUSL exit)", () => {
+  it("keeps both stanzas (terraform's BUSL exit)", () => {
     const src = `class Terraform < Formula
   url "https://github.com/hashicorp/terraform/archive/refs/tags/v1.5.7.tar.gz"
   deprecate! date: "2024-04-04", because: "changed its license to BUSL on the next release"
   disable! date: "2025-04-12", because: "changed its license to BUSL on the next release"
 end`;
     expect(parseLifecycle(src)).toEqual({
-      state: "disabled",
-      date: "2025-04-12",
-      reason: "changed its license to BUSL on the next release",
+      deprecate: { date: "2024-04-04", reason: "changed its license to BUSL on the next release" },
+      disable: { date: "2025-04-12", reason: "changed its license to BUSL on the next release" },
     });
   });
 
-  it("reads a lone deprecate!", () => {
+  it("reads a lone deprecate! (no disable scheduled)", () => {
     expect(parseLifecycle('  deprecate! date: "2023-01-02", because: "is unmaintained"')).toEqual({
-      state: "deprecated",
-      date: "2023-01-02",
-      reason: "is unmaintained",
+      deprecate: { date: "2023-01-02", reason: "is unmaintained" },
+      disable: null,
     });
   });
 
-  it("humanizes a symbol reason", () => {
-    expect(parseLifecycle('  disable! date: "2024-12-31", because: :repo_archived')).toEqual({
-      state: "disabled",
+  it("captures a future-dated, scheduled disable separately", () => {
+    expect(
+      parseLifecycle(
+        '  deprecate! date: "2026-11-10", because: "needs end-of-life .NET 9"\n  disable! date: "2027-11-10", because: "needs end-of-life .NET 9"',
+      ),
+    ).toEqual({
+      deprecate: { date: "2026-11-10", reason: "needs end-of-life .NET 9" },
+      disable: { date: "2027-11-10", reason: "needs end-of-life .NET 9" },
+    });
+  });
+
+  it("maps a symbol reason to brew's predicate phrasing", () => {
+    expect(
+      parseLifecycle('  disable! date: "2024-12-31", because: :repo_archived').disable,
+    ).toEqual({
       date: "2024-12-31",
-      reason: "repo archived",
+      reason: "has an archived upstream repository",
     });
   });
 
-  it("tolerates a bare disable! with no args", () => {
-    expect(parseLifecycle("  disable!")).toEqual({ state: "disabled", date: null, reason: null });
+  it("falls back to a grammatical predicate for an unknown symbol", () => {
+    expect(parseLifecycle("  disable! because: :some_new_reason").disable?.reason).toBe(
+      "is some new reason",
+    );
   });
 
-  it("returns null state for an active formula", () => {
+  it("returns null stanzas for an active formula", () => {
     expect(parseLifecycle('class Foo < Formula\n  version "1.0"\nend')).toEqual({
-      state: null,
-      date: null,
-      reason: null,
+      deprecate: null,
+      disable: null,
     });
   });
 
@@ -138,7 +149,7 @@ end`;
     "Run disable! to turn it off"
   end
 end`;
-    expect(parseLifecycle(src).state).toBeNull();
+    expect(parseLifecycle(src)).toEqual({ deprecate: null, disable: null });
   });
 });
 
