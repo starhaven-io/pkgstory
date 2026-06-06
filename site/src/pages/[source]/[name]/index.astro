@@ -3,18 +3,31 @@ export const prerender = false;
 
 import Base from "../../../layouts/Base.astro";
 import Chip from "../../../components/Chip.astro";
+import Lifecycle from "../../../components/Lifecycle.astro";
 import Sparkline from "../../../components/Sparkline.astro";
+import StatusChip from "../../../components/StatusChip.astro";
 import Version from "../../../components/Version.astro";
-import { getDb, lastChecked, timeline } from "../../../lib/d1.ts";
-import { isoDate, sourceLabel } from "../../../lib/format.ts";
+import { getDb, lastChecked, packageMeta, timeline } from "../../../lib/d1.ts";
+import {
+  displayVersion,
+  isoDate,
+  sourceLabel,
+  statusOf,
+} from "../../../lib/format.ts";
 
 const { source, name } = Astro.params;
 const db = getDb();
-const events = await timeline(db, source!, name!);
+const [events, meta] = await Promise.all([
+  timeline(db, source!, name!),
+  packageMeta(db, source!, name!),
+]);
 
 if (events.length === 0) {
   return new Response("Not found", { status: 404 });
 }
+
+const status = statusOf(meta?.removedAt ?? null, meta?.lifecycle ?? null);
+const latestEvent = events[0]!;
 
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set(
@@ -64,7 +77,23 @@ const monthFmt = (t: number) =>
   <div class="pkg-head">
     <h2>{name}</h2>
     <Chip source={source!} />
+    {status && <StatusChip code={status} />}
   </div>
+
+  {
+    meta && (
+      <Lifecycle
+        removedAt={meta.removedAt}
+        removedCommit={meta.removedCommit}
+        lifecycle={meta.lifecycle}
+        lifecycleDate={meta.lifecycleDate}
+        lifecycleReason={meta.lifecycleReason}
+        repo={repo}
+        lastVersion={displayVersion(latestEvent.version, latestEvent.revision)}
+      />
+    )
+  }
+
   <div class="stats">
     <span><b>{events.length}</b> versions</span>
     {
@@ -83,10 +112,14 @@ const monthFmt = (t: number) =>
     }
   </div>
 
-  <p class="track">
-    Track <b>{name}</b> — subscribe to the <a href={feedHref}>RSS feed</a> to get
-    an item each time it updates.
-  </p>
+  {
+    meta?.removedAt == null && (
+      <p class="track">
+        Track <b>{name}</b> — subscribe to the <a href={feedHref}>RSS feed</a>{" "}
+        to get an item each time it updates.
+      </p>
+    )
+  }
 
   {
     dates.length > 1 && (

@@ -1,0 +1,73 @@
+---
+import { isoDate } from "../lib/format.ts";
+
+// The end-of-life banner on a package page. Renders nothing for an active package.
+// removedAt wins over lifecycle; for a removed package the deprecate!/disable! reason
+// (retained from its last live blob) explains why it was on its way out.
+interface Props {
+  removedAt: number | null;
+  removedCommit: string | null;
+  lifecycle: string | null; // "deprecated" | "disabled" | null
+  lifecycleDate: string | null;
+  lifecycleReason: string | null;
+  repo: string; // e.g. "homebrew/homebrew-core" — for the removal-commit link
+  lastVersion: string | null;
+}
+const {
+  removedAt,
+  removedCommit,
+  lifecycle,
+  lifecycleDate,
+  lifecycleReason,
+  repo,
+  lastVersion,
+} = Astro.props;
+
+const variant = removedAt != null ? "removed" : lifecycle;
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// Sentence fragment for the deprecate!/disable! stanza, reused in each variant.
+const since = lifecycleDate ? `Since ${lifecycleDate}. ` : "";
+const because = lifecycleReason ? `${cap(lifecycleReason)}. ` : "";
+
+const removedHad =
+  lifecycle != null
+    ? ` Had been ${lifecycle}${lifecycleDate ? ` since ${lifecycleDate}` : ""}${
+        lifecycleReason ? ` — ${lifecycleReason}` : ""
+      }.`
+    : "";
+const removedText =
+  removedAt != null
+    ? `Deleted from Homebrew on ${isoDate(removedAt)}.${removedHad}${
+        lastVersion ? ` Last shipped version was ${lastVersion}.` : ""
+      }`
+    : "";
+const commitUrl = removedCommit
+  ? `https://github.com/${repo}/commit/${removedCommit}`
+  : null;
+---
+
+{
+  variant && (
+    <aside class:list={["banner", `banner-${variant}`]}>
+      <span class="banner-tag">{variant}</span>
+      <span class="banner-text">
+        {variant === "removed" && (
+          <>
+            {removedText}
+            {commitUrl && (
+              <>
+                {" "}
+                <a href={commitUrl}>removal commit ↗</a>
+              </>
+            )}
+          </>
+        )}
+        {variant === "disabled" &&
+          `${since}${because}No longer installable through Homebrew, though still present in the tap.`}
+        {variant === "deprecated" &&
+          `${since}${because}Still installable, but unmaintained and on track for removal.`}
+      </span>
+    </aside>
+  )
+}

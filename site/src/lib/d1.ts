@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { VersionEvent } from "./format.ts";
+import type { PackageMeta, VersionEvent } from "./format.ts";
 
 // Minimal D1 surface (avoids a @cloudflare/workers-types dependency). Used by the
 // on-demand per-package pages, which read only one package's rows via the index.
@@ -33,6 +33,23 @@ export async function timeline(
     .bind(source, name)
     .all<VersionEvent>();
   return results;
+}
+
+/** Per-package lifecycle metadata (removed / deprecated / disabled state). */
+export async function packageMeta(
+  db: D1,
+  source: string,
+  name: string,
+): Promise<PackageMeta | null> {
+  const row = await db
+    .prepare(
+      `SELECT removed_at AS removedAt, removed_commit AS removedCommit,
+              lifecycle, lifecycle_date AS lifecycleDate, lifecycle_reason AS lifecycleReason
+         FROM packages WHERE source = ? AND name = ?`,
+    )
+    .bind(source, name)
+    .first<PackageMeta>();
+  return row;
 }
 
 /** Most recent successful crawl across sources — the freshness heartbeat. */

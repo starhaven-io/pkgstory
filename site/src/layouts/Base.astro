@@ -48,6 +48,12 @@ const checkedIso = lastCheckedAt
         --formula-bg: rgba(14, 124, 102, 0.1);
         --cask: #6a40c0;
         --cask-bg: rgba(106, 64, 192, 0.1);
+        --removed: #c0362c;
+        --removed-bg: rgba(192, 54, 44, 0.1);
+        --disabled: #a06a08;
+        --disabled-bg: rgba(160, 106, 8, 0.12);
+        --deprecated: #6f6b63;
+        --deprecated-bg: rgba(111, 107, 99, 0.13);
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -63,6 +69,12 @@ const checkedIso = lastCheckedAt
           --formula-bg: rgba(95, 214, 184, 0.12);
           --cask: #b79cf2;
           --cask-bg: rgba(183, 156, 242, 0.12);
+          --removed: #f08a7e;
+          --removed-bg: rgba(240, 138, 126, 0.14);
+          --disabled: #e0b350;
+          --disabled-bg: rgba(224, 179, 80, 0.14);
+          --deprecated: #97938b;
+          --deprecated-bg: rgba(151, 147, 139, 0.15);
         }
       }
 
@@ -267,6 +279,65 @@ const checkedIso = lastCheckedAt
       .chip-cask {
         color: var(--cask);
         background: var(--cask-bg);
+      }
+      .chip-removed {
+        color: var(--removed);
+        background: var(--removed-bg);
+      }
+      .chip-disabled {
+        color: var(--disabled);
+        background: var(--disabled-bg);
+      }
+      .chip-deprecated {
+        color: var(--deprecated);
+        background: var(--deprecated-bg);
+      }
+
+      /* Lifecycle banner (package page) */
+      .banner {
+        display: flex;
+        gap: 0.6rem;
+        align-items: baseline;
+        border: 1px solid var(--line);
+        border-left-width: 3px;
+        border-radius: 8px;
+        padding: 0.7rem 0.9rem;
+        margin: 0.6rem 0 1.4rem;
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+      .banner-tag {
+        flex: none;
+        text-transform: uppercase;
+        font-size: 0.66rem;
+        letter-spacing: 0.07em;
+        font-weight: 700;
+        padding: 0.1rem 0.45rem;
+        border-radius: 5px;
+      }
+      .banner-removed {
+        border-left-color: var(--removed);
+        background: var(--removed-bg);
+      }
+      .banner-removed .banner-tag {
+        color: var(--bg);
+        background: var(--removed);
+      }
+      .banner-disabled {
+        border-left-color: var(--disabled);
+        background: var(--disabled-bg);
+      }
+      .banner-disabled .banner-tag {
+        color: var(--bg);
+        background: var(--disabled);
+      }
+      .banner-deprecated {
+        border-left-color: var(--deprecated);
+        background: var(--deprecated-bg);
+      }
+      .banner-deprecated .banner-tag {
+        color: var(--bg);
+        background: var(--deprecated);
       }
 
       /* Sparkline */

@@ -3,6 +3,7 @@ export const prerender = false;
 
 import Base from "../layouts/Base.astro";
 import Chip from "../components/Chip.astro";
+import StatusChip from "../components/StatusChip.astro";
 import Version from "../components/Version.astro";
 import { home } from "../lib/cache.ts";
 import { isoDate } from "../lib/format.ts";
@@ -51,6 +52,7 @@ Astro.response.headers.set(
               <td class="date">{isoDate(c.introducedAt)}</td>
               <td>
                 <a href={`/${c.source}/${c.name}/`}>{c.name}</a>
+                {c.x && <StatusChip code={c.x} />}
               </td>
               <td>
                 <Version version={c.version} revision={c.revision} />
@@ -76,7 +78,13 @@ Astro.response.headers.set(
         v: string | null;
         r: number;
         c: number;
+        x?: "r" | "x" | "d";
       }
+      const STATUS: Record<string, [string, string]> = {
+        r: ["removed", "chip-removed"],
+        x: ["disabled", "chip-disabled"],
+        d: ["deprecated", "chip-deprecated"],
+      };
       let data: Pkg[] | null = null;
       const esc = (s: string) =>
         s.replace(
@@ -93,7 +101,11 @@ Astro.response.headers.set(
         const kind = p.s === "c" ? "cask" : "formula";
         const src = p.s === "c" ? "homebrew-cask" : "homebrew-formula";
         const ver = p.r ? `${p.v}_${p.r}` : (p.v ?? "");
-        return `<tr><td><a href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a></td><td><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
+        const st =
+          p.x && STATUS[p.x]
+            ? ` <span class="chip ${STATUS[p.x][1]}">${STATUS[p.x][0]}</span>`
+            : "";
+        return `<tr><td><a href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a>${st}</td><td><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
       };
       input.addEventListener("input", async () => {
         const q = input.value.trim().toLowerCase();

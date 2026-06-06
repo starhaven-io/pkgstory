@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import type { RecentChange } from "./format.ts";
+import type { RecentChange, StatusCode } from "./format.ts";
 
 // The precomputed site-cache KV namespace (binding CACHE). Populated by the crawler
 // after every run; serving from it costs one KV lookup regardless of traffic.
@@ -18,6 +18,7 @@ export interface CatalogEntry {
   v: string | null; // latest version
   r: number; // latest revision
   c: number; // event count
+  x?: StatusCode; // lifecycle marker (absent = active)
 }
 
 export interface HomePayload {
