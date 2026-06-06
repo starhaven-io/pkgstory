@@ -15,6 +15,11 @@ const { title, description, tagline, feedHref, lastCheckedAt } = Astro.props;
 const checkedIso = lastCheckedAt
   ? new Date(lastCheckedAt * 1000).toISOString()
   : null;
+// Canonical origin (not the request host) so og:url/canonical stay stable behind the
+// edge cache; description falls back to the tagline for social unfurls.
+const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url.origin)
+  .href;
+const ogDescription = description ?? tagline;
 ---
 
 <!doctype html>
@@ -24,6 +29,23 @@ const checkedIso = lastCheckedAt
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     {description && <meta name="description" content={description} />}
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="pkgstory" />
+    <meta property="og:title" content={title} />
+    <meta property="og:url" content={canonical} />
+    {
+      ogDescription && (
+        <meta property="og:description" content={ogDescription} />
+      )
+    }
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={title} />
+    {
+      ogDescription && (
+        <meta name="twitter:description" content={ogDescription} />
+      )
+    }
     {
       feedHref && (
         <link
