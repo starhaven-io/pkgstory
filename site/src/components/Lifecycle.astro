@@ -1,58 +1,84 @@
 ---
-import { isoDate } from "../lib/format.ts";
+import { isoDate, lifecycleState, plusYear, todayISO } from "../lib/format.ts";
 
-// The end-of-life banner on a package page. Renders nothing for an active package.
-// removedAt wins over lifecycle; for a removed package the deprecate!/disable! reason
-// (retained from its last live blob) explains why it was on its way out.
+// The end-of-life banner on a package page. Renders nothing while active (including
+// future-scheduled stanzas). The current state is derived from both deprecate!/disable!
+// stanzas against today, and the next transition is projected ~1 year on — the cadence
+// Homebrew follows (deprecate → disable → remove).
 interface Props {
+  name: string;
   removedAt: number | null;
   removedCommit: string | null;
-  lifecycle: string | null; // "deprecated" | "disabled" | null
-  lifecycleDate: string | null;
-  lifecycleReason: string | null;
-  repo: string; // e.g. "homebrew/homebrew-core" — for the removal-commit link
+  deprecateDate: string | null;
+  deprecateReason: string | null;
+  disableDate: string | null;
+  disableReason: string | null;
+  repo: string; // e.g. "homebrew/homebrew-core" — for the removal-commit link + tap name
   lastVersion: string | null;
 }
 const {
+  name,
   removedAt,
   removedCommit,
-  lifecycle,
-  lifecycleDate,
-  lifecycleReason,
+  deprecateDate,
+  deprecateReason,
+  disableDate,
+  disableReason,
   repo,
   lastVersion,
 } = Astro.props;
 
-const variant = removedAt != null ? "removed" : lifecycle;
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-// Sentence fragment for the deprecate!/disable! stanza, reused in each variant.
-const since = lifecycleDate ? `Since ${lifecycleDate}. ` : "";
-const because = lifecycleReason ? `${cap(lifecycleReason)}. ` : "";
-
-const removedHad =
-  lifecycle != null
-    ? ` Had been ${lifecycle}${lifecycleDate ? ` since ${lifecycleDate}` : ""}${
-        lifecycleReason ? ` — ${lifecycleReason}` : ""
-      }.`
-    : "";
-const removedText =
-  removedAt != null
-    ? `Deleted from Homebrew on ${isoDate(removedAt)}.${removedHad}${
-        lastVersion ? ` Last shipped version was ${lastVersion}.` : ""
-      }`
-    : "";
+const state = lifecycleState(
+  {
+    removedAt,
+    removedCommit,
+    deprecateDate,
+    deprecateReason,
+    disableDate,
+    disableReason,
+  },
+  todayISO(),
+);
+const tap = repo.endsWith("cask") ? "Homebrew/cask" : "Homebrew/core";
 const commitUrl = removedCommit
   ? `https://github.com/${repo}/commit/${removedCommit}`
   : null;
+
+// The stanza in effect (or, for a removed package, the last one it carried before going).
+const onDisable =
+  state === "disabled" ||
+  (state === "removed" && (disableDate != null || disableReason != null));
+const stageWord = onDisable ? "disabled" : "deprecated";
+const stageDate = onDisable ? disableDate : deprecateDate;
+const stageReason = onDisable ? disableReason : deprecateReason;
+const on = stageDate ? ` on ${stageDate}` : "";
+const why = stageReason ? ` because it ${stageReason}` : "";
+
+const removedStage =
+  onDisable || deprecateDate != null || deprecateReason != null
+    ? `${name} was ${stageWord}${on}${why}. `
+    : "";
+const removedText = `Deleted from ${tap} on ${isoDate(removedAt ?? 0)}. ${removedStage}${
+  lastVersion ? `The final version shipped in ${tap} was ${lastVersion}.` : ""
+}`;
+const disabledText = `${name} was disabled in ${tap}${on}${why}.${
+  disableDate
+    ? ` It will be removed from ${tap} around ${plusYear(disableDate)}.`
+    : ""
+}`;
+// A deprecated package will be disabled on its scheduled disable date, else ~1 year on.
+const cutoff = disableDate ?? (deprecateDate ? plusYear(deprecateDate) : null);
+const deprecatedText = `${name} was deprecated in ${tap}${on}${why}.${
+  cutoff ? ` It will no longer be able to be installed after ${cutoff}.` : ""
+}`;
 ---
 
 {
-  variant && (
-    <aside class:list={["banner", `banner-${variant}`]}>
-      <span class="banner-tag">{variant}</span>
+  state !== "active" && (
+    <aside class:list={["banner", `banner-${state}`]}>
+      <span class="banner-tag">{state}</span>
       <span class="banner-text">
-        {variant === "removed" && (
+        {state === "removed" && (
           <>
             {removedText}
             {commitUrl && (
@@ -63,10 +89,8 @@ const commitUrl = removedCommit
             )}
           </>
         )}
-        {variant === "disabled" &&
-          `${since}${because}No longer installable through Homebrew, though still present in the tap.`}
-        {variant === "deprecated" &&
-          `${since}${because}Still installable, but unmaintained and on track for removal.`}
+        {state === "disabled" && disabledText}
+        {state === "deprecated" && deprecatedText}
       </span>
     </aside>
   )

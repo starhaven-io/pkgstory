@@ -44,7 +44,8 @@ export async function packageMeta(
   const row = await db
     .prepare(
       `SELECT removed_at AS removedAt, removed_commit AS removedCommit,
-              lifecycle, lifecycle_date AS lifecycleDate, lifecycle_reason AS lifecycleReason
+              deprecate_date AS deprecateDate, deprecate_reason AS deprecateReason,
+              disable_date AS disableDate, disable_reason AS disableReason
          FROM packages WHERE source = ? AND name = ?`,
     )
     .bind(source, name)
