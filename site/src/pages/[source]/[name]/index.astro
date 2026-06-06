@@ -13,6 +13,7 @@ import {
   isoDate,
   sourceLabel,
   statusOf,
+  todayISO,
 } from "../../../lib/format.ts";
 
 const { source, name } = Astro.params;
@@ -26,7 +27,7 @@ if (events.length === 0) {
   return Astro.rewrite("/404");
 }
 
-const status = statusOf(meta?.removedAt ?? null, meta?.lifecycle ?? null);
+const status = meta ? statusOf(meta, todayISO()) : null;
 const latestEvent = events[0]!;
 
 // A package page only changes when that package updates; let the edge cache it.
@@ -83,11 +84,13 @@ const monthFmt = (t: number) =>
   {
     meta && (
       <Lifecycle
+        name={name!}
         removedAt={meta.removedAt}
         removedCommit={meta.removedCommit}
-        lifecycle={meta.lifecycle}
-        lifecycleDate={meta.lifecycleDate}
-        lifecycleReason={meta.lifecycleReason}
+        deprecateDate={meta.deprecateDate}
+        deprecateReason={meta.deprecateReason}
+        disableDate={meta.disableDate}
+        disableReason={meta.disableReason}
         repo={repo}
         lastVersion={displayVersion(latestEvent.version, latestEvent.revision)}
       />

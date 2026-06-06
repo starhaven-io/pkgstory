@@ -10,32 +10,65 @@ export interface VersionEvent {
 }
 
 // Lifecycle state of a package. The compact code (r/x/d) travels in the KV catalog +
-// home blobs; the package page reads the raw columns and derives it with statusOf.
+// home blobs; the package page reads the raw stanza columns and derives state with
+// lifecycleState — against today, so a future-scheduled stanza counts only once due.
 export type StatusCode = "r" | "x" | "d";
+export type LifecycleState = "removed" | "disabled" | "deprecated" | "active";
 
 export const STATUS_LABEL: Record<StatusCode, string> = {
   r: "removed",
   x: "disabled",
   d: "deprecated",
 };
-
-export function statusOf(
-  removedAt: number | null,
-  lifecycle: string | null,
-): StatusCode | null {
-  if (removedAt != null) return "r";
-  if (lifecycle === "disabled") return "x";
-  if (lifecycle === "deprecated") return "d";
-  return null;
-}
+const STATE_CODE: Record<Exclude<LifecycleState, "active">, StatusCode> = {
+  removed: "r",
+  disabled: "x",
+  deprecated: "d",
+};
 
 /** Per-package lifecycle metadata for the detail page (raw D1 columns). */
 export interface PackageMeta {
   removedAt: number | null;
   removedCommit: string | null;
-  lifecycle: string | null;
-  lifecycleDate: string | null;
-  lifecycleReason: string | null;
+  deprecateDate: string | null;
+  deprecateReason: string | null;
+  disableDate: string | null;
+  disableReason: string | null;
+}
+
+export function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+// A deprecate!/disable! stanza is in effect only once its date has passed (a future
+// date is a scheduled announcement, not yet applied — mirrors brew's own behaviour).
+function inEffect(
+  date: string | null,
+  reason: string | null,
+  today: string,
+): boolean {
+  const present = date != null || reason != null;
+  return present && (date == null || date <= today);
+}
+
+export function lifecycleState(m: PackageMeta, today: string): LifecycleState {
+  if (m.removedAt != null) return "removed";
+  if (inEffect(m.disableDate, m.disableReason, today)) return "disabled";
+  if (inEffect(m.deprecateDate, m.deprecateReason, today)) return "deprecated";
+  return "active";
+}
+
+export function statusOf(m: PackageMeta, today: string): StatusCode | null {
+  const state = lifecycleState(m, today);
+  return state === "active" ? null : STATE_CODE[state];
+}
+
+/** A date one year on, "YYYY-MM-DD" — the ~1-year cadence brew uses between stages. */
+export function plusYear(date: string): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC((y ?? 0) + 1, (m ?? 1) - 1, d ?? 1))
+    .toISOString()
+    .slice(0, 10);
 }
 
 /** A recent-updates row on the home page (from the precomputed KV `home` blob). */
