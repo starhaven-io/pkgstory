@@ -13,6 +13,15 @@ CREATE TABLE IF NOT EXISTS packages (
   -- Denormalized count of version_events: lets the search-index build avoid a
   -- full events join (a per-render scan of the whole catalog otherwise).
   event_count     INTEGER NOT NULL DEFAULT 0,
+  -- End-of-life state. removed_at is set (with the deleting commit) once the file is
+  -- gone from the tap at HEAD; lifecycle/date/reason mirror the latest blob's
+  -- deprecate!/disable! stanza (the BUSL-style "why"), retained from the last live
+  -- blob even after removal. NULL lifecycle = active.
+  removed_at       INTEGER,
+  removed_commit   TEXT,
+  lifecycle        TEXT,
+  lifecycle_date   TEXT,
+  lifecycle_reason TEXT,
   UNIQUE (source, name)
 );
 
@@ -65,3 +74,5 @@ CREATE TABLE IF NOT EXISTS crawl_state (
 
 CREATE INDEX IF NOT EXISTS idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_time ON version_events (introduced_at DESC);
+-- Reconcile-removals reads each absent package's latest commit (the deletion).
+CREATE INDEX IF NOT EXISTS idx_commit_pkg_time ON commit_index (package_id, committed_at DESC);

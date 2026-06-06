@@ -1,0 +1,13 @@
+---
+import { STATUS_LABEL, type StatusCode } from "../lib/format.ts";
+
+interface Props {
+  code: StatusCode;
+}
+const { code } = Astro.props;
+const variant = { r: "chip-removed", x: "chip-disabled", d: "chip-deprecated" }[
+  code
+];
+---
+
+<span class:list={["chip", variant]}>{STATUS_LABEL[code]}</span>

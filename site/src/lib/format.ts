@@ -9,6 +9,35 @@ export interface VersionEvent {
   subject: string;
 }
 
+// Lifecycle state of a package. The compact code (r/x/d) travels in the KV catalog +
+// home blobs; the package page reads the raw columns and derives it with statusOf.
+export type StatusCode = "r" | "x" | "d";
+
+export const STATUS_LABEL: Record<StatusCode, string> = {
+  r: "removed",
+  x: "disabled",
+  d: "deprecated",
+};
+
+export function statusOf(
+  removedAt: number | null,
+  lifecycle: string | null,
+): StatusCode | null {
+  if (removedAt != null) return "r";
+  if (lifecycle === "disabled") return "x";
+  if (lifecycle === "deprecated") return "d";
+  return null;
+}
+
+/** Per-package lifecycle metadata for the detail page (raw D1 columns). */
+export interface PackageMeta {
+  removedAt: number | null;
+  removedCommit: string | null;
+  lifecycle: string | null;
+  lifecycleDate: string | null;
+  lifecycleReason: string | null;
+}
+
 /** A recent-updates row on the home page (from the precomputed KV `home` blob). */
 export interface RecentChange {
   source: string;
@@ -16,6 +45,7 @@ export interface RecentChange {
   version: string;
   revision: number;
   introducedAt: number;
+  x?: StatusCode; // lifecycle marker (absent = active)
 }
 
 const SOURCE_LABELS: Record<string, string> = {

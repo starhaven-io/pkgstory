@@ -51,6 +51,15 @@ derivation (cheap, re-runnable):
 Version derivation precedence: explicit `version` stanza → git `tag:` → mined from
 `url` → commit-subject fallback (`<name> <version>`). `version_src` records which.
 
+Lifecycle & removal (denormalized onto `packages`): L1 also captures the latest live
+blob's `deprecate!`/`disable!` state into `lifecycle`/`lifecycle_date`/`lifecycle_reason`
+(parser in `parse/lifecycle.ts`; disable outranks deprecate). After each crawl,
+`crawl/removals.ts` reconciles against a `git ls-tree HEAD` present-set — a package
+absent from the tap gets `removed_at`/`removed_commit` from its last commit. The
+incremental paths surface both from the delta; a removal preserves the last captured
+lifecycle (the "why"). The site shows a banner + a `removed`/`disabled`/`deprecated`
+chip; the KV catalog/home blobs carry a compact `r`/`x`/`d` status code.
+
 ### Performance notes
 
 - `batchCat` reads all of a source's blobs in one `git cat-file --batch` process. Use
