@@ -58,33 +58,52 @@ export function logRaw(repoDir: string, pathspecs: string[]): RawCommit[] {
   return parseLog(out);
 }
 
+/**
+ * Line-by-line folder for `git log --raw` output, shared by the buffered and
+ * streaming paths so the two can't drift. Feed lines, then `end()` to flush the
+ * final commit.
+ */
+function logFolder(onCommit: (commit: RawCommit) => void): {
+  line(line: string): void;
+  end(): void;
+} {
+  let cur: RawCommit | null = null;
+  return {
+    line(line: string): void {
+      if (line.startsWith(COMMIT)) {
+        if (cur) onCommit(cur);
+        const parts = line.slice(COMMIT.length).split(FIELD);
+        cur = {
+          sha: parts[0] ?? "",
+          committedAt: Number(parts[1] ?? 0),
+          author: parts[2] ?? "",
+          subject: parts[3] ?? "",
+          files: [],
+        };
+      } else if (line.startsWith(":") && cur) {
+        // :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>
+        const tab = line.indexOf("\t");
+        if (tab === -1) return;
+        const meta = line.slice(1, tab).split(/\s+/);
+        cur.files.push({
+          status: meta[4] ?? "",
+          blobSha: meta[3] ?? "",
+          path: line.slice(tab + 1),
+        });
+      }
+    },
+    end(): void {
+      if (cur) onCommit(cur);
+      cur = null;
+    },
+  };
+}
+
 export function parseLog(out: string): RawCommit[] {
   const commits: RawCommit[] = [];
-  let cur: RawCommit | null = null;
-  for (const line of out.split("\n")) {
-    if (line.startsWith(COMMIT)) {
-      if (cur) commits.push(cur);
-      const parts = line.slice(COMMIT.length).split(FIELD);
-      cur = {
-        sha: parts[0] ?? "",
-        committedAt: Number(parts[1] ?? 0),
-        author: parts[2] ?? "",
-        subject: parts[3] ?? "",
-        files: [],
-      };
-    } else if (line.startsWith(":") && cur) {
-      // :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>
-      const tab = line.indexOf("\t");
-      if (tab === -1) continue;
-      const meta = line.slice(1, tab).split(/\s+/);
-      cur.files.push({
-        status: meta[4] ?? "",
-        blobSha: meta[3] ?? "",
-        path: line.slice(tab + 1),
-      });
-    }
-  }
-  if (cur) commits.push(cur);
+  const folder = logFolder((c) => commits.push(c));
+  for (const line of out.split("\n")) folder.line(line);
+  folder.end();
   return commits;
 }
 
@@ -197,26 +216,9 @@ export async function streamLog(
 
   if (!child.stdout) throw new Error("git log produced no stdout");
   const rl = createInterface({ input: child.stdout, crlfDelay: Number.POSITIVE_INFINITY });
-  let cur: RawCommit | null = null;
-  for await (const line of rl) {
-    if (line.startsWith(COMMIT)) {
-      if (cur) onCommit(cur);
-      const parts = line.slice(COMMIT.length).split(FIELD);
-      cur = {
-        sha: parts[0] ?? "",
-        committedAt: Number(parts[1] ?? 0),
-        author: parts[2] ?? "",
-        subject: parts[3] ?? "",
-        files: [],
-      };
-    } else if (line.startsWith(":") && cur) {
-      const tab = line.indexOf("\t");
-      if (tab === -1) continue;
-      const meta = line.slice(1, tab).split(/\s+/);
-      cur.files.push({ status: meta[4] ?? "", blobSha: meta[3] ?? "", path: line.slice(tab + 1) });
-    }
-  }
-  if (cur) onCommit(cur);
+  const folder = logFolder(onCommit);
+  for await (const line of rl) folder.line(line);
+  folder.end();
 
   await new Promise<void>((resolve, reject) => {
     child.on("close", (code) => (code ? reject(new Error(`git log exited ${code}`)) : resolve()));
