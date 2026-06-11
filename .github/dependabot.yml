@@ -32,3 +32,14 @@ updates:
       npm-dependencies:
         patterns:
           - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/trigger"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 7
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"

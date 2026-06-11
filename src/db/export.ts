@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { sqlLit as lit } from "./d1remote.ts";
 
 // The D1 read-slice: only what the site queries. commit_index/snapshots are
 // crawler scaffolding and never leave the working database.
@@ -44,12 +45,6 @@ CREATE INDEX idx_packages_name ON packages (name);
 // Rows per INSERT. Keeps statement count low (~2k for the full catalog) so
 // `wrangler d1 execute` doesn't choke parsing one statement per row.
 const BATCH = 200;
-
-function lit(v: unknown): string {
-  if (v === null || v === undefined) return "NULL";
-  if (typeof v === "number") return String(v);
-  return `'${String(v).replace(/'/g, "''")}'`;
-}
 
 function dumpTable(
   db: DatabaseSync,

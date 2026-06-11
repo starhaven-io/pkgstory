@@ -10,8 +10,12 @@ export interface Source {
   dir: string;
   kind: PackageKind;
   repoDir: string;
-  /** Current sharded path for a package, e.g. `Formula/g/git.rb`. */
-  pathFor(name: string): string;
+  /**
+   * Current sharded path plus the pre-sharding flat path, e.g.
+   * `Formula/g/git.rb` and `Formula/git.rb` — so a curated (demo) crawl sees the
+   * package's whole in-repo history, not just the post-2023 shard era.
+   */
+  pathsFor(name: string): string[];
   /** Package name for a touched path, keyed on basename so relocations don't matter. */
   packageOf(path: string): string | null;
 }
@@ -35,6 +39,14 @@ const DEFS: SourceDef[] = [
   { id: "homebrew-cask", label: "Homebrew cask", tap: "homebrew/cask", dir: "Casks", kind: "cask" },
 ];
 
+// Observed tap layouts: core shards lib* into Formula/lib/, cask shards fonts two
+// deep (Casks/font/font-a/font-abc.rb); everything else by first character.
+function shardOf(kind: PackageKind, name: string): string {
+  if (kind === "formula" && name.startsWith("lib")) return "lib";
+  if (kind === "cask" && name.startsWith("font-")) return `font/font-${name[5] ?? "_"}`;
+  return name[0]?.toLowerCase() ?? "_";
+}
+
 function makeSource(def: SourceDef, repoDir: string): Source {
   const dir = def.dir;
   // <dir> as any path component (covers Library/Formula/ and Formula/), then any
@@ -44,9 +56,8 @@ function makeSource(def: SourceDef, repoDir: string): Source {
   return {
     ...def,
     repoDir,
-    pathFor(name: string): string {
-      const first = name[0]?.toLowerCase() ?? "_";
-      return `${dir}/${first}/${name}.rb`;
+    pathsFor(name: string): string[] {
+      return [`${dir}/${shardOf(def.kind, name)}/${name}.rb`, `${dir}/${name}.rb`];
     },
     packageOf(path: string): string | null {
       return path.match(re)?.[1] ?? null;

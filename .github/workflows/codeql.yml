@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "src/**"
+      - "site/**"
+      - "trigger/**"
       - ".github/workflows/**"
 
 concurrency:

@@ -24,13 +24,19 @@ function run(args: string[]): string {
 
 export function sqlLit(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
-  if (typeof v === "number") return String(v);
+  if (typeof v === "number") {
+    // NaN/Infinity would emit invalid SQL; fail loudly instead of corrupting a batch.
+    if (!Number.isFinite(v)) throw new RangeError(`non-finite number in SQL literal: ${v}`);
+    return String(v);
+  }
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
 export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
   const out = run([`--${mode}`, "--json", "--command", sql]);
-  const start = out.indexOf("["); // tolerate any leading banner lines
+  // Tolerate leading banner lines, anchored to line start so a "▲ [WARNING] …"
+  // banner's own bracket can't fool it — the JSON array opens at column 0.
+  const start = out.search(/^\[/m);
   if (start === -1) return [];
   const parsed = JSON.parse(out.slice(start)) as Array<{ results?: Record<string, unknown>[] }>;
   return parsed[0]?.results ?? [];

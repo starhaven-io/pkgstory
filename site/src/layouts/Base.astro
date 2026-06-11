@@ -261,6 +261,10 @@ const ogDescription = description ?? tagline;
       tbody tr:hover {
         background: var(--row-hover);
       }
+      /* Landing target of an RSS item link (#<version>). */
+      tbody tr:target {
+        background: var(--accent-soft);
+      }
       td:first-child,
       th:first-child {
         padding-left: 0.2rem;
@@ -484,7 +488,8 @@ const ogDescription = description ?? tagline;
         <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-only</a>.
       </footer>
     </main>
-    <script is:inline>
+    <script>
+      // Bundled (not is:inline) so script-src needs no 'unsafe-inline'.
       // Upgrade the UTC "last checked" stamp to the visitor's locale: relative text
       // (accurate — computed against the real crawl time), local absolute on hover.
       for (const el of document.querySelectorAll("time.checked")) {

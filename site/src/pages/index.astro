@@ -97,6 +97,8 @@ Astro.response.headers.set(
         if (!data) data = await (await fetch("/packages.json")).json();
         return data ?? [];
       };
+      // Warm the ~1 MB index while the user is still reaching for their first key.
+      input.addEventListener("focus", () => void load(), { once: true });
       const rowHtml = (p: Pkg): string => {
         const kind = p.s === "c" ? "cask" : "formula";
         const src = p.s === "c" ? "homebrew-cask" : "homebrew-formula";

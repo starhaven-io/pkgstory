@@ -28,6 +28,11 @@ const STATE_CODE: Record<Exclude<LifecycleState, "active">, StatusCode> = {
 
 /** Per-package lifecycle metadata for the detail page (raw D1 columns). */
 export interface PackageMeta {
+  // Denormalized current version. After a downgrade this is the shipping version,
+  // while events[0] (max introduced_at) still points at the rolled-back one —
+  // re-introduced versions keep their original introduced_at by design.
+  latestVersion: string | null;
+  latestRevision: number;
   removedAt: number | null;
   removedCommit: string | null;
   deprecateDate: string | null;

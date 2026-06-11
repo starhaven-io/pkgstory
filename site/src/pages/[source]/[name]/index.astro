@@ -28,7 +28,12 @@ if (events.length === 0) {
 }
 
 const status = meta ? statusOf(meta, todayISO()) : null;
+// Prefer the denormalized latest: after a downgrade events[0] is the rolled-back
+// version (re-introductions keep their original introduced_at), not the shipping one.
 const latestEvent = events[0]!;
+const latestShipped = meta?.latestVersion
+  ? displayVersion(meta.latestVersion, meta.latestRevision)
+  : displayVersion(latestEvent.version, latestEvent.revision);
 
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set(
@@ -92,7 +97,7 @@ const monthFmt = (t: number) =>
         disableDate={meta.disableDate}
         disableReason={meta.disableReason}
         repo={repo}
-        lastVersion={displayVersion(latestEvent.version, latestEvent.revision)}
+        lastVersion={latestShipped}
       />
     )
   }
@@ -150,8 +155,9 @@ const monthFmt = (t: number) =>
     </thead>
     <tbody>
       {
+        /* Row ids anchor the RSS item links (#<version>). */
         events.map((e) => (
-          <tr>
+          <tr id={displayVersion(e.version, e.revision)}>
             <td>
               <Version version={e.version} revision={e.revision} />
             </td>

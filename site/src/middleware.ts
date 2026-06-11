@@ -15,8 +15,11 @@ const SECURITY_HEADERS: Record<string, string> = {
   "Cross-Origin-Embedder-Policy": "credentialless",
   "Cross-Origin-Opener-Policy": "same-origin",
   "Cross-Origin-Resource-Policy": "same-origin",
+  // script-src has no 'unsafe-inline': every site script is bundled (no is:inline),
+  // and the CF Insights beacon is an external src. style-src keeps it for Astro's
+  // inlined <style> blocks.
   "Content-Security-Policy":
-    "default-src 'none'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "default-src 'none'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://cloudflareinsights.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
 };
 
 export const onRequest = defineMiddleware(async (_context, next) => {

@@ -29,8 +29,9 @@ function migrate(db: DatabaseSync): void {
   ]) {
     try {
       db.exec(stmt);
-    } catch {
-      // column already exists
+    } catch (e) {
+      // "duplicate column name" is the already-migrated case; anything else is real.
+      if (!String(e).includes("duplicate column name")) throw e;
     }
   }
 }

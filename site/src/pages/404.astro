@@ -6,6 +6,9 @@ import Base from "../layouts/Base.astro";
 // SSR so the status is a real 404 — both for unmatched routes (the adapter serves
 // this page) and for a missing package (the detail page rewrites here).
 Astro.response.status = 404;
+// Brief edge cache: misses are the one path a URL sweep could otherwise ride
+// straight to D1 (the detail page queries before rewriting here).
+Astro.response.headers.set("cache-control", "public, max-age=60, s-maxage=300");
 ---
 
 <Base title="Not found — pkgstory" description="Page not found.">
