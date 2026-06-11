@@ -24,12 +24,14 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
        (package_id, version, revision, introduced_at, commit_sha, subject)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
+  // id DESC on the timestamp tie: rows were inserted in git-log order (newest
+  // first), so within one second a *larger* id is the *older* commit.
   const snaps = db.prepare(
     `SELECT s.version, s.revision, s.committed_at, s.commit_sha, ci.subject
        FROM snapshots s JOIN commit_index ci
          ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha
       WHERE s.package_id = ?
-      ORDER BY s.committed_at ASC, s.id ASC`,
+      ORDER BY s.committed_at ASC, s.id DESC`,
   );
   let events = 0;
 
