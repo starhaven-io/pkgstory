@@ -47,7 +47,8 @@ function shardOf(kind: PackageKind, name: string): string {
   return name[0]?.toLowerCase() ?? "_";
 }
 
-function makeSource(def: SourceDef, repoDir: string): Source {
+/** Exported for tests, which point a real Source at a fixture repo. */
+export function makeSource(def: SourceDef, repoDir: string): Source {
   const dir = def.dir;
   // <dir> as any path component (covers Library/Formula/ and Formula/), then any
   // number of shard subdirs (casks shard fonts two deep: Casks/font/font-a/x.rb),
