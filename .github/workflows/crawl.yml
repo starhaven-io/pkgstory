@@ -38,12 +38,29 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Compute tap cache week
+        id: tap-week
+        run: echo "week=$(date -u +%G-%V)" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore tap clones
+        # setup-homebrew fetches the delta into a pre-existing tap dir and only
+        # full-clones when it's absent, so restoring the clones turns ~1-2 min of
+        # cloning per run into a few seconds of fetch. The weekly key means one
+        # cache save per week (first run after rollover, via restore-keys); a
+        # corrupted cache self-heals at the next rollover, or bump v1 to evict now.
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-core
+            /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-cask
+          key: taps-v1-${{ steps.tap-week.outputs.week }}
+          restore-keys: taps-v1-
+
       - name: Set up Homebrew taps
         uses: Homebrew/actions/setup-homebrew@main
         with:
           # Full (non-shallow) tap clones — brew dropped shallow taps — so the crawler's
-          # `git log <cursor>..HEAD` always reaches the stored cursor. ~1-2 min/run;
-          # caching the taps' .git is a future optimization.
+          # `git log <cursor>..HEAD` always reaches the stored cursor.
           core: true
           cask: true
 
