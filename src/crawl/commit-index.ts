@@ -10,7 +10,7 @@ import type { Source } from "../sources/index.ts";
  */
 export function buildCommitIndex(db: DatabaseSync, source: Source, names: string[]): number {
   const wanted = new Set(names);
-  const pathspecs = names.map((n) => source.pathFor(n));
+  const pathspecs = names.flatMap((n) => source.pathsFor(n));
   const commits = logRaw(source.repoDir, pathspecs);
 
   const insert = db.prepare(
