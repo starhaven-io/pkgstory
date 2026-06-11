@@ -87,6 +87,19 @@ describe("parseCask", () => {
   it("maps :latest", () => {
     expect(parseCask('cask "x" do\n  version :latest\nend').version).toBe("latest");
   });
+  it("reads an arch-conditional version inside an on_arm block", () => {
+    const src = `cask "y" do
+  on_arm do
+    version "2.5.0,arm64.001"
+    sha256 "aaaa"
+  end
+  on_intel do
+    version "2.5.0,x64.001"
+    sha256 "bbbb"
+  end
+end`;
+    expect(parseCask(src).version).toBe("2.5.0,arm64.001");
+  });
 });
 
 describe("parseLifecycle", () => {
