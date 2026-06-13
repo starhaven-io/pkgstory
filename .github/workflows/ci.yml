@@ -146,7 +146,8 @@ jobs:
 
       - name: Install dependencies
         if: matrix.check == 'lint' || matrix.check == 'test'
-        run: npm ci
+        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        run: npm ci --strict-allow-scripts
 
       # --- Lint ---
 
@@ -198,7 +199,8 @@ jobs:
       - name: Install site dependencies
         if: matrix.check == 'site'
         working-directory: site
-        run: npm ci
+        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        run: npm ci --strict-allow-scripts
 
       - name: Check formatting
         if: matrix.check == 'site'
@@ -221,7 +223,8 @@ jobs:
       - name: Install trigger dependencies
         if: matrix.check == 'trigger'
         working-directory: trigger
-        run: npm ci
+        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        run: npm ci --strict-allow-scripts
 
       - name: Typecheck trigger
         if: matrix.check == 'trigger'
