@@ -22,5 +22,11 @@
     "prettier": "^3.8.3",
     "prettier-plugin-astro": "^0.14.1",
     "wrangler": "^4.98.0"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "fsevents": true,
+    "sharp": true,
+    "workerd": true
   }
 }
