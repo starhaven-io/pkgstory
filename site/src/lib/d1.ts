@@ -1,5 +1,5 @@
-import { env } from "cloudflare:workers";
-import type { PackageMeta, VersionEvent } from "./format.ts";
+import { env } from 'cloudflare:workers';
+import type { PackageMeta, VersionEvent } from './format.ts';
 
 // Minimal D1 surface (avoids a @cloudflare/workers-types dependency). Used by the
 // on-demand per-package pages, which read only one package's rows via the index.
@@ -18,11 +18,7 @@ export function getDb(): D1 {
   return (env as unknown as { DB: D1 }).DB;
 }
 
-export async function timeline(
-  db: D1,
-  source: string,
-  name: string,
-): Promise<VersionEvent[]> {
+export async function timeline(db: D1, source: string, name: string): Promise<VersionEvent[]> {
   const { results } = await db
     .prepare(
       `SELECT ve.version, ve.revision, ve.introduced_at AS introducedAt, ve.commit_sha AS commitSha, ve.subject
@@ -36,11 +32,7 @@ export async function timeline(
 }
 
 /** Per-package lifecycle metadata (removed / deprecated / disabled state). */
-export async function packageMeta(
-  db: D1,
-  source: string,
-  name: string,
-): Promise<PackageMeta | null> {
+export async function packageMeta(db: D1, source: string, name: string): Promise<PackageMeta | null> {
   const row = await db
     .prepare(
       `SELECT latest_version AS latestVersion, latest_revision AS latestRevision,
@@ -56,8 +48,6 @@ export async function packageMeta(
 
 /** Most recent successful crawl across sources — the freshness heartbeat. */
 export async function lastChecked(db: D1): Promise<number | null> {
-  const row = await db
-    .prepare("SELECT MAX(last_crawled_at) AS at FROM crawl_state")
-    .first<{ at: number | null }>();
+  const row = await db.prepare('SELECT MAX(last_crawled_at) AS at FROM crawl_state').first<{ at: number | null }>();
   return row?.at ?? null;
 }

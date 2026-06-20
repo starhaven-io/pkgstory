@@ -1,11 +1,11 @@
 ---
-import { sourceLabel } from "../lib/format.ts";
+import { sourceLabel } from '../lib/format.ts';
 
 interface Props {
   source: string;
 }
 const { source } = Astro.props;
-const variant = source === "homebrew-cask" ? "chip-cask" : "chip-formula";
+const variant = source === 'homebrew-cask' ? 'chip-cask' : 'chip-formula';
 ---
 
-<span class:list={["chip", variant]}>{sourceLabel(source)}</span>
+<span class:list={['chip', variant]}>{sourceLabel(source)}</span>

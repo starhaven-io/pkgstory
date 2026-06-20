@@ -8,24 +8,13 @@ interface Props {
   height?: number;
   title?: string;
 }
-const {
-  dates,
-  from,
-  to,
-  bins = 24,
-  width = 104,
-  height = 24,
-  title,
-} = Astro.props;
+const { dates, from, to, bins = 24, width = 104, height = 24, title } = Astro.props;
 
 const span = Math.max(1, to - from);
 const counts = new Array<number>(bins).fill(0);
 for (const d of dates) {
   if (d < from || d > to) continue;
-  const i = Math.min(
-    bins - 1,
-    Math.max(0, Math.floor(((d - from) / span) * bins)),
-  );
+  const i = Math.min(bins - 1, Math.max(0, Math.floor(((d - from) / span) * bins)));
   counts[i] += 1;
 }
 const max = Math.max(1, ...counts);
@@ -40,7 +29,7 @@ const barW = (width - gap * (bins - 1)) / bins;
   viewBox={`0 0 ${width} ${height}`}
   preserveAspectRatio="none"
   role="img"
-  aria-label={title ?? "release cadence"}
+  aria-label={title ?? 'release cadence'}
 >
   {
     counts.map((c, i) => {
@@ -52,7 +41,7 @@ const barW = (width - gap * (bins - 1)) / bins;
           width={barW}
           height={h}
           rx="0.5"
-          class:list={["spark-bar", { "spark-empty": c === 0 }]}
+          class:list={['spark-bar', { 'spark-empty': c === 0 }]}
         />
       );
     })
