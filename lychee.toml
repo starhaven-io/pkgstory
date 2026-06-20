@@ -1,6 +1,6 @@
 # Configuration for https://github.com/lycheeverse/lychee
-# Checks links in the built Astro site under `site/dist/client/`
-# and the repo root README.md.
+# Checks documentation links. `pkgstory/site` is SSR-backed and does not emit
+# static HTML pages under `site/dist/client/`; build/deploy checks cover the site.
 # Run: `just lychee` (requires `just site-build` first).
 
 max_concurrency = 20

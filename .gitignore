@@ -1,23 +1,21 @@
-# Build
-dist/
+# Local machine/editor/agent state
+.claude/
+.codex/
+.DS_Store
+.vscode/
 
-# Node
+# Build outputs
+.astro/
+dist/
+.wrangler/
+
+# Dependencies
 node_modules/
 
-# Generated database (rebuilt by `just crawl`)
+# Generated data
 *.db
 *.db-shm
 *.db-wal
 
-# Claude Code
-.claude/
-
-# Astro / Wrangler
-.astro/
-.wrangler/
-
-# Typos (override global gitignore)
+# Tooling
 !_typos.toml
-
-# macOS
-.DS_Store
