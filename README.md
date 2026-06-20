@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/starhaven-io/pkgstory/actions/workflows/ci.yml/badge.svg)](https://github.com/starhaven-io/pkgstory/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
-[![Data: CC-BY-4.0](https://img.shields.io/badge/Data-CC--BY--4.0-green.svg)](https://creativecommons.org/licenses/by/4.0/)
+[![Data: CC-BY-4.0](https://img.shields.io/badge/Data-CC--BY--4.0-green.svg)](data/LICENSE)
 
 **Every package has a version story.** pkgstory mines a package manager's git
 history into a browsable timeline — which version shipped, and when — for every
@@ -82,4 +82,4 @@ refreshes the KV cache — it's what the scheduled job runs.
 ## License
 
 Code is [AGPL-3.0-only](LICENSE). The version-history data, mined from public
-git history, is CC-BY-4.0.
+git history, is [CC-BY-4.0](data/LICENSE).

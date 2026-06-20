@@ -36,7 +36,7 @@ is a secret.
 3. Deploy the Worker so the script exists, then store the key as a secret:
    ```sh
    cd trigger
-   npm install
+   npm ci --strict-allow-scripts
    npm run deploy
    npx wrangler secret put APP_PRIVATE_KEY < starhaven-bot.pk8.pem
    ```

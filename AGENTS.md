@@ -4,6 +4,8 @@ Most importantly, run `just check` to verify file edits before handing work back
 unless the change is documentation-only and the narrower formatter/spellcheck
 commands are enough.
 
+## Project overview
+
 pkgstory is a package version-history viewer. It mines package-manager git
 history into a SQLite index and renders browsable per-package timelines, a
 recent-updates feed, and RSS. Repology answers "where does this package exist";
@@ -17,9 +19,9 @@ runtime reads and precomputed KV blobs for catalog-wide reads.
 Licensed AGPL-3.0-only. Formatting and linting are split by area: Biome covers
 the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 
-## Code Standards
+## Required checks
 
-### Required Before Each Commit
+### Local verification
 
 - Run `just check` for the full local gate: typecheck, tests, lint, formatting,
   typos, and site checks.
@@ -32,7 +34,7 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 - Run `just install-hooks` once per clone so DCO sign-off and pre-push checks are
   active.
 
-### Development Flow
+### Development flow
 
 - Prefer the repo's existing TypeScript style and keep code runnable directly on
   Node 26.
@@ -47,7 +49,7 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 - Preserve deployment economics: catalog-wide pages should use precomputed KV
   blobs, not per-request D1 catalog scans.
 
-## Repository Structure
+## Repository structure
 
 - `src/cli.ts`: CLI entry point for `pkgstory crawl`.
 - `src/git.ts`: git plumbing, including `logRaw` and `batchCat`.
@@ -64,7 +66,7 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 - `trigger/`: Small Cloudflare Worker that reliably triggers scheduled crawls.
 - `justfile`: canonical local command surface.
 
-## Architecture
+## Project-specific notes
 
 The index has three persisted derivation layers:
 
@@ -83,7 +85,7 @@ Lifecycle and removal state is denormalized onto `packages`. `disable!` outranks
 `deprecate!`; removals are reconciled against `git ls-tree HEAD` and preserve the
 last captured lifecycle so the site can explain why a package disappeared.
 
-## Key Guidelines
+## Safety / do-not-touch rules
 
 1. Keep diffs focused and avoid unrelated refactors.
 2. Use structured parsers and existing helpers rather than ad hoc string
@@ -100,15 +102,18 @@ last captured lifecycle so the site can explain why a package disappeared.
 8. Keep README and operational docs current when changing command names,
    deployment behavior, or data semantics.
 
-## Commit and PR Conventions
+## Commit and PR conventions
 
 - Use Conventional Commits: `type(scope): description`, with types such as
   `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, and
   `chore`.
 - Sign off commits with `git commit -s`; DCO is enforced by
   `.githooks/commit-msg`.
-- When work is authored with an AI assistant, add the appropriate
-  `Co-Authored-By` trailer for that assistant after the `Signed-off-by` trailer.
+- When authored with an AI coding agent, add a `Co-Authored-By` trailer after
+  `Signed-off-by`, naming the agent and model. Current examples:
+  `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` or
+  `Co-Authored-By: Codex GPT-5 <noreply@openai.com>`. Bump the model version as
+  newer ones ship.
 - Never commit directly to `main`; create a branch and open a PR.
 - PR descriptions should be a short prose summary only, with no test-plan
-  sections and no bot attribution footers.
+  sections and no bot attribution or generated-with footers.
