@@ -1,15 +1,19 @@
 {
   "name": "pkgstory-site",
+  "private": true,
   "type": "module",
   "engines": {
     "node": ">=26.0.0"
   },
   "scripts": {
     "dev": "astro dev",
+    "check:headers": "node scripts/check-security-headers.mjs",
+    "prebuild": "node scripts/check-security-headers.mjs",
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
     "deploy": "wrangler deploy --config dist/server/wrangler.json",
+    "deploy:dry": "npm run deploy -- --dry-run",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

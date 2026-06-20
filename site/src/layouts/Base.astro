@@ -1,5 +1,5 @@
 ---
-import { isoDateTime } from "../lib/format.ts";
+import { isoDateTime } from '../lib/format.ts';
 
 interface Props {
   title: string;
@@ -12,13 +12,10 @@ interface Props {
   lastCheckedAt?: number | null;
 }
 const { title, description, tagline, feedHref, lastCheckedAt } = Astro.props;
-const checkedIso = lastCheckedAt
-  ? new Date(lastCheckedAt * 1000).toISOString()
-  : null;
+const checkedIso = lastCheckedAt ? new Date(lastCheckedAt * 1000).toISOString() : null;
 // Canonical origin (not the request host) so og:url/canonical stay stable behind the
 // edge cache; description falls back to the tagline for social unfurls.
-const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url.origin)
-  .href;
+const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url.origin).href;
 const ogDescription = description ?? tagline;
 ---
 
@@ -34,28 +31,11 @@ const ogDescription = description ?? tagline;
     <meta property="og:site_name" content="pkgstory" />
     <meta property="og:title" content={title} />
     <meta property="og:url" content={canonical} />
-    {
-      ogDescription && (
-        <meta property="og:description" content={ogDescription} />
-      )
-    }
+    {ogDescription && <meta property="og:description" content={ogDescription} />}
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content={title} />
-    {
-      ogDescription && (
-        <meta name="twitter:description" content={ogDescription} />
-      )
-    }
-    {
-      feedHref && (
-        <link
-          rel="alternate"
-          type="application/rss+xml"
-          title={title}
-          href={feedHref}
-        />
-      )
-    }
+    {ogDescription && <meta name="twitter:description" content={ogDescription} />}
+    {feedHref && <link rel="alternate" type="application/rss+xml" title={title} href={feedHref} />}
     <style is:global>
       :root {
         --bg: #fbfbf9;
@@ -113,7 +93,7 @@ const ogDescription = description ?? tagline;
         font:
           14px/1.55 ui-monospace,
           SFMono-Regular,
-          "SF Mono",
+          'SF Mono',
           Menlo,
           Consolas,
           monospace;
@@ -171,7 +151,7 @@ const ogDescription = description ?? tagline;
         color: var(--fg);
       }
       header.site h1 a::before {
-        content: "❯ ";
+        content: '❯ ';
         color: var(--accent);
       }
       header.site h1 a:hover {
@@ -443,7 +423,7 @@ const ogDescription = description ?? tagline;
             {
               lastCheckedAt && checkedIso && (
                 <span>
-                  checked{" "}
+                  checked{' '}
                   <time class="checked" datetime={checkedIso}>
                     {isoDateTime(lastCheckedAt)}
                   </time>
@@ -457,18 +437,8 @@ const ogDescription = description ?? tagline;
                 </a>
               )
             }
-            <a
-              class="gh"
-              href="https://github.com/starhaven-io/pkgstory"
-              aria-label="Source on GitHub"
-            >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                aria-hidden="true"
-              >
+            <a class="gh" href="https://github.com/starhaven-io/pkgstory" aria-label="Source on GitHub">
+              <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                 <path
                   d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"
                 ></path>
@@ -477,14 +447,13 @@ const ogDescription = description ?? tagline;
           </div>
         </div>
         <p class="tagline">
-          {tagline ?? description ?? "Every package has a version story."}
+          {tagline ?? description ?? 'Every package has a version story.'}
         </p>
       </header>
       <slot />
       <footer>
-        Data licensed under{" "}
-        <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a>.
-        Code licensed under{" "}
+        Data licensed under{' '}
+        <a href="https://creativecommons.org/licenses/by/4.0/">CC-BY-4.0</a>. Code licensed under{' '}
         <a href="https://www.gnu.org/licenses/agpl-3.0.html">AGPL-3.0-only</a>.
       </footer>
     </main>
@@ -492,17 +461,17 @@ const ogDescription = description ?? tagline;
       // Bundled (not is:inline) so script-src needs no 'unsafe-inline'.
       // Upgrade the UTC "last checked" stamp to the visitor's locale: relative text
       // (accurate — computed against the real crawl time), local absolute on hover.
-      for (const el of document.querySelectorAll("time.checked")) {
-        const d = new Date(el.getAttribute("datetime"));
+      for (const el of document.querySelectorAll('time.checked')) {
+        const d = new Date(el.getAttribute('datetime'));
         if (Number.isNaN(d.getTime())) continue;
         el.title = d.toLocaleString();
         const secs = Math.round((Date.now() - d.getTime()) / 1000);
-        const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-        let text = "just now";
+        const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+        let text = 'just now';
         for (const [unit, s] of [
-          ["day", 86400],
-          ["hour", 3600],
-          ["minute", 60],
+          ['day', 86400],
+          ['hour', 3600],
+          ['minute', 60],
         ]) {
           if (secs >= s) {
             text = rtf.format(-Math.round(secs / s), unit);

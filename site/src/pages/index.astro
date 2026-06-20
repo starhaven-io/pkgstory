@@ -1,22 +1,19 @@
 ---
 export const prerender = false;
 
-import Base from "../layouts/Base.astro";
-import Chip from "../components/Chip.astro";
-import StatusChip from "../components/StatusChip.astro";
-import Version from "../components/Version.astro";
-import { home } from "../lib/cache.ts";
-import { isoDate } from "../lib/format.ts";
+import Base from '../layouts/Base.astro';
+import Chip from '../components/Chip.astro';
+import StatusChip from '../components/StatusChip.astro';
+import Version from '../components/Version.astro';
+import { home } from '../lib/cache.ts';
+import { isoDate } from '../lib/format.ts';
 
 const { formulae, casks, recent, checkedAt } = await home();
 const total = formulae + casks;
 const lastCheckedAt = checkedAt;
 
 // Short edge cache so the home page stays cheap between crawls (~30 min apart).
-Astro.response.headers.set(
-  "cache-control",
-  "public, max-age=300, s-maxage=600",
-);
+Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
 ---
 
 <Base
@@ -68,9 +65,9 @@ Astro.response.headers.set(
   </section>
 
   <script>
-    const input = document.getElementById("q") as HTMLInputElement | null;
-    const results = document.getElementById("results");
-    const recentEl = document.getElementById("recent");
+    const input = document.getElementById('q') as HTMLInputElement | null;
+    const results = document.getElementById('results');
+    const recentEl = document.getElementById('recent');
     if (input && results && recentEl) {
       interface Pkg {
         n: string;
@@ -78,42 +75,34 @@ Astro.response.headers.set(
         v: string | null;
         r: number;
         c: number;
-        x?: "r" | "x" | "d";
+        x?: 'r' | 'x' | 'd';
       }
       const STATUS: Record<string, [string, string]> = {
-        r: ["removed", "chip-removed"],
-        x: ["disabled", "chip-disabled"],
-        d: ["deprecated", "chip-deprecated"],
+        r: ['removed', 'chip-removed'],
+        x: ['disabled', 'chip-disabled'],
+        d: ['deprecated', 'chip-deprecated'],
       };
       let data: Pkg[] | null = null;
       const esc = (s: string) =>
-        s.replace(
-          /[&<>"]/g,
-          (ch) =>
-            ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] ??
-            ch,
-        );
+        s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch);
       const load = async (): Promise<Pkg[]> => {
-        if (!data) data = await (await fetch("/packages.json")).json();
+        if (!data) data = await (await fetch('/packages.json')).json();
         return data ?? [];
       };
       // Warm the ~1 MB index while the user is still reaching for their first key.
-      input.addEventListener("focus", () => void load(), { once: true });
+      input.addEventListener('focus', () => void load(), { once: true });
       const rowHtml = (p: Pkg): string => {
-        const kind = p.s === "c" ? "cask" : "formula";
-        const src = p.s === "c" ? "homebrew-cask" : "homebrew-formula";
-        const ver = p.r ? `${p.v}_${p.r}` : (p.v ?? "");
-        const st =
-          p.x && STATUS[p.x]
-            ? ` <span class="chip ${STATUS[p.x][1]}">${STATUS[p.x][0]}</span>`
-            : "";
+        const kind = p.s === 'c' ? 'cask' : 'formula';
+        const src = p.s === 'c' ? 'homebrew-cask' : 'homebrew-formula';
+        const ver = p.r ? `${p.v}_${p.r}` : (p.v ?? '');
+        const st = p.x && STATUS[p.x] ? ` <span class="chip ${STATUS[p.x][1]}">${STATUS[p.x][0]}</span>` : '';
         return `<tr><td><a href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a>${st}</td><td><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
       };
-      input.addEventListener("input", async () => {
+      input.addEventListener('input', async () => {
         const q = input.value.trim().toLowerCase();
         if (!q) {
           results.hidden = true;
-          results.innerHTML = "";
+          results.innerHTML = '';
           recentEl.hidden = false;
           return;
         }
@@ -126,8 +115,8 @@ Astro.response.headers.set(
           return a.n.length - b.n.length || a.n.localeCompare(b.n);
         });
         const shown = matches.slice(0, 100);
-        const note = `${matches.length.toLocaleString()} match${matches.length === 1 ? "" : "es"}${matches.length > 100 ? " · showing 100" : ""}`;
-        results.innerHTML = `<p class="muted">${note}</p><table><tbody>${shown.map(rowHtml).join("")}</tbody></table>`;
+        const note = `${matches.length.toLocaleString()} match${matches.length === 1 ? '' : 'es'}${matches.length > 100 ? ' · showing 100' : ''}`;
+        results.innerHTML = `<p class="muted">${note}</p><table><tbody>${shown.map(rowHtml).join('')}</tbody></table>`;
         recentEl.hidden = true;
         results.hidden = false;
       });

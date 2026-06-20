@@ -6,7 +6,7 @@ build:
 
 # Install dependencies
 install:
-    npm install
+    npm ci --strict-allow-scripts
 
 # Test
 
@@ -62,21 +62,21 @@ site-format-check:
 
 # Install site dependencies
 site-install:
-    cd site && npm install
+    cd site && npm ci --strict-allow-scripts
 
 # Preview the built site
 site-preview:
     cd site && npm run preview
 
-# Check for broken links in the built site and README
+# Build the SSR site, then check documentation links
 lychee: site-build
-    lychee --config lychee.toml --root-dir "$(pwd)/site/dist/client" 'site/dist/client/**/*.html' README.md
+    lychee --config lychee.toml README.md trigger/README.md
 
 # Trigger (crawl cron Worker)
 
 # Install trigger Worker dependencies
 trigger-install:
-    cd trigger && npm install
+    cd trigger && npm ci --strict-allow-scripts
 
 # Run the trigger Worker locally (curl localhost:8787/__scheduled to fire the cron)
 trigger-dev:

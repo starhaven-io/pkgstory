@@ -1,5 +1,5 @@
 ---
-import { isoDate, lifecycleState, plusYear, todayISO } from "../lib/format.ts";
+import { isoDate, lifecycleState, plusYear, todayISO } from '../lib/format.ts';
 
 // The end-of-life banner on a package page. Renders nothing while active (including
 // future-scheduled stanzas). The current state is derived from both deprecate!/disable!
@@ -39,58 +39,50 @@ const state = lifecycleState(
   },
   todayISO(),
 );
-const tap = repo.endsWith("cask") ? "Homebrew/cask" : "Homebrew/core";
-const commitUrl = removedCommit
-  ? `https://github.com/${repo}/commit/${removedCommit}`
-  : null;
+const tap = repo.endsWith('cask') ? 'Homebrew/cask' : 'Homebrew/core';
+const commitUrl = removedCommit ? `https://github.com/${repo}/commit/${removedCommit}` : null;
 
 // The stanza in effect (or, for a removed package, the last one it carried before going).
-const onDisable =
-  state === "disabled" ||
-  (state === "removed" && (disableDate != null || disableReason != null));
-const stageWord = onDisable ? "disabled" : "deprecated";
+const onDisable = state === 'disabled' || (state === 'removed' && (disableDate != null || disableReason != null));
+const stageWord = onDisable ? 'disabled' : 'deprecated';
 const stageDate = onDisable ? disableDate : deprecateDate;
 const stageReason = onDisable ? disableReason : deprecateReason;
-const on = stageDate ? ` on ${stageDate}` : "";
-const why = stageReason ? ` because it ${stageReason}` : "";
+const on = stageDate ? ` on ${stageDate}` : '';
+const why = stageReason ? ` because it ${stageReason}` : '';
 
 const removedStage =
-  onDisable || deprecateDate != null || deprecateReason != null
-    ? `${name} was ${stageWord}${on}${why}. `
-    : "";
+  onDisable || deprecateDate != null || deprecateReason != null ? `${name} was ${stageWord}${on}${why}. ` : '';
 const removedText = `Deleted from ${tap} on ${isoDate(removedAt ?? 0)}. ${removedStage}${
-  lastVersion ? `The final version shipped in ${tap} was ${lastVersion}.` : ""
+  lastVersion ? `The final version shipped in ${tap} was ${lastVersion}.` : ''
 }`;
 const disabledText = `${name} was disabled in ${tap}${on}${why}.${
-  disableDate
-    ? ` It will be removed from ${tap} around ${plusYear(disableDate)}.`
-    : ""
+  disableDate ? ` It will be removed from ${tap} around ${plusYear(disableDate)}.` : ''
 }`;
 // A deprecated package will be disabled on its scheduled disable date, else ~1 year on.
 const cutoff = disableDate ?? (deprecateDate ? plusYear(deprecateDate) : null);
 const deprecatedText = `${name} was deprecated in ${tap}${on}${why}.${
-  cutoff ? ` It will no longer be able to be installed after ${cutoff}.` : ""
+  cutoff ? ` It will no longer be able to be installed after ${cutoff}.` : ''
 }`;
 ---
 
 {
-  state !== "active" && (
-    <aside class:list={["banner", `banner-${state}`]}>
+  state !== 'active' && (
+    <aside class:list={['banner', `banner-${state}`]}>
       <span class="banner-tag">{state}</span>
       <span class="banner-text">
-        {state === "removed" && (
+        {state === 'removed' && (
           <>
             {removedText}
             {commitUrl && (
               <>
-                {" "}
+                {' '}
                 <a href={commitUrl}>removal commit ↗</a>
               </>
             )}
           </>
         )}
-        {state === "disabled" && disabledText}
-        {state === "deprecated" && deprecatedText}
+        {state === 'disabled' && disabledText}
+        {state === 'deprecated' && deprecatedText}
       </span>
     </aside>
   )
