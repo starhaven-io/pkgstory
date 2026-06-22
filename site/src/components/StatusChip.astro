@@ -5,7 +5,13 @@ interface Props {
   code: StatusCode;
 }
 const { code } = Astro.props;
-const variant = { r: 'chip-removed', x: 'chip-disabled', d: 'chip-deprecated' }[code];
+const variant = {
+  n: 'chip-renamed',
+  m: 'chip-migrated',
+  r: 'chip-removed',
+  x: 'chip-disabled',
+  d: 'chip-deprecated',
+}[code];
 ---
 
 <span class:list={['chip', variant]}>{STATUS_LABEL[code]}</span>

@@ -141,6 +141,18 @@ export function headSha(repoDir: string): string {
   return execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 }
 
+export function headFile(repoDir: string, path: string): string | null {
+  try {
+    return execFileSync("git", ["-C", repoDir, "show", `HEAD:${path}`], {
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 16,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Package basenames present in `dir` at HEAD. The authoritative "still exists" signal
  * for removal detection: a package absent from this set has been deleted from the tap.

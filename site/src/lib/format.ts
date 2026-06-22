@@ -9,18 +9,22 @@ export interface VersionEvent {
   subject: string;
 }
 
-// Lifecycle state of a package. The compact code (r/x/d) travels in the KV catalog +
-// home blobs; the package page reads the raw stanza columns and derives state with
-// lifecycleState — against today, so a future-scheduled stanza counts only once due.
-export type StatusCode = 'r' | 'x' | 'd';
-export type LifecycleState = 'removed' | 'disabled' | 'deprecated' | 'active';
+// Lifecycle state of a package. The compact code travels in the KV catalog + home
+// blobs; the package page reads the raw columns and derives state with lifecycleState
+// — against today, so a future-scheduled stanza counts only once due.
+export type StatusCode = 'n' | 'm' | 'r' | 'x' | 'd';
+export type LifecycleState = 'renamed' | 'migrated' | 'removed' | 'disabled' | 'deprecated' | 'active';
 
 export const STATUS_LABEL: Record<StatusCode, string> = {
+  n: 'renamed',
+  m: 'migrated',
   r: 'removed',
   x: 'disabled',
   d: 'deprecated',
 };
 const STATE_CODE: Record<Exclude<LifecycleState, 'active'>, StatusCode> = {
+  renamed: 'n',
+  migrated: 'm',
   removed: 'r',
   disabled: 'x',
   deprecated: 'd',
@@ -35,6 +39,8 @@ export interface PackageMeta {
   latestRevision: number;
   removedAt: number | null;
   removedCommit: string | null;
+  renamedTo: string | null;
+  migratedTo: string | null;
   deprecateDate: string | null;
   deprecateReason: string | null;
   disableDate: string | null;
@@ -53,7 +59,11 @@ function inEffect(date: string | null, reason: string | null, today: string): bo
 }
 
 export function lifecycleState(m: PackageMeta, today: string): LifecycleState {
-  if (m.removedAt != null) return 'removed';
+  if (m.removedAt != null) {
+    if (m.renamedTo != null) return 'renamed';
+    if (m.migratedTo != null) return 'migrated';
+    return 'removed';
+  }
   if (inEffect(m.disableDate, m.disableReason, today)) return 'disabled';
   if (inEffect(m.deprecateDate, m.deprecateReason, today)) return 'deprecated';
   return 'active';

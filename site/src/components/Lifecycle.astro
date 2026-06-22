@@ -9,6 +9,8 @@ interface Props {
   name: string;
   removedAt: number | null;
   removedCommit: string | null;
+  renamedTo: string | null;
+  migratedTo: string | null;
   deprecateDate: string | null;
   deprecateReason: string | null;
   disableDate: string | null;
@@ -20,6 +22,8 @@ const {
   name,
   removedAt,
   removedCommit,
+  renamedTo,
+  migratedTo,
   deprecateDate,
   deprecateReason,
   disableDate,
@@ -32,6 +36,8 @@ const state = lifecycleState(
   {
     removedAt,
     removedCommit,
+    renamedTo,
+    migratedTo,
     deprecateDate,
     deprecateReason,
     disableDate,
@@ -41,6 +47,26 @@ const state = lifecycleState(
 );
 const tap = repo.endsWith('cask') ? 'Homebrew/cask' : 'Homebrew/core';
 const commitUrl = removedCommit ? `https://github.com/${repo}/commit/${removedCommit}` : null;
+const source = repo.endsWith('cask') ? 'homebrew-cask' : 'homebrew-formula';
+const targetHref = renamedTo ? `/${source}/${encodeURIComponent(renamedTo)}/` : null;
+
+function migrationTarget(target: string): { label: string; href: string | null } {
+  if (target === 'homebrew/core')
+    return { label: 'Homebrew/core', href: `/homebrew-formula/${encodeURIComponent(name)}/` };
+  if (target === 'homebrew/cask')
+    return { label: 'Homebrew/cask', href: `/homebrew-cask/${encodeURIComponent(name)}/` };
+  if (target.startsWith('homebrew/core/')) {
+    const migratedName = target.slice('homebrew/core/'.length);
+    return { label: `Homebrew/core/${migratedName}`, href: `/homebrew-formula/${encodeURIComponent(migratedName)}/` };
+  }
+  if (target.startsWith('homebrew/cask/')) {
+    const migratedName = target.slice('homebrew/cask/'.length);
+    return { label: `Homebrew/cask/${migratedName}`, href: `/homebrew-cask/${encodeURIComponent(migratedName)}/` };
+  }
+  return { label: target, href: null };
+}
+
+const migration = migratedTo ? migrationTarget(migratedTo) : null;
 
 // The stanza in effect (or, for a removed package, the last one it carried before going).
 const onDisable = state === 'disabled' || (state === 'removed' && (disableDate != null || disableReason != null));
@@ -70,6 +96,40 @@ const deprecatedText = `${name} was deprecated in ${tap}${on}${why}.${
     <aside class:list={['banner', `banner-${state}`]}>
       <span class="banner-tag">{state}</span>
       <span class="banner-text">
+        {state === 'renamed' && (
+          <>
+            {name} was renamed in {tap}
+            {renamedTo && <> to {targetHref ? <a href={targetHref}>{renamedTo}</a> : <>{renamedTo}</>}</>} on{' '}
+            {isoDate(removedAt ?? 0)}.{lastVersion && <> The final version under this name was {lastVersion}.</>}
+            {commitUrl && (
+              <>
+                {' '}
+                <a href={commitUrl}>rename commit ↗</a>
+              </>
+            )}
+          </>
+        )}
+        {state === 'migrated' && (
+          <>
+            {name} was migrated from {tap}
+            {migration && (
+              <> to {migration.href ? <a href={migration.href}>{migration.label}</a> : <>{migration.label}</>}</>
+            )}{' '}
+            on {isoDate(removedAt ?? 0)}.
+            {lastVersion && (
+              <>
+                {' '}
+                The final version in {tap} was {lastVersion}.
+              </>
+            )}
+            {commitUrl && (
+              <>
+                {' '}
+                <a href={commitUrl}>migration commit ↗</a>
+              </>
+            )}
+          </>
+        )}
         {state === 'removed' && (
           <>
             {removedText}

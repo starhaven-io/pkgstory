@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS packages (
   -- time, so a scheduled package flips on its own without a re-crawl.
   removed_at       INTEGER,
   removed_commit   TEXT,
+  renamed_to       TEXT,
+  migrated_to      TEXT,
   deprecate_date   TEXT,
   deprecate_reason TEXT,
   disable_date     TEXT,

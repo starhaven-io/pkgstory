@@ -37,6 +37,7 @@ export async function packageMeta(db: D1, source: string, name: string): Promise
     .prepare(
       `SELECT latest_version AS latestVersion, latest_revision AS latestRevision,
               removed_at AS removedAt, removed_commit AS removedCommit,
+              renamed_to AS renamedTo, migrated_to AS migratedTo,
               deprecate_date AS deprecateDate, deprecate_reason AS deprecateReason,
               disable_date AS disableDate, disable_reason AS disableReason
          FROM packages WHERE source = ? AND name = ?`,

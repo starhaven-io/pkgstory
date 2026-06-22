@@ -22,6 +22,8 @@ function migrate(db: DatabaseSync): void {
     "ALTER TABLE packages ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE packages ADD COLUMN removed_at INTEGER",
     "ALTER TABLE packages ADD COLUMN removed_commit TEXT",
+    "ALTER TABLE packages ADD COLUMN renamed_to TEXT",
+    "ALTER TABLE packages ADD COLUMN migrated_to TEXT",
     "ALTER TABLE packages ADD COLUMN deprecate_date TEXT",
     "ALTER TABLE packages ADD COLUMN deprecate_reason TEXT",
     "ALTER TABLE packages ADD COLUMN disable_date TEXT",
