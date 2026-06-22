@@ -39,7 +39,7 @@ jobs:
         run: |
           # Push to main: run lint + test to warm caches and guard the branch.
           if [[ "${EVENT_NAME}" == "push" ]]; then
-            echo 'matrix=[{"name":"Lint","check":"lint","runner":"ubuntu-latest"},{"name":"Test","check":"test","runner":"ubuntu-latest"}]' >> "${GITHUB_OUTPUT}"
+            echo 'matrix=[{"name":"Lint","check":"lint","runner":"ubuntu-24.04"},{"name":"Test","check":"test","runner":"ubuntu-24.04"}]' >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
@@ -54,8 +54,8 @@ jobs:
 
           # Crawler / tooling changes: lint + test
           if echo "${CHANGED}" | grep -qE '\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^\.github/workflows/ci\.yml$'; then
-            MATRIX+=',{"name":"Lint","check":"lint","runner":"ubuntu-latest"}'
-            MATRIX+=',{"name":"Test","check":"test","runner":"ubuntu-latest"}'
+            MATRIX+=',{"name":"Lint","check":"lint","runner":"ubuntu-24.04"}'
+            MATRIX+=',{"name":"Test","check":"test","runner":"ubuntu-24.04"}'
           fi
 
           # Site changes: format check + build
@@ -70,7 +70,7 @@ jobs:
 
           # Workflow changes: Actions security audit
           if echo "${CHANGED}" | grep -qE '^\.github/workflows/'; then
-            MATRIX+=',{"name":"zizmor","check":"zizmor","runner":"ubuntu-latest"}'
+            MATRIX+=',{"name":"zizmor","check":"zizmor","runner":"ubuntu-24.04"}'
           fi
 
           echo "matrix=${MATRIX}]" >> "${GITHUB_OUTPUT}"
