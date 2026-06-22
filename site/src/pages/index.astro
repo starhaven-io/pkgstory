@@ -75,9 +75,11 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
         v: string | null;
         r: number;
         c: number;
-        x?: 'r' | 'x' | 'd';
+        x?: 'n' | 'm' | 'r' | 'x' | 'd';
       }
       const STATUS: Record<string, [string, string]> = {
+        n: ['renamed', 'chip-renamed'],
+        m: ['migrated', 'chip-migrated'],
         r: ['removed', 'chip-removed'],
         x: ['disabled', 'chip-disabled'],
         d: ['deprecated', 'chip-deprecated'],

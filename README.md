@@ -6,9 +6,10 @@
 
 **Every package has a version story.** pkgstory mines a package manager's git
 history into a browsable timeline — which version shipped, and when — for every
-formula and cask. When a package is deprecated, disabled, or dropped from the tap
-(like `terraform` after its BUSL relicense), it says so — with the date and
-Homebrew's own reason — instead of trailing off at a stale last version.
+formula and cask. When a package is deprecated, disabled, renamed, migrated, or
+dropped from the tap (like `terraform` after its BUSL relicense), it says so —
+with the date and Homebrew's own reason or target — instead of trailing off at a
+stale last version.
 
 **Website:** [pkgstory.dev](https://pkgstory.dev)
 
@@ -41,8 +42,10 @@ four-layer index, drawn so the expensive extraction happens exactly once:
   drop out. This is what the site renders.
 
 A `git ls-tree` pass over `HEAD` after each crawl reconciles which packages still
-exist in the tap — so a deletion (terraform) is recorded with its removal date and
-commit, immune to Homebrew's file relocations.
+exist in the tap. For absent packages, pkgstory consults the tap-root
+`formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files before
+falling back to a plain deletion — so a rename or cross-tap migration is recorded
+with its target instead of being described as removed entirely.
 
 ### Serving it
 

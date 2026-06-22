@@ -103,6 +103,12 @@ function firstPackage(delta: Delta): PackageDelta {
   return pkg;
 }
 
+function packageNamed(delta: Delta, name: string): PackageDelta {
+  const pkg = delta.packages.find((p) => p.name === name);
+  if (!pkg) throw new Error(`expected the delta to contain ${name}`);
+  return pkg;
+}
+
 describe("computeDelta (against a real git repo)", () => {
   it("parses a version bump since the cursor", () => {
     const tap = new TapRepo();
@@ -157,9 +163,39 @@ describe("computeDelta (against a real git repo)", () => {
     const rm = tap.commit("foo: delete");
 
     const pkg = firstPackage(computeDelta(tap.source, cursor.sha));
-    expect(pkg.removed).toEqual({ at: rm.at, commit: rm.sha });
+    expect(pkg.removed).toEqual({ at: rm.at, commit: rm.sha, renamedTo: null, migratedTo: null });
     expect(pkg.touches).toEqual([]);
     expect(pkg.lifecycle).toBeNull(); // no live blob in the window — leave columns alone
+  });
+
+  it("marks deletions as renames or migrations from root metadata", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.write("Formula/o/oldapp.rb", formula("oldapp", "2.0"));
+    const cursor = tap.commit("add old names");
+
+    tap.write("Formula/b/bar.rb", formula("bar", "1.1"));
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    tap.git("rm", "-q", "Formula/o/oldapp.rb");
+    tap.write("formula_renames.json", JSON.stringify({ foo: "bar" }));
+    tap.write("tap_migrations.json", JSON.stringify({ oldapp: "homebrew/cask/oldapp" }));
+    const rm = tap.commit("rename foo and migrate oldapp");
+    tap.write("formula_renames.json", JSON.stringify({ foo: "stale-working-tree-value" }));
+
+    const delta = computeDelta(tap.source, cursor.sha);
+    expect(packageNamed(delta, "foo").removed).toEqual({
+      at: rm.at,
+      commit: rm.sha,
+      renamedTo: "bar",
+      migratedTo: null,
+    });
+    expect(packageNamed(delta, "oldapp").removed).toEqual({
+      at: rm.at,
+      commit: rm.sha,
+      renamedTo: null,
+      migratedTo: "homebrew/cask/oldapp",
+    });
+    expect(packageNamed(delta, "bar").removed).toBeNull();
   });
 
   it("captures deprecate!/disable! stanzas from the latest live blob", () => {
@@ -295,6 +331,47 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     expect(row.latest_version).toBe("1.2"); // the child commit, despite the timestamp tie
     db.close();
   });
+
+  it("clears rename metadata when an incrementally removed package is re-added", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    tap.write("formula_renames.json", JSON.stringify({ foo: "bar" }));
+    const rm = tap.commit("foo: rename to bar");
+    crawlSince(db, tap.source, now + 1);
+
+    const removed = db
+      .prepare("SELECT removed_at, renamed_to, migrated_to FROM packages WHERE name = 'foo'")
+      .get() as Record<string, unknown>;
+    expect(removed).toMatchObject({ removed_at: rm.at, renamed_to: "bar", migrated_to: null });
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit("foo 1.1 restored");
+    crawlSince(db, tap.source, now + 2);
+
+    const restored = db
+      .prepare(
+        "SELECT removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE name = 'foo'",
+      )
+      .get() as Record<string, unknown>;
+    expect(restored).toEqual({
+      removed_at: null,
+      removed_commit: null,
+      renamed_to: null,
+      migrated_to: null,
+    });
+    db.close();
+  });
 });
 
 describe("reconcileRemovals (full-crawl path)", () => {
@@ -328,6 +405,61 @@ describe("reconcileRemovals (full-crawl path)", () => {
       .prepare("SELECT removed_at, removed_commit FROM packages WHERE name = 'foo'")
       .get() as Record<string, unknown>;
     expect(restored).toEqual({ removed_at: null, removed_commit: null });
+    db.close();
+  });
+
+  it("persists root rename and migration metadata for absent packages", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.write("Formula/o/oldapp.rb", formula("oldapp", "2.0"));
+    tap.commit("add old packages");
+    tap.write("Formula/b/bar.rb", formula("bar", "1.1"));
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    tap.git("rm", "-q", "Formula/o/oldapp.rb");
+    const metadata = {
+      formula_renames: { foo: "bar" },
+      tap_migrations: { oldapp: "homebrew/cask/oldapp" },
+    };
+    tap.write("formula_renames.json", JSON.stringify(metadata.formula_renames));
+    tap.write("tap_migrations.json", JSON.stringify(metadata.tap_migrations));
+    tap.commit("rename foo and migrate oldapp");
+
+    buildCommitIndex(db, tap.source, ["foo", "oldapp", "bar"]);
+    expect(reconcileRemovals(db, tap.source)).toBe(2);
+
+    const rows = db
+      .prepare(
+        "SELECT name, renamed_to, migrated_to FROM packages WHERE name IN ('foo', 'oldapp', 'bar') ORDER BY name",
+      )
+      .all() as Record<string, unknown>[];
+    expect(rows).toEqual([
+      { name: "bar", renamed_to: null, migrated_to: null },
+      { name: "foo", renamed_to: "bar", migrated_to: null },
+      { name: "oldapp", renamed_to: null, migrated_to: "homebrew/cask/oldapp" },
+    ]);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.2"));
+    tap.write("Formula/o/oldapp.rb", formula("oldapp", "2.1"));
+    tap.commit("restore old packages");
+    expect(reconcileRemovals(db, tap.source)).toBe(0);
+
+    const restored = db
+      .prepare(
+        "SELECT name, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE name IN ('foo', 'oldapp') ORDER BY name",
+      )
+      .all() as Record<string, unknown>[];
+    expect(restored).toEqual([
+      { name: "foo", removed_at: null, removed_commit: null, renamed_to: null, migrated_to: null },
+      {
+        name: "oldapp",
+        removed_at: null,
+        removed_commit: null,
+        renamed_to: null,
+        migrated_to: null,
+      },
+    ]);
     db.close();
   });
 });

@@ -1,12 +1,13 @@
-import { type D1Mode, d1Select, kvPut } from "./d1remote.ts";
+import { type D1Mode, d1Select, ensureD1PackageColumns, kvPut } from "./d1remote.ts";
 
 // Precompute the catalog-wide payloads the site would otherwise derive with an
 // expensive per-request scan, and stash them in KV. Reads on the hot paths
 // (home page, search index) then cost a single KV lookup — traffic-independent,
 // so no amount of traffic can run up D1. Rebuilt at the end of every crawl.
 
-// Compact lifecycle marker: r=removed, x=disabled, d=deprecated; omitted when active.
-type StatusCode = "r" | "x" | "d";
+// Compact lifecycle marker: n=renamed, m=migrated, r=removed, x=disabled,
+// d=deprecated; omitted when active.
+type StatusCode = "n" | "m" | "r" | "x" | "d";
 
 // A deprecate!/disable! stanza is only in effect once its date has passed (a future
 // date is a scheduled announcement). Recomputed every crawl, so a scheduled package
@@ -18,13 +19,19 @@ function inEffect(date: unknown, reason: unknown, today: string): boolean {
 
 function statusCode(
   removedAt: unknown,
+  renamedTo: unknown,
+  migratedTo: unknown,
   deprecateDate: unknown,
   deprecateReason: unknown,
   disableDate: unknown,
   disableReason: unknown,
   today: string,
 ): StatusCode | undefined {
-  if (removedAt != null) return "r";
+  if (removedAt != null) {
+    if (renamedTo != null) return "n";
+    if (migratedTo != null) return "m";
+    return "r";
+  }
   if (inEffect(disableDate, disableReason, today)) return "x";
   if (inEffect(deprecateDate, deprecateReason, today)) return "d";
   return undefined;
@@ -64,7 +71,7 @@ function buildCatalog(mode: D1Mode, today: string): CatalogEntry[] {
             latest_version  AS v,
             latest_revision AS r,
             event_count     AS c,
-            removed_at,
+            removed_at, renamed_to, migrated_to,
             deprecate_date, deprecate_reason, disable_date, disable_reason
        FROM packages
       WHERE event_count > 0
@@ -73,6 +80,8 @@ function buildCatalog(mode: D1Mode, today: string): CatalogEntry[] {
   return rows.map((row) => {
     const x = statusCode(
       row.removed_at,
+      row.renamed_to,
+      row.migrated_to,
       row.deprecate_date,
       row.deprecate_reason,
       row.disable_date,
@@ -101,13 +110,16 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[], today: string): HomePa
   const recent = d1Select(
     mode,
     `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
-            p.removed_at, p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
+            p.removed_at, p.renamed_to, p.migrated_to,
+            p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
        FROM version_events ve JOIN packages p ON p.id = ve.package_id
       ORDER BY ve.introduced_at DESC, ve.id DESC
       LIMIT 25`,
   ).map((row) => {
     const x = statusCode(
       row.removed_at,
+      row.renamed_to,
+      row.migrated_to,
       row.deprecate_date,
       row.deprecate_reason,
       row.disable_date,
@@ -132,6 +144,7 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[], today: string): HomePa
 
 /** Rebuild and publish the site-cache KV blobs from current D1 state. */
 export function refreshSiteCache(mode: D1Mode): { packages: number } {
+  ensureD1PackageColumns(mode);
   // Effective state is date-relative; stamp it once so a scheduled package's chip
   // appears the day its deprecate/disable date lands, on the next crawl.
   const today = new Date().toISOString().slice(0, 10);

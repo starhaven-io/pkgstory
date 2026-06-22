@@ -60,6 +60,16 @@ export function d1Apply(mode: D1Mode, sql: string): void {
   withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--file", file]));
 }
 
+export function ensureD1PackageColumns(mode: D1Mode): void {
+  const existing = new Set(
+    d1Select(mode, "PRAGMA table_info(packages)").map((row) => String(row.name)),
+  );
+  const stmts: string[] = [];
+  if (!existing.has("renamed_to")) stmts.push("ALTER TABLE packages ADD COLUMN renamed_to TEXT;");
+  if (!existing.has("migrated_to")) stmts.push("ALTER TABLE packages ADD COLUMN migrated_to TEXT;");
+  if (stmts.length) d1Apply(mode, `${stmts.join("\n")}\n`);
+}
+
 /**
  * Write a value to the site-cache KV namespace (binding CACHE in wrangler.jsonc).
  * Values can be large (the ~1 MB search index), so they go via a temp file.

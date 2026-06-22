@@ -85,6 +85,14 @@ Lifecycle and removal state is denormalized onto `packages`. `disable!` outranks
 `deprecate!`; removals are reconciled against `git ls-tree HEAD` and preserve the
 last captured lifecycle so the site can explain why a package disappeared.
 
+Absent packages are further classified as renamed or migrated from the tap-root
+`formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files, read
+at HEAD (the same ref as the `ls-tree` check). Same-tap `renamed_to` outranks
+cross-tap `migrated_to` when a name appears in both. The incremental D1 crawl only
+reclassifies packages touched in the current window, so rows removed before this
+support existed stay plain-removed until a full crawl plus export/import reseed
+backfills them.
+
 ## Safety / do-not-touch rules
 
 1. Keep diffs focused and avoid unrelated refactors.

@@ -1,5 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
-import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
+import { type D1Mode, d1Apply, d1Select, ensureD1PackageColumns, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
 import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
@@ -29,7 +29,12 @@ export interface PackageDelta {
   lifecycle: Lifecycle | null;
   // Set when the package is absent from the tap at HEAD after this window; null when
   // present (which clears any prior removed flag).
-  removed: { at: number; commit: string } | null;
+  removed: {
+    at: number;
+    commit: string;
+    renamedTo: string | null;
+    migratedTo: string | null;
+  } | null;
 }
 
 export interface Delta {
@@ -85,6 +90,10 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   // Only resolve the HEAD tree when a deletion appeared — the authoritative check that
   // separates a real removal from a relocation (delete + add in one commit).
   const present = anyDeleted ? presentPackages(source.repoDir, source.dir, source.packageOf) : null;
+  // Homebrew normally updates rename/migration metadata in the deleting commit; if a
+  // later metadata-only commit reclassifies an old deletion, the full reconcile path
+  // backfills it.
+  const replacements = anyDeleted ? source.packageReplacements() : null;
 
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
@@ -106,9 +115,15 @@ export function computeDelta(source: Source, lastSha: string): Delta {
     }
 
     const isPresent = present ? present.has(name) : true;
+    const replacement = replacements?.get(name);
     const removed =
       !isPresent && lastDeletion
-        ? { at: lastDeletion.committedAt, commit: lastDeletion.commitSha }
+        ? {
+            at: lastDeletion.committedAt,
+            commit: lastDeletion.commitSha,
+            renamedTo: replacement?.renamedTo ?? null,
+            migratedTo: replacement?.migratedTo ?? null,
+          }
         : null;
     const lifecycle = latestLive ? parseLifecycle(blobs.get(latestLive.blobSha) ?? "") : null;
 
@@ -173,10 +188,10 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     "UPDATE packages SET deprecate_date = ?, deprecate_reason = ?, disable_date = ?, disable_reason = ? WHERE id = ?",
   );
   const setRemoved = db.prepare(
-    "UPDATE packages SET removed_at = ?, removed_commit = ? WHERE id = ?",
+    "UPDATE packages SET removed_at = ?, removed_commit = ?, renamed_to = ?, migrated_to = ? WHERE id = ?",
   );
   const clearRemoved = db.prepare(
-    "UPDATE packages SET removed_at = NULL, removed_commit = NULL WHERE id = ? AND removed_at IS NOT NULL",
+    "UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL WHERE id = ? AND (removed_at IS NOT NULL OR renamed_to IS NOT NULL OR migrated_to IS NOT NULL)",
   );
 
   let events = 0;
@@ -203,7 +218,8 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         lifecycle.disable?.reason ?? null,
         pkg.id,
       );
-    if (removed) setRemoved.run(removed.at, removed.commit, pkg.id);
+    if (removed)
+      setRemoved.run(removed.at, removed.commit, removed.renamedTo, removed.migratedTo, pkg.id);
     else clearRemoved.run(pkg.id);
   }
   db.exec("COMMIT");
@@ -220,15 +236,22 @@ interface Baseline {
   disableDate: string | null;
   disableReason: string | null;
   removedAt: number | null;
+  removedCommit: string | null;
+  renamedTo: string | null;
+  migratedTo: string | null;
 }
 
 /**
  * Incremental crawl into D1 (via wrangler). Reads cursor + baselines from D1, derives
  * the delta from git, and applies only the new events + latest + changed lifecycle/
  * removal + cursor as one small SQL batch. No local SQLite — works in an ephemeral CI
- * runner.
+ * runner. Only packages touched in the window are re-derived, so rows removed before
+ * rename/migration support existed keep their plain-removed status until a full crawl
+ * plus export/import reseed backfills them.
  */
 export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceResult {
+  ensureD1PackageColumns(mode);
+
   const cur = d1Select(
     mode,
     `SELECT last_sha FROM crawl_state WHERE source = ${sqlLit(source.id)}`,
@@ -253,7 +276,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
@@ -263,6 +286,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         disableDate: (row.disable_date as string | null) ?? null,
         disableReason: (row.disable_reason as string | null) ?? null,
         removedAt: row.removed_at != null ? Number(row.removed_at) : null,
+        removedCommit: (row.removed_commit as string | null) ?? null,
+        renamedTo: (row.renamed_to as string | null) ?? null,
+        migratedTo: (row.migrated_to as string | null) ?? null,
       });
     }
   }
@@ -280,7 +306,12 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         (lifecycle.disable?.date ?? null) !== (base?.disableDate ?? null) ||
         (lifecycle.disable?.reason ?? null) !== (base?.disableReason ?? null));
     const baseRemoved = base?.removedAt ?? null;
-    const removedChanged = removed ? removed.at !== baseRemoved : baseRemoved != null;
+    const removedChanged = removed
+      ? removed.at !== baseRemoved ||
+        removed.commit !== (base?.removedCommit ?? null) ||
+        removed.renamedTo !== (base?.renamedTo ?? null) ||
+        removed.migratedTo !== (base?.migratedTo ?? null)
+      : baseRemoved != null || base?.renamedTo != null || base?.migratedTo != null;
 
     if (folded.events.length === 0 && !lifecycleChanged && !removedChanged) continue;
 
@@ -308,8 +339,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     if (removedChanged) {
       stmts.push(
         removed
-          ? `UPDATE packages SET removed_at = ${removed.at}, removed_commit = ${sqlLit(removed.commit)} WHERE ${where};`
-          : `UPDATE packages SET removed_at = NULL, removed_commit = NULL WHERE ${where};`,
+          ? `UPDATE packages SET removed_at = ${removed.at}, removed_commit = ${sqlLit(removed.commit)}, renamed_to = ${sqlLit(removed.renamedTo)}, migrated_to = ${sqlLit(removed.migratedTo)} WHERE ${where};`
+          : `UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL WHERE ${where};`,
       );
     }
   }

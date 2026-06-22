@@ -1,7 +1,12 @@
-import { repoExists, repoRoot } from "../git.ts";
+import { headFile, repoExists, repoRoot } from "../git.ts";
 
 export type SourceId = "homebrew-formula" | "homebrew-cask";
 export type PackageKind = "formula" | "cask";
+
+export interface PackageReplacement {
+  renamedTo: string | null;
+  migratedTo: string | null;
+}
 
 export interface Source {
   id: SourceId;
@@ -18,6 +23,8 @@ export interface Source {
   pathsFor(name: string): string[];
   /** Package name for a touched path, keyed on basename so relocations don't matter. */
   packageOf(path: string): string | null;
+  /** Current root-level rename/migration metadata, keyed by old package name. */
+  packageReplacements(): Map<string, PackageReplacement>;
 }
 
 interface SourceDef {
@@ -47,6 +54,37 @@ function shardOf(kind: PackageKind, name: string): string {
   return name[0]?.toLowerCase() ?? "_";
 }
 
+function rootMap(repoDir: string, file: string): Map<string, string> {
+  const raw = headFile(repoDir, file);
+  if (raw === null) return new Map();
+
+  const parsed = JSON.parse(raw) as unknown;
+  const out = new Map<string, string>();
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return out;
+  for (const [from, to] of Object.entries(parsed)) {
+    if (from && typeof to === "string" && to) out.set(from, to);
+  }
+  return out;
+}
+
+function loadPackageReplacements(
+  repoDir: string,
+  kind: PackageKind,
+): Map<string, PackageReplacement> {
+  const renameFile = kind === "formula" ? "formula_renames.json" : "cask_renames.json";
+  const out = new Map<string, PackageReplacement>();
+
+  for (const [from, to] of rootMap(repoDir, renameFile)) {
+    out.set(from, { renamedTo: to, migratedTo: null });
+  }
+  for (const [from, to] of rootMap(repoDir, "tap_migrations.json")) {
+    const replacement = out.get(from) ?? { renamedTo: null, migratedTo: null };
+    replacement.migratedTo = to;
+    out.set(from, replacement);
+  }
+  return out;
+}
+
 /** Exported for tests, which point a real Source at a fixture repo. */
 export function makeSource(def: SourceDef, repoDir: string): Source {
   const dir = def.dir;
@@ -62,6 +100,9 @@ export function makeSource(def: SourceDef, repoDir: string): Source {
     },
     packageOf(path: string): string | null {
       return path.match(re)?.[1] ?? null;
+    },
+    packageReplacements(): Map<string, PackageReplacement> {
+      return loadPackageReplacements(repoDir, def.kind);
     },
   };
 }
