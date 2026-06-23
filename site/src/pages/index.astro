@@ -6,11 +6,12 @@ import Chip from '../components/Chip.astro';
 import StatusChip from '../components/StatusChip.astro';
 import Version from '../components/Version.astro';
 import { home } from '../lib/cache.ts';
-import { isoDate } from '../lib/format.ts';
+import { displayVersion, isoDate } from '../lib/format.ts';
 
-const { formulae, casks, recent, checkedAt } = await home();
+const { formulae, casks, spotlight, recent, checkedAt } = await home();
 const total = formulae + casks;
 const lastCheckedAt = checkedAt;
+const packagePath = (source: string, name: string) => `/${source}/${encodeURIComponent(name)}/`;
 
 // Short edge cache so the home page stays cheap between crawls (~30 min apart).
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
@@ -22,46 +23,120 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
   description="Browse the version history of every Homebrew formula and cask — updates over time, with per-package RSS."
   lastCheckedAt={lastCheckedAt}
 >
-  <p class="scope">
-    Currently tracking <b>Homebrew</b> — {formulae.toLocaleString()} formulae and
-    {casks.toLocaleString()} casks.
-  </p>
+  <section class="home-intro" aria-labelledby="home-title">
+    <div class="intro-copy">
+      <p class="intro-kicker">Homebrew version history</p>
+      <h2 id="home-title" class="intro-title">Search package histories</h2>
+      <p class="scope">
+        Tracking <b>Homebrew</b> formulae and casks across version changes, lifecycle states, removals, migrations, and renames.
+      </p>
+    </div>
+    <dl class="metric-strip">
+      <div class="metric">
+        <dt>Total</dt>
+        <dd>{total.toLocaleString()}</dd>
+      </div>
+      <div class="metric">
+        <dt>Formulae</dt>
+        <dd>{formulae.toLocaleString()}</dd>
+      </div>
+      <div class="metric">
+        <dt>Casks</dt>
+        <dd>{casks.toLocaleString()}</dd>
+      </div>
+      <div class="metric">
+        <dt>Shown</dt>
+        <dd>{recent.length.toLocaleString()} latest</dd>
+      </div>
+    </dl>
+  </section>
 
-  <input
-    id="q"
-    class="search"
-    type="search"
-    placeholder={`Search ${total.toLocaleString()} packages …`}
-    autocomplete="off"
-    autocapitalize="off"
-    spellcheck="false"
-    aria-label="Search packages"
-  />
-  <div id="results" hidden></div>
+  <section class="search-panel" aria-labelledby="search-title">
+    <label id="search-title" class="search-label" for="q">Search packages</label>
+    <input
+      id="q"
+      class="search"
+      type="search"
+      placeholder={`Search ${total.toLocaleString()} packages …`}
+      autocomplete="off"
+      autocapitalize="off"
+      spellcheck="false"
+    />
+    <div id="results" class="results" hidden></div>
+  </section>
+
+  {
+    spotlight.length > 0 && (
+      <section class="spotlight" aria-labelledby="spotlight-title">
+        <div class="section-head">
+          <h2 id="spotlight-title">Interesting histories</h2>
+        </div>
+        <div class="spotlight-grid">
+          {spotlight.map((p) => (
+            <a class="spotlight-card" href={packagePath(p.source, p.name)}>
+              <span class="spotlight-kicker">{p.title}</span>
+              <span class="spotlight-topline">
+                <span class="spotlight-name">{p.name}</span>
+                {p.x && <StatusChip code={p.x} />}
+              </span>
+              <span class="spotlight-stat">{p.stat}</span>
+              <span class="spotlight-note">{p.note}</span>
+              <span class="spotlight-meta">
+                <span
+                  class="spotlight-current"
+                  title={p.version ? displayVersion(p.version, p.revision) : 'no version'}
+                >
+                  {p.version ? <Version version={p.version} revision={p.revision} /> : 'no version'}
+                </span>
+                <span class="spotlight-context">{p.context}</span>
+              </span>
+            </a>
+          ))}
+        </div>
+      </section>
+    )
+  }
 
   <section id="recent">
-    <h2>Recent updates</h2>
-    <table>
-      <tbody>
-        {
-          recent.map((c) => (
-            <tr>
-              <td class="date">{isoDate(c.introducedAt)}</td>
-              <td>
-                <a href={`/${c.source}/${c.name}/`}>{c.name}</a>
-                {c.x && <StatusChip code={c.x} />}
-              </td>
-              <td>
-                <Version version={c.version} revision={c.revision} />
-              </td>
-              <td>
-                <Chip source={c.source} />
-              </td>
-            </tr>
-          ))
-        }
-      </tbody>
-    </table>
+    <div class="section-head">
+      <h2>Recent updates</h2>
+      <p>{recent.length.toLocaleString()} latest version changes</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Updated</th>
+            <th>Package</th>
+            <th>Version</th>
+            <th>Kind</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            recent.map((c) => (
+              <tr>
+                <td class="date">{isoDate(c.introducedAt)}</td>
+                <td>
+                  <div class="pkg-cell">
+                    <a class="pkg-link" href={packagePath(c.source, c.name)}>
+                      {c.name}
+                    </a>
+                    {c.x && <StatusChip code={c.x} />}
+                  </div>
+                </td>
+                <td>
+                  <Version version={c.version} revision={c.revision} />
+                </td>
+                <td class="kind-cell">
+                  <Chip source={c.source} />
+                </td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <script>
@@ -96,9 +171,9 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
       const rowHtml = (p: Pkg): string => {
         const kind = p.s === 'c' ? 'cask' : 'formula';
         const src = p.s === 'c' ? 'homebrew-cask' : 'homebrew-formula';
-        const ver = p.r ? `${p.v}_${p.r}` : (p.v ?? '');
+        const ver = p.v ? (p.r ? `${p.v}_${p.r}` : p.v) : '';
         const st = p.x && STATUS[p.x] ? ` <span class="chip ${STATUS[p.x][1]}">${STATUS[p.x][0]}</span>` : '';
-        return `<tr><td><a href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a>${st}</td><td><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
+        return `<tr><td><div class="pkg-cell"><a class="pkg-link" href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a>${st}</div></td><td class="kind-cell"><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
       };
       input.addEventListener('input', async () => {
         const q = input.value.trim().toLowerCase();
@@ -118,7 +193,7 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
         });
         const shown = matches.slice(0, 100);
         const note = `${matches.length.toLocaleString()} match${matches.length === 1 ? '' : 'es'}${matches.length > 100 ? ' · showing 100' : ''}`;
-        results.innerHTML = `<p class="muted">${note}</p><table><tbody>${shown.map(rowHtml).join('')}</tbody></table>`;
+        results.innerHTML = `<div class="section-head"><h2>Search results</h2><p>${note}</p></div><div class="table-scroll"><table><thead><tr><th>Package</th><th>Kind</th><th>Version</th><th>Events</th></tr></thead><tbody>${shown.map(rowHtml).join('')}</tbody></table></div>`;
         recentEl.hidden = true;
         results.hidden = false;
       });

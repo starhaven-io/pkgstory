@@ -9,8 +9,11 @@ export interface ParsedFormula {
 // Anchored to 2-space (top-level) indentation: Homebrew style guarantees it, and it
 // avoids matching a nested `version`/`revision` inside a resource or on_os block.
 const VERSION_STANZA = /^ {2}version\s+"([^"]+)"/m;
+const OLD_VERSION_STANZA = /^\s*@version\s*=\s*(["'])(.*?)\1/m;
 const REVISION = /^ {2}revision\s+(\d+)/m;
-const URL_LINE = /^\s*url\s+"([^"]+)"/m;
+// Modern formula URLs are top-level only; nested resource URLs are dependency
+// archives, not package versions. The old @url form lived inside initialize.
+const URL_LINES = [/^ {2}url\s+(["'])(.*?)\1/m, /^\s*@url\s*=\s*(["'])(.*?)\1/m];
 const TAG_OPT = /\btag:\s*"([^"]+)"/;
 const SEMVERISH = /(\d+(?:\.\d+)+(?:[._-][0-9A-Za-z.]+)?)/;
 
@@ -26,16 +29,21 @@ export function parseFormula(src: string): ParsedFormula {
   const stanza = src.match(VERSION_STANZA);
   if (stanza?.[1]) return { version: stanza[1], revision, versionSrc: "version-stanza" };
 
+  const oldStanza = src.match(OLD_VERSION_STANZA);
+  if (oldStanza?.[2]) return { version: oldStanza[2], revision, versionSrc: "version-stanza" };
+
   const tag = src.match(TAG_OPT);
   if (tag?.[1]) {
     const v = cleanVersion(tag[1]);
     if (v) return { version: v, revision, versionSrc: "url" };
   }
 
-  const url = src.match(URL_LINE);
-  if (url?.[1]) {
-    const v = versionFromUrl(url[1]);
-    if (v) return { version: v, revision, versionSrc: "url" };
+  for (const re of URL_LINES) {
+    const url = src.match(re);
+    if (url?.[2]) {
+      const v = versionFromUrl(url[2]);
+      if (v) return { version: v, revision, versionSrc: "url" };
+    }
   }
 
   return { version: null, revision, versionSrc: "none" };
@@ -60,7 +68,8 @@ export function versionFromUrl(url: string): string | null {
   const file = (url.split("/").pop() ?? "").split(/[?#]/)[0] ?? "";
   const stem = file
     .replace(/\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|tbz2?|txz|tar|zip|gz|xz|bz2)$/i, "")
-    .replace(/\.orig$/i, "");
+    .replace(/\.orig$/i, "")
+    .replace(/[-_.](?:src|source)$/i, "");
 
   // A dotted version anywhere wins (git-2.54.0, jq-1.7.1).
   const dotted = stem.match(SEMVERISH);
