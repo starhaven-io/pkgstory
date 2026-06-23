@@ -18,6 +18,19 @@ end`;
     });
   });
 
+  it("reads a single-quoted version stanza, winning over a single-file url", () => {
+    // ack's 2009-era formula: `version '2.02'` plus a beyondgrep single-file url.
+    const src = `class Ack < Formula
+  url 'http://beyondgrep.com/ack-2.02-single-file'
+  version '2.02'
+end`;
+    expect(parseFormula(src)).toEqual({
+      version: "2.02",
+      revision: 0,
+      versionSrc: "version-stanza",
+    });
+  });
+
   it("mines the version from a release tarball url", () => {
     const src = `class Git < Formula
   url "https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.54.0.tar.xz"
@@ -105,6 +118,32 @@ describe("versionFromUrl", () => {
     expect(
       versionFromUrl("https://github.com/conformal/clens/archive/refs/tags/CLENS_0_7_0.tar.gz"),
     ).toBe("0.7.0");
+  });
+  it("strips a build/artifact label the version regex swept in", () => {
+    expect(versionFromUrl("https://x/activemq/6.2.6/apache-activemq-6.2.6-bin.tar.gz")).toBe(
+      "6.2.6",
+    );
+    // -src sits mid-stem (before -builtpkgs), so a $-anchored stem strip would miss it.
+    expect(versionFromUrl("https://x/installers/8.0/racket-minimal-8.0-src-builtpkgs.tgz")).toBe(
+      "8.0",
+    );
+    expect(versionFromUrl("https://beyondgrep.com/ack-2.24-single-file")).toBe("2.24");
+  });
+  it("strips a trailing platform label", () => {
+    expect(
+      versionFromUrl("https://downloads.sourceforge.net/project/x/v1.9.2/ispc-v1.9.2-osx.tar.gz"),
+    ).toBe("1.9.2");
+  });
+  it("keeps upstream release-stage qualifiers, not just packaging labels", () => {
+    expect(
+      versionFromUrl(
+        "https://github.com/swiftlang/swift/archive/refs/tags/swift-6.2.4-RELEASE.tar.gz",
+      ),
+    ).toBe("6.2.4-RELEASE");
+    expect(versionFromUrl("https://x/foo-1.2.3-beta.tar.gz")).toBe("1.2.3-beta");
+  });
+  it("only strips a label as a whole trailing word", () => {
+    expect(versionFromUrl("https://x/foo-1.2.3-binutils.tar.gz")).toBe("1.2.3-binutils");
   });
   it("finds the tarball inside a closer.lua mirror query", () => {
     expect(
