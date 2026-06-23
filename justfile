@@ -48,6 +48,16 @@ audit:
 site-build:
     cd site && npm run build
 
+# Seed the local Wrangler D1/KV site state from a SQLite crawl database
+site-seed-local db="pkgstory.db":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
+    trap 'rm -f "$sql"' EXIT
+    node src/cli.ts export --db "{{db}}" > "$sql"
+    (cd site && npx wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
+    node src/cli.ts cache --d1 local
+
 # Start the site dev server
 site-dev:
     cd site && npm run dev

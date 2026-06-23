@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import type { RecentChange, StatusCode } from './format.ts';
+import type { RecentChange, SpotlightPackage, StatusCode } from './format.ts';
 
 // The precomputed site-cache KV namespace (binding CACHE). Populated by the crawler
 // after every run; serving from it costs one KV lookup regardless of traffic.
@@ -24,6 +24,7 @@ export interface CatalogEntry {
 export interface HomePayload {
   formulae: number;
   casks: number;
+  spotlight: SpotlightPackage[];
   recent: RecentChange[];
   checkedAt: number | null;
 }
@@ -31,6 +32,7 @@ export interface HomePayload {
 const EMPTY_HOME: HomePayload = {
   formulae: 0,
   casks: 0,
+  spotlight: [],
   recent: [],
   checkedAt: null,
 };

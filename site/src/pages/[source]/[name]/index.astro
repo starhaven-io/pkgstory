@@ -8,11 +8,13 @@ import Sparkline from '../../../components/Sparkline.astro';
 import StatusChip from '../../../components/StatusChip.astro';
 import Version from '../../../components/Version.astro';
 import { getDb, lastChecked, packageMeta, timeline } from '../../../lib/d1.ts';
-import { displayVersion, isoDate, sourceLabel, statusOf, todayISO } from '../../../lib/format.ts';
+import { decodeRouteParam, displayVersion, isoDate, sourceLabel, statusOf, todayISO } from '../../../lib/format.ts';
 
-const { source, name } = Astro.params;
+const source = decodeRouteParam(Astro.params.source ?? '');
+const name = decodeRouteParam(Astro.params.name ?? '');
+const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta] = await Promise.all([timeline(db, source!, name!), packageMeta(db, source!, name!)]);
+const [events, meta] = await Promise.all([timeline(db, source, name), packageMeta(db, source, name)]);
 
 if (events.length === 0) {
   return Astro.rewrite('/404');
@@ -22,16 +24,17 @@ const status = meta ? statusOf(meta, todayISO()) : null;
 // Prefer the denormalized latest: after a downgrade events[0] is the rolled-back
 // version (re-introductions keep their original introduced_at), not the shipping one.
 const latestEvent = events[0]!;
-const latestShipped = meta?.latestVersion
-  ? displayVersion(meta.latestVersion, meta.latestRevision)
-  : displayVersion(latestEvent.version, latestEvent.revision);
+const latestVersion = meta?.latestVersion ?? latestEvent.version;
+const latestRevision = meta?.latestVersion ? meta.latestRevision : latestEvent.revision;
+const latestShipped = displayVersion(latestVersion, latestRevision);
 
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
 
 const checkedAt = await lastChecked(db);
 const repo = source === 'homebrew-cask' ? 'homebrew/homebrew-cask' : 'homebrew/homebrew-core';
-const feedHref = `/${source}/${name}/rss.xml`;
+const feedHref = `/${source}/${encodedName}/rss.xml`;
+const sourceName = sourceLabel(source);
 
 const dates = events.map((e) => e.introducedAt).sort((a, b) => a - b);
 const first = dates[0] ?? 0;
@@ -46,6 +49,7 @@ const median = intervals.length
     ? intervals[(intervals.length - 1) / 2]!
     : (intervals[intervals.length / 2 - 1]! + intervals[intervals.length / 2]!) / 2
   : 0;
+const cadence = median > 0 ? (median < 1 ? '<1d' : `${Math.round(median)}d`) : 'single';
 
 const monthFmt = (t: number) =>
   new Date(t * 1000).toLocaleDateString('en-US', {
@@ -56,22 +60,54 @@ const monthFmt = (t: number) =>
 
 <Base
   title={`${name} — pkgstory`}
-  description={`${name} version history (${sourceLabel(source!)})`}
+  description={`${name} version history (${sourceName})`}
   feedHref={feedHref}
   lastCheckedAt={checkedAt}
 >
-  <p><a href="/">← all packages</a></p>
+  <p class="crumb"><a href="/">All packages</a> / {sourceName}</p>
 
-  <div class="pkg-head">
-    <h2>{name}</h2>
-    <Chip source={source!} />
-    {status && <StatusChip code={status} />}
-  </div>
+  <section class="pkg-overview" aria-labelledby="pkg-title">
+    <div>
+      <div class="pkg-head">
+        <h2 id="pkg-title" class="pkg-name">{name}</h2>
+        <Chip source={source} />
+        {status && <StatusChip code={status} />}
+      </div>
+      <p class="pkg-subtitle">{sourceName} timeline from Homebrew git history.</p>
+      {
+        meta?.removedAt == null && (
+          <p class="track">
+            Track <b>{name}</b> with the <a href={feedHref}>RSS feed</a>.
+          </p>
+        )
+      }
+    </div>
+    <dl class="pkg-facts">
+      <div class="fact">
+        <dt>Current</dt>
+        <dd class="fact-current" title={latestShipped}>
+          <Version version={latestVersion} revision={latestRevision} />
+        </dd>
+      </div>
+      <div class="fact">
+        <dt>Versions</dt>
+        <dd>{events.length.toLocaleString()}</dd>
+      </div>
+      <div class="fact">
+        <dt>Since</dt>
+        <dd>{first > 0 ? monthFmt(first) : 'unknown'}</dd>
+      </div>
+      <div class="fact">
+        <dt>Cadence</dt>
+        <dd>{cadence}</dd>
+      </div>
+    </dl>
+  </section>
 
   {
     meta && (
       <Lifecycle
-        name={name!}
+        name={name}
         removedAt={meta.removedAt}
         removedCommit={meta.removedCommit}
         renamedTo={meta.renamedTo}
@@ -86,35 +122,15 @@ const monthFmt = (t: number) =>
     )
   }
 
-  <div class="stats">
-    <span><b>{events.length}</b> versions</span>
-    {
-      first > 0 && (
-        <span>
-          since <b>{monthFmt(first)}</b>
-        </span>
-      )
-    }
-    {
-      median > 0 && (
-        <span>
-          ~<b>{Math.round(median)}</b> days between updates
-        </span>
-      )
-    }
-  </div>
-
-  {
-    meta?.removedAt == null && (
-      <p class="track">
-        Track <b>{name}</b> — subscribe to the <a href={feedHref}>RSS feed</a> to get an item each time it updates.
-      </p>
-    )
-  }
-
   {
     dates.length > 1 && (
       <div class="spark-panel">
+        <div class="spark-head">
+          <h2>Update cadence</h2>
+          <p>
+            {monthFmt(first)} to {monthFmt(latest)}
+          </p>
+        </div>
         <Sparkline
           dates={dates}
           from={first}
@@ -128,35 +144,45 @@ const monthFmt = (t: number) =>
     )
   }
 
-  <table>
-    <thead>
-      <tr>
-        <th>Version</th>
-        <th>Updated</th>
-        <th>Commit</th>
-      </tr>
-    </thead>
-    <tbody>
-      {
-        /* Row ids anchor the RSS item links (#<version>). */
-        events.map((e) => (
-          <tr id={displayVersion(e.version, e.revision)}>
-            <td>
-              <Version version={e.version} revision={e.revision} />
-            </td>
-            <td class="date">{isoDate(e.introducedAt)}</td>
-            <td>
-              {e.commitSha ? (
-                <a href={`https://github.com/${repo}/commit/${e.commitSha}`} title={e.subject}>
-                  {e.commitSha.slice(0, 9)}
-                </a>
-              ) : (
-                '—'
-              )}
-            </td>
+  <section>
+    <div class="section-head">
+      <h2>Version timeline</h2>
+      <p>{events.length.toLocaleString()} version-changing commits</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Updated</th>
+            <th>Commit</th>
+            <th>Subject</th>
           </tr>
-        ))
-      }
-    </tbody>
-  </table>
+        </thead>
+        <tbody>
+          {
+            /* Row ids anchor the RSS item links (#<version>). */
+            events.map((e) => (
+              <tr id={displayVersion(e.version, e.revision)}>
+                <td>
+                  <Version version={e.version} revision={e.revision} />
+                </td>
+                <td class="date">{isoDate(e.introducedAt)}</td>
+                <td>
+                  {e.commitSha ? (
+                    <a class="commit-link" href={`https://github.com/${repo}/commit/${e.commitSha}`}>
+                      {e.commitSha.slice(0, 9)}
+                    </a>
+                  ) : (
+                    '—'
+                  )}
+                </td>
+                <td class="subject">{e.subject}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+  </section>
 </Base>

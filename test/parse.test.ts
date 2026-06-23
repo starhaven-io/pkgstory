@@ -27,6 +27,43 @@ end`;
     expect(p.versionSrc).toBe("url");
   });
 
+  it("ignores nested resource urls when the formula has no version", () => {
+    const src = `class Foo < Formula
+  resource "bar" do
+    url "https://example.com/bar-9.9.9.tar.gz"
+  end
+end`;
+    expect(parseFormula(src).version).toBeNull();
+  });
+
+  it("ignores source archive labels on release tarball urls", () => {
+    const src = `class Rust < Formula
+  url "https://static.rust-lang.org/dist/rustc-1.96.0-src.tar.gz"
+end`;
+    expect(parseFormula(src).version).toBe("1.96.0");
+  });
+
+  it("mines versions from old-style Homebrew instance variable urls", () => {
+    const src = `class Dos2unix <Formula
+  @url='http://www.sfr-fresh.com/linux/misc/dos2unix-3.1.tar.gz'
+end`;
+    expect(parseFormula(src).version).toBe("3.1");
+  });
+
+  it("reads old-style Homebrew instance variable versions", () => {
+    const src = `class Ack <UncompressedScriptFormula
+  def initialize
+    @version='1.88'
+    @url="http://ack.googlecode.com/svn/tags/#{@version}/ack"
+  end
+end`;
+    expect(parseFormula(src)).toEqual({
+      version: "1.88",
+      revision: 0,
+      versionSrc: "version-stanza",
+    });
+  });
+
   it("reads a git tag option", () => {
     const src = `class Bar < Formula
   url "https://github.com/bar/bar.git",
@@ -177,5 +214,12 @@ describe("versionFromSubject", () => {
   });
   it("ignores non-bump subjects", () => {
     expect(versionFromSubject("git", "git: remove iconv dependency.")).toBeNull();
+  });
+  it("ignores old formula-addition subjects", () => {
+    expect(versionFromSubject("dos2unix", "dos2unix formula")).toBeNull();
+  });
+  it("keeps subject fallback conservative for cask-style and tilde versions", () => {
+    expect(versionFromSubject("foo", "foo 1.2.3,456")).toBeNull();
+    expect(versionFromSubject("foo", "foo 1.2.3~rc1")).toBeNull();
   });
 });

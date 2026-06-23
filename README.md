@@ -74,6 +74,7 @@ just install                                    # install dependencies
 just crawl                                      # build pkgstory.db from a curated demo set
 just crawl --formulae git,wget --casks firefox  # or specific packages
 just crawl --all                                # the full catalog (~20k packages)
+just site-seed-local                            # load pkgstory.db into local D1 + KV
 just site-dev                                   # preview the site
 just check                                      # everything CI runs
 ```

@@ -90,6 +90,19 @@ export interface RecentChange {
   x?: StatusCode; // lifecycle marker (absent = active)
 }
 
+/** A home-page history spotlight from the precomputed KV `home` blob. */
+export interface SpotlightPackage {
+  source: string;
+  name: string;
+  version: string | null;
+  revision: number;
+  title: string;
+  stat: string;
+  note: string;
+  context: string;
+  x?: StatusCode; // lifecycle marker (absent = active)
+}
+
 const SOURCE_LABELS: Record<string, string> = {
   'homebrew-formula': 'formula',
   'homebrew-cask': 'cask',
@@ -101,6 +114,14 @@ export function sourceLabel(source: string): string {
 
 export function displayVersion(version: string, revision: number): string {
   return revision ? `${version}_${revision}` : version;
+}
+
+export function decodeRouteParam(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 /** Split a version into its meaningful base and de-emphasizable trailing metadata. */
