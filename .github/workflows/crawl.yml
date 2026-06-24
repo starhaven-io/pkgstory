@@ -32,6 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: cloudflare # holds the Cloudflare token (matches deploy-site)
     permissions:
+      actions: write # required to prune old tap caches with gh cache delete
       contents: read
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -43,12 +44,14 @@ jobs:
         run: echo "week=$(date -u +%G-%V)" >> "${GITHUB_OUTPUT}"
 
       - name: Restore tap clones
+        id: tap-cache
         # setup-homebrew fetches the delta into a pre-existing tap dir and only
         # full-clones when it's absent, so restoring the clones turns ~1-2 min of
         # cloning per run into a few seconds of fetch. The weekly key means one
-        # cache save per week (first run after rollover, via restore-keys); a
-        # corrupted cache self-heals at the next rollover, or bump v1 to evict now.
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        # cache save per week (first run after rollover, via restore-keys). Old
+        # weekly tap caches are large, so a later step prunes stale keys after
+        # the current week is saved or confirmed.
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-core
@@ -78,3 +81,29 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: node src/cli.ts crawl --d1 remote
+
+      - name: Save tap clones
+        if: steps.tap-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-core
+            /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-cask
+          key: ${{ steps.tap-cache.outputs.cache-primary-key }}
+
+      - name: Prune old tap caches
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CURRENT_TAP_CACHE_KEY: taps-v1-${{ steps.tap-week.outputs.week }}
+        run: |
+          gh cache list \
+            --ref refs/heads/main \
+            --key taps-v1- \
+            --limit 100 \
+            --json id,key \
+            --jq ".[] | select(.key != \"${CURRENT_TAP_CACHE_KEY}\") | .id" |
+            while IFS= read -r cache_id; do
+              gh cache delete "${cache_id}" || echo "::warning::failed to delete tap cache ${cache_id}"
+            done
