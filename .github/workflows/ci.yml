@@ -68,6 +68,11 @@ jobs:
             MATRIX+=',{"name":"Trigger","check":"trigger","runner":"ubuntu-slim"}'
           fi
 
+          # Source changes: CodeQL
+          if echo "${CHANGED}" | grep -qE '^src/|^site/|^trigger/'; then
+            MATRIX+=',{"name":"CodeQL (JS/TS)","check":"codeql","language":"javascript-typescript","runner":"ubuntu-24.04"}'
+          fi
+
           # Workflow changes: Actions security audit
           if echo "${CHANGED}" | grep -qE '^\.github/workflows/'; then
             MATRIX+=',{"name":"zizmor","check":"zizmor","runner":"ubuntu-24.04"}'
@@ -82,7 +87,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read # required to fetch PR commits for conventional commit validation
-      security-events: write # required for zizmor SARIF upload
+      security-events: write # required for CodeQL and zizmor SARIF uploads
     strategy:
       fail-fast: false
       matrix:
@@ -243,6 +248,20 @@ jobs:
         uses: zizmorcore/zizmor-action@5f14fd08f7cf1cb1609c1e344975f152c7ee938d # v0.5.6
         with:
           persona: auditor
+
+      # --- CodeQL ---
+
+      - name: Initialize CodeQL
+        if: matrix.check == 'codeql'
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Perform CodeQL Analysis
+        if: matrix.check == 'codeql'
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          category: "/language:${{ matrix.language }}"
 
   conclusion:
     name: conclusion
