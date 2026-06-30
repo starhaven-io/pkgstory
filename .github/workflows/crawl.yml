@@ -51,7 +51,7 @@ jobs:
         # cache save per week (first run after rollover, via restore-keys). Old
         # weekly tap caches are large, so a later step prunes stale keys after
         # the current week is saved or confirmed.
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-core
@@ -84,7 +84,7 @@ jobs:
 
       - name: Save tap clones
         if: steps.tap-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             /home/linuxbrew/.linuxbrew/Homebrew/Library/Taps/homebrew/homebrew-core
