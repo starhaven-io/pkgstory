@@ -37,6 +37,9 @@ export interface PackageMeta {
   // re-introduced versions keep their original introduced_at by design.
   latestVersion: string | null;
   latestRevision: number;
+  latestAt: number | null;
+  eventCount: number;
+  firstIntroducedAt: number | null;
   removedAt: number | null;
   removedCommit: string | null;
   renamedTo: string | null;
@@ -103,13 +106,19 @@ export interface SpotlightPackage {
   x?: StatusCode; // lifecycle marker (absent = active)
 }
 
-const SOURCE_LABELS: Record<string, string> = {
+const SOURCE_LABELS = {
   'homebrew-formula': 'formula',
   'homebrew-cask': 'cask',
-};
+} as const;
+
+export type KnownSource = keyof typeof SOURCE_LABELS;
+
+export function isKnownSource(source: string): source is KnownSource {
+  return Object.hasOwn(SOURCE_LABELS, source);
+}
 
 export function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? source;
+  return isKnownSource(source) ? SOURCE_LABELS[source] : source;
 }
 
 export function displayVersion(version: string, revision: number): string {

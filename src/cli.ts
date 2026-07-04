@@ -42,10 +42,10 @@ function list(csv: string | undefined): string[] | null {
     .filter(Boolean);
 }
 
-function finalize(db: DatabaseSync, source: Source, now: number): number {
+function finalize(db: DatabaseSync, source: Source, now: number, writeCursor: boolean): number {
   finalizeLatest(db, source.id);
   const removed = reconcileRemovals(db, source);
-  setCrawlState(db, source.id, headSha(source.repoDir), now);
+  if (writeCursor) setCrawlState(db, source.id, headSha(source.repoDir), now);
   return removed;
 }
 
@@ -125,7 +125,7 @@ async function crawl(argv: string[]): Promise<void> {
       );
       console.log(`  L1: ${snaps.toLocaleString()} snapshots`);
       const events = buildEvents(db, source);
-      const removed = finalize(db, source, now);
+      const removed = finalize(db, source, now, true);
       console.log(
         `  L2: ${events.toLocaleString()} version events · ${removed.toLocaleString()} removed\n`,
       );
@@ -136,7 +136,7 @@ async function crawl(argv: string[]): Promise<void> {
       const commits = buildCommitIndex(db, source, names);
       const snaps = buildSnapshots(db, source);
       const events = buildEvents(db, source);
-      const removed = finalize(db, source, now);
+      const removed = finalize(db, source, now, false);
       console.log(
         `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events${removed ? ` · ${removed} removed` : ""}`,
       );
