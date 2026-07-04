@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:workers';
 import type { PackageMeta, VersionEvent } from './format.ts';
 
+export const TIMELINE_LIMIT = 500;
+
 // Minimal D1 surface (avoids a @cloudflare/workers-types dependency). Used by the
 // on-demand per-package pages, which read only one package's rows via the index.
 // Catalog-wide reads (home page, search index) go through ./cache.ts (KV) instead.
@@ -18,15 +20,16 @@ export function getDb(): D1 {
   return (env as unknown as { DB: D1 }).DB;
 }
 
-export async function timeline(db: D1, source: string, name: string): Promise<VersionEvent[]> {
+export async function timeline(db: D1, source: string, name: string, limit = TIMELINE_LIMIT): Promise<VersionEvent[]> {
   const { results } = await db
     .prepare(
       `SELECT ve.version, ve.revision, ve.introduced_at AS introducedAt, ve.commit_sha AS commitSha, ve.subject
          FROM version_events ve JOIN packages p ON p.id = ve.package_id
         WHERE p.source = ? AND p.name = ?
-        ORDER BY ve.introduced_at DESC, ve.id DESC`,
+        ORDER BY ve.introduced_at DESC, ve.id DESC
+        LIMIT ?`,
     )
-    .bind(source, name)
+    .bind(source, name, limit)
     .all<VersionEvent>();
   return results;
 }
@@ -36,6 +39,8 @@ export async function packageMeta(db: D1, source: string, name: string): Promise
   const row = await db
     .prepare(
       `SELECT latest_version AS latestVersion, latest_revision AS latestRevision,
+              latest_at AS latestAt, event_count AS eventCount,
+              (SELECT MIN(introduced_at) FROM version_events ve WHERE ve.package_id = packages.id) AS firstIntroducedAt,
               removed_at AS removedAt, removed_commit AS removedCommit,
               renamed_to AS renamedTo, migrated_to AS migratedTo,
               deprecate_date AS deprecateDate, deprecate_reason AS deprecateReason,

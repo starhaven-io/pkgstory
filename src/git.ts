@@ -113,25 +113,42 @@ export function parseLog(out: string): RawCommit[] {
  * per blob — the difference between seconds and minutes on a real crawl.
  */
 export function batchCat(repoDir: string, shas: string[]): Map<string, string> {
-  const result = new Map<string, string>();
   const unique = [...new Set(shas)];
-  if (unique.length === 0) return result;
+  if (unique.length === 0) return new Map();
 
   const out = execFileSync("git", ["-C", repoDir, "cat-file", "--batch"], {
     input: `${unique.join("\n")}\n`,
     maxBuffer: 1024 * 1024 * 1024,
   }); // Buffer (no encoding) so we can slice content by exact byte length
 
+  return parseBatchCat(out);
+}
+
+export function parseBatchCat(out: Buffer): Map<string, string> {
+  const result = new Map<string, string>();
   let i = 0;
   while (i < out.length) {
     const nl = out.indexOf(0x0a, i);
-    if (nl === -1) break;
-    const [sha, type, size] = out.toString("utf8", i, nl).split(" ");
+    if (nl === -1) throw new Error("malformed git cat-file output: unterminated header");
+    const header = out.toString("utf8", i, nl);
+    const [sha, type, size] = header.split(" ");
     i = nl + 1;
-    if (!sha || type === "missing" || size === undefined) continue;
+    if (!sha) throw new Error(`malformed git cat-file header: ${header}`);
+    if (type === "missing") continue;
+    if (!type || size === undefined) throw new Error(`malformed git cat-file header: ${header}`);
     const len = Number(size);
+    if (!Number.isInteger(len) || len < 0) {
+      throw new Error(`malformed git cat-file header for ${sha}: invalid size ${size}`);
+    }
+    if (i + len >= out.length) {
+      throw new Error(`malformed git cat-file output for ${sha}: declared size exceeds output`);
+    }
     result.set(sha, out.toString("utf8", i, i + len));
-    i += len + 1; // skip the blob bytes and the trailing newline
+    i += len;
+    if (out[i] !== 0x0a) {
+      throw new Error(`malformed git cat-file output for ${sha}: missing trailing newline`);
+    }
+    i += 1;
   }
   return result;
 }
@@ -226,13 +243,37 @@ export async function streamLog(
     { stdio: ["ignore", "pipe", "inherit"] },
   );
 
-  if (!child.stdout) throw new Error("git log produced no stdout");
+  const exit = new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0) resolve();
+      else
+        reject(
+          new Error(signal ? `git log exited with signal ${signal}` : `git log exited ${code}`),
+        );
+    });
+  });
+
+  if (!child.stdout) {
+    child.kill();
+    await exit.catch(() => undefined);
+    throw new Error("git log produced no stdout");
+  }
   const rl = createInterface({ input: child.stdout, crlfDelay: Number.POSITIVE_INFINITY });
   const folder = logFolder(onCommit);
-  for await (const line of rl) folder.line(line);
-  folder.end();
 
-  await new Promise<void>((resolve, reject) => {
-    child.on("close", (code) => (code ? reject(new Error(`git log exited ${code}`)) : resolve()));
-  });
+  const output = (async () => {
+    for await (const line of rl) folder.line(line);
+  })();
+
+  try {
+    await Promise.all([output, exit]);
+  } catch (e) {
+    rl.close();
+    child.kill();
+    await output.catch(() => undefined);
+    await exit.catch(() => undefined);
+    throw e;
+  }
+  folder.end();
 }

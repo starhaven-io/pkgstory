@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -90,6 +90,36 @@ class TapRepo {
   private at(): number {
     return this.pinned ?? T0 + this.tick * 1000;
   }
+}
+
+function fakeBrewBin(): string {
+  const dir = mkdtempSync(join(tmpdir(), "pkgstory-brew-"));
+  cleanups.push(dir);
+  const brew = join(dir, "brew");
+  writeFileSync(
+    brew,
+    `#!/bin/sh
+if [ "$1" = "--repository" ] && [ "$2" = "homebrew/core" ]; then
+  printf '%s\\n' "$PKGSTORY_TEST_TAP"
+  exit 0
+fi
+exit 1
+`,
+  );
+  chmodSync(brew, 0o755);
+  return dir;
+}
+
+function runCli(args: string[], tap: TapRepo): string {
+  const fakeBin = fakeBrewBin();
+  return execFileSync(process.execPath, ["src/cli.ts", ...args], {
+    encoding: "utf8",
+    env: {
+      ...GIT_ENV,
+      PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      PKGSTORY_TEST_TAP: tap.dir,
+    },
+  });
 }
 
 function formula(name: string, version: string, extra = ""): string {
@@ -231,6 +261,33 @@ describe("computeDelta (against a real git repo)", () => {
 });
 
 describe("crawlSince (seed → incremental cycle on one db)", () => {
+  it("does not treat a demo crawl as an incremental seed", () => {
+    const tap = new TapRepo();
+    const dbDir = mkdtempSync(join(tmpdir(), "pkgstory-db-"));
+    cleanups.push(dbDir);
+    const dbPath = join(dbDir, "demo.db");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+
+    const demo = runCli(
+      ["crawl", "--db", dbPath, "--source", "homebrew-formula", "--formulae", "foo"],
+      tap,
+    );
+    expect(demo).toContain("pkgstory crawl");
+
+    const db = openDb(dbPath);
+    expect(db.prepare("SELECT source, last_sha FROM crawl_state").all()).toEqual([]);
+    db.close();
+
+    const since = runCli(["crawl", "--db", dbPath, "--source", "homebrew-formula", "--since"], tap);
+    expect(since).toContain("no cursor");
+
+    const checked = openDb(dbPath);
+    expect(checked.prepare("SELECT source, last_sha FROM crawl_state").all()).toEqual([]);
+    checked.close();
+  });
+
   it("folds new commits into events, latest, lifecycle, and removal state", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
