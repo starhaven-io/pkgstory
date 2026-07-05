@@ -2,6 +2,7 @@ schema: 1
 license: "agpl"
 params:
   astro-docs: true
+  zizmor-config: true
   dependabot:
     - package-ecosystem: "github-actions"
       group: "github-actions"
