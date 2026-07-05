@@ -1,8 +1,10 @@
 # pkgstory
 
+<!-- fleet:block badges -->
 [![CI](https://github.com/starhaven-io/pkgstory/actions/workflows/ci.yml/badge.svg)](https://github.com/starhaven-io/pkgstory/actions/workflows/ci.yml)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
 [![Data: CC-BY-4.0](https://img.shields.io/badge/Data-CC--BY--4.0-green.svg)](data/LICENSE)
+<!-- fleet:end -->
 
 **Every package has a version story.** pkgstory mines a package manager's git
 history into a browsable timeline — which version shipped, and when — for every
@@ -83,7 +85,9 @@ Run `just install-hooks` once per clone (DCO sign-off + pre-push checks). The
 `crawl --d1 local|remote` mode writes deltas straight to Cloudflare D1 and
 refreshes the KV cache — it's what the scheduled job runs.
 
+<!-- fleet:block license-section -->
 ## License
 
 Code is [AGPL-3.0-only](LICENSE). The version-history data, mined from public
 git history, is [CC-BY-4.0](data/LICENSE).
+<!-- fleet:end -->
