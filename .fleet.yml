@@ -1,0 +1,42 @@
+schema: 1
+license: "agpl"
+params:
+  astro-docs: true
+  dependabot:
+    - package-ecosystem: "github-actions"
+      group: "github-actions"
+      directory: "/"
+    - package-ecosystem: "npm"
+      group: "npm-dependencies"
+      directory: "/"
+    - package-ecosystem: "npm"
+      group: "npm-dependencies"
+      directory: "/site"
+    - package-ecosystem: "npm"
+      group: "npm-dependencies"
+      directory: "/trigger"
+  link-check:
+    targets: "--config lychee.toml README.md trigger/README.md"
+    build-site: true
+    site-directory: "site"
+    authenticated-github: false
+    schedule: "0 14 * * 1"
+    concurrency-group: "link-check"
+  codeql:
+    languages: ["actions", "javascript-typescript"]
+    paths: ["src/**", "site/**", "trigger/**", ".github/workflows/**"]
+    runner: "ubuntu-24.04"
+    timeout-minutes: 30
+  pinprick-audit:
+    advanced-security: "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
+    fail-on-findings: true
+  readme:
+    badges:
+      workflow: "ci.yml"
+      extra:
+        - "[![Data: CC-BY-4.0](https://img.shields.io/badge/Data-CC--BY--4.0-green.svg)](data/LICENSE)"
+    license:
+      text: |-
+        Code is [AGPL-3.0-only](LICENSE). The version-history data, mined from public
+        git history, is [CC-BY-4.0](data/LICENSE).
+exceptions: {}
