@@ -22,6 +22,7 @@ jobs:
   deploy:
     name: Deploy
     runs-on: ubuntu-slim
+    timeout-minutes: 60
     permissions:
       contents: read # required to checkout repository
     environment: cloudflare
