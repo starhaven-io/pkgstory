@@ -111,6 +111,7 @@ backfills them.
    deployment behavior, or data semantics.
 
 <!-- fleet:block commit-and-pr-conventions -->
+
 ## Commit and PR conventions
 
 - Conventional Commits: `type(scope): description`. Valid types: `feat`,
@@ -128,4 +129,5 @@ backfills them.
 - Comments must earn their keep: a comment states a constraint or rationale the
   code cannot express. Never add comments that narrate what the code does,
   restate names, or explain a change to its reviewer.
+
 <!-- fleet:end -->
