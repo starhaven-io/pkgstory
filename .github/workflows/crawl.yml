@@ -29,6 +29,7 @@ jobs:
     name: Crawl deltas into D1
     if: github.repository_owner == 'starhaven-io'
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     environment: cloudflare # holds the Cloudflare token (matches deploy-site)
     permissions:
       actions: write # required to prune old tap caches with gh cache delete
