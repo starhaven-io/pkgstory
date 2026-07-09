@@ -156,11 +156,15 @@ jobs:
         if: matrix.check == 'lint'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/bin/typos
-          key: ${{ runner.os }}-${{ runner.arch }}-typos-1.47.2
+          path: |
+            ~/.cargo/bin/typos
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-${{ runner.arch }}-typos-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-typos-
 
       - name: Install typos
-        if: matrix.check == 'lint' && steps.typos-cache.outputs.cache-hit != 'true'
+        if: matrix.check == 'lint'
         run: cargo install typos-cli --locked --version 1.48.0
 
       - name: Typos
@@ -171,8 +175,11 @@ jobs:
         if: matrix.check == 'lint' && github.event_name == 'push' && steps.typos-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cargo/bin/typos
-          key: ${{ runner.os }}-${{ runner.arch }}-typos-1.47.2
+          path: |
+            ~/.cargo/bin/typos
+            ~/.cargo/.crates.toml
+            ~/.cargo/.crates2.json
+          key: ${{ runner.os }}-${{ runner.arch }}-typos-${{ hashFiles('.github/workflows/ci.yml') }}
 
 
       - name: Test
