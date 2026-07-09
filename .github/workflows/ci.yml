@@ -28,6 +28,8 @@ jobs:
       contents: read
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      run_codeql: ${{ steps.matrix.outputs.run_codeql }}
+      run_zizmor: ${{ steps.matrix.outputs.run_zizmor }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -42,11 +44,17 @@ jobs:
         run: |
           # Push to main: run lint + test to warm caches and guard the branch.
           if [[ "${EVENT_NAME}" == "push" ]]; then
-            echo 'matrix=[{"name":"Lint","check":"lint","runner":"ubuntu-24.04"},{"name":"Test","check":"test","runner":"ubuntu-24.04"}]' >> "${GITHUB_OUTPUT}"
+            {
+              echo 'matrix=[{"name":"Lint","check":"lint","runner":"ubuntu-24.04"},{"name":"Test","check":"test","runner":"ubuntu-24.04"}]'
+              echo "run_codeql=false"
+              echo "run_zizmor=false"
+            } >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
           MATRIX='[]'
+          RUN_CODEQL=false
+          RUN_ZIZMOR=false
           add_check() {
             local entry="$1"
             if [[ "${MATRIX}" == "[]" ]]; then
@@ -81,15 +89,19 @@ jobs:
 
           # Source changes: CodeQL
           if echo "${CHANGED}" | grep -qE '^src/|^site/|^trigger/'; then
-            add_check '{"name":"CodeQL (JS/TS)","check":"codeql","language":"javascript-typescript","runner":"ubuntu-24.04"}'
+            RUN_CODEQL=true
           fi
 
           # Workflow changes: Actions security audit
           if echo "${CHANGED}" | grep -qE '^\.github/workflows/'; then
-            add_check '{"name":"zizmor","check":"zizmor","runner":"ubuntu-24.04"}'
+            RUN_ZIZMOR=true
           fi
 
-          echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "matrix=${MATRIX}"
+            echo "run_codeql=${RUN_CODEQL}"
+            echo "run_zizmor=${RUN_ZIZMOR}"
+          } >> "${GITHUB_OUTPUT}"
 
   commits:
     name: Conventional Commits
@@ -107,7 +119,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write # required for CodeQL and zizmor SARIF uploads
     strategy:
       fail-fast: false
       matrix:
@@ -217,28 +228,33 @@ jobs:
         run: npm run typecheck
 
 
-      - name: Run zizmor
-        if: matrix.check == 'zizmor'
-        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
-        with:
-          persona: auditor
+  codeql:
+    name: CodeQL
+    needs: generate-matrix
+    if: needs.generate-matrix.outputs.run_codeql == 'true'
+    permissions:
+      contents: read
+      security-events: write # required to upload SARIF results
+    uses: starhaven-io/.github/.github/workflows/reusable-codeql.yml@03a3794cb337d13703059eb02b44a8d419833ebd # v2026.07.08.1
+    with:
+      languages: '["javascript-typescript"]'
+      runner: "ubuntu-24.04"
+      timeout-minutes: 30
+      build-mode: ""
+      build-profile: ""
 
-
-      - name: Initialize CodeQL
-        if: matrix.check == 'codeql'
-        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
-        with:
-          languages: ${{ matrix.language }}
-
-      - name: Perform CodeQL Analysis
-        if: matrix.check == 'codeql'
-        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
-        with:
-          category: "/language:${{ matrix.language }}"
+  zizmor:
+    name: zizmor
+    needs: generate-matrix
+    if: needs.generate-matrix.outputs.run_zizmor == 'true'
+    permissions:
+      contents: read
+      security-events: write # required for zizmor SARIF upload
+    uses: starhaven-io/.github/.github/workflows/reusable-zizmor.yml@03a3794cb337d13703059eb02b44a8d419833ebd # v2026.07.08.1
 
   conclusion:
     name: conclusion
-    needs: [commits, check]
+    needs: [commits, check, codeql, zizmor]
     runs-on: ubuntu-slim
     timeout-minutes: 15
     if: always()
@@ -247,6 +263,10 @@ jobs:
         env:
           COMMITS_RESULT: ${{ needs.commits.result }}
           CHECK_RESULT: ${{ needs.check.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+          ZIZMOR_RESULT: ${{ needs.zizmor.result }}
         run: |
           test "${COMMITS_RESULT}" = "success" || test "${COMMITS_RESULT}" = "skipped"
           test "${CHECK_RESULT}" = "success" || test "${CHECK_RESULT}" = "skipped"
+          test "${CODEQL_RESULT}" = "success" || test "${CODEQL_RESULT}" = "skipped"
+          test "${ZIZMOR_RESULT}" = "success" || test "${ZIZMOR_RESULT}" = "skipped"
