@@ -29,6 +29,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       run_codeql: ${{ steps.matrix.outputs.run_codeql }}
+      run_codecov: ${{ steps.matrix.outputs.run_codecov }}
       run_zizmor: ${{ steps.matrix.outputs.run_zizmor }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -47,6 +48,7 @@ jobs:
             {
               echo 'matrix=[{"name":"Lint","check":"lint","runner":"ubuntu-24.04"},{"name":"Test","check":"test","runner":"ubuntu-24.04"}]'
               echo "run_codeql=false"
+              echo "run_codecov=true"
               echo "run_zizmor=false"
             } >> "${GITHUB_OUTPUT}"
             exit 0
@@ -54,6 +56,7 @@ jobs:
 
           MATRIX='[]'
           RUN_CODEQL=false
+          RUN_CODECOV=false
           RUN_ZIZMOR=false
           add_check() {
             local entry="$1"
@@ -75,6 +78,7 @@ jobs:
           if echo "${CHANGED}" | grep -qE '\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^\.github/workflows/ci\.yml$'; then
             add_check '{"name":"Lint","check":"lint","runner":"ubuntu-24.04"}'
             add_check '{"name":"Test","check":"test","runner":"ubuntu-24.04"}'
+            RUN_CODECOV=true
           fi
 
           # Site changes: format check + build
@@ -100,6 +104,7 @@ jobs:
           {
             echo "matrix=${MATRIX}"
             echo "run_codeql=${RUN_CODEQL}"
+            echo "run_codecov=${RUN_CODECOV}"
             echo "run_zizmor=${RUN_ZIZMOR}"
           } >> "${GITHUB_OUTPUT}"
 
@@ -184,7 +189,16 @@ jobs:
 
       - name: Test
         if: matrix.check == 'test'
-        run: npm test
+        run: npm run test:coverage
+
+      - name: Save coverage report
+        if: success() && matrix.check == 'test'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-report
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 1
 
 
       - name: Setup Node (site)
@@ -250,6 +264,36 @@ jobs:
       build-mode: ""
       build-profile: ""
 
+  codecov:
+    name: Codecov
+    needs: [generate-matrix, check]
+    if: ${{ !cancelled() && needs.generate-matrix.outputs.run_codecov == 'true' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # required for Codecov OIDC authentication
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download coverage report
+        id: download-coverage
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-report
+          path: coverage
+
+      - name: Upload coverage to Codecov
+        if: steps.download-coverage.outcome == 'success'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          use_oidc: true
+          files: coverage/lcov.info
+          fail_ci_if_error: false
+
   zizmor:
     name: zizmor
     needs: generate-matrix
@@ -261,7 +305,7 @@ jobs:
 
   conclusion:
     name: conclusion
-    needs: [commits, check, codeql, zizmor]
+    needs: [commits, check, codeql, codecov, zizmor]
     runs-on: ubuntu-slim
     timeout-minutes: 15
     if: always()
@@ -271,9 +315,11 @@ jobs:
           COMMITS_RESULT: ${{ needs.commits.result }}
           CHECK_RESULT: ${{ needs.check.result }}
           CODEQL_RESULT: ${{ needs.codeql.result }}
+          CODECOV_RESULT: ${{ needs.codecov.result }}
           ZIZMOR_RESULT: ${{ needs.zizmor.result }}
         run: |
           test "${COMMITS_RESULT}" = "success" || test "${COMMITS_RESULT}" = "skipped"
           test "${CHECK_RESULT}" = "success" || test "${CHECK_RESULT}" = "skipped"
           test "${CODEQL_RESULT}" = "success" || test "${CODEQL_RESULT}" = "skipped"
+          test "${CODECOV_RESULT}" = "success" || test "${CODECOV_RESULT}" = "skipped"
           test "${ZIZMOR_RESULT}" = "success" || test "${ZIZMOR_RESULT}" = "skipped"
