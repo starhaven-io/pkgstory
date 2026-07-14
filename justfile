@@ -14,6 +14,10 @@ install:
 test:
     npm test
 
+# Run tests and write the Codecov LCOV report
+test-cov:
+    npm run test:coverage
+
 # Crawl
 
 # Crawl package histories into the SQLite index (default: a curated demo set)
