@@ -63,6 +63,21 @@ site-seed-local db="pkgstory.db":
     (cd site && npx wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
     node src/cli.ts cache --d1 local
 
+# Reseed the deployed D1/KV site state from a full-crawl database
+site-seed-remote db="pkgstory.db":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The slice drops and rebuilds every table, so the deployed site serves errors from
+    # the first DROP until the last INSERT lands. Seed only from a `crawl --all` database:
+    # an incremental-only one exports no contributors at all.
+    read -rp "Reseed the DEPLOYED pkgstory D1 from {{db}}? The live site errors until it finishes. [y/N] " reply
+    [[ "${reply}" == [yY] ]] || { echo "aborted"; exit 1; }
+    sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
+    trap 'rm -f "$sql"' EXIT
+    node src/cli.ts export --db "{{db}}" > "$sql"
+    (cd site && npx wrangler d1 execute pkgstory --remote --yes --file "$sql" >/dev/null)
+    node src/cli.ts cache --d1 remote
+
 # Start the site dev server
 site-dev:
     cd site && npm run dev
