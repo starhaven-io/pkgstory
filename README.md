@@ -88,10 +88,6 @@ Run `just install-hooks` once per clone (DCO sign-off + pre-push checks). The
 `crawl --d1 local|remote` mode writes deltas straight to Cloudflare D1 and
 refreshes the KV cache — it's what the scheduled job runs.
 
-After adding contributor storage to an existing deployment, run a full catalog
-crawl and D1 reseed once. Until that historical seed lands, incremental crawls
-leave the contributor section empty instead of publishing incomplete history.
-
 <!-- fleet:block license-section -->
 
 ## License
