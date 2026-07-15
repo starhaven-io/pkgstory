@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import type { PackageMeta, VersionEvent } from './format.ts';
+import type { ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
 
 export const TIMELINE_LIMIT = 500;
 
@@ -32,6 +32,36 @@ export async function timeline(db: D1, source: string, name: string, limit = TIM
     .bind(source, name, limit)
     .all<VersionEvent>();
   return results;
+}
+
+/** Authors and co-authors of every commit touching one package's file. */
+export async function contributors(db: D1, source: string, name: string): Promise<ContributorSummary[]> {
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT c.display_name AS displayName, c.github_login AS githubLogin,
+              c.is_bot != 0 AS isBot,
+              SUM(pcs.touch_count) AS touchCount,
+              SUM(pcs.version_count) AS versionCount,
+              MIN(pcs.first_at) AS firstAt,
+              MAX(pcs.last_at) AS lastAt
+         FROM package_contribution_slices pcs
+         JOIN contributors c ON c.contributor_key = pcs.contributor_key
+         JOIN packages p ON p.id = pcs.package_id
+         JOIN contributor_seeds cs ON cs.source = p.source
+        WHERE p.source = ? AND p.name = ?
+        GROUP BY pcs.contributor_key, c.display_name, c.github_login, c.is_bot
+        ORDER BY c.is_bot ASC, lastAt DESC, touchCount DESC`,
+      )
+      .bind(source, name)
+      .all<Omit<ContributorSummary, 'isBot'> & { isBot: number }>();
+    return results.map((contributor) => ({ ...contributor, isBot: contributor.isBot !== 0 }));
+  } catch (error) {
+    // Code can deploy before the crawler creates the new read tables. Keep package
+    // pages available during that migration window; other D1 failures still surface.
+    if (/no such table: (?:package_contribution_slices|contributors|contributor_seeds)/.test(String(error))) return [];
+    throw error;
+  }
 }
 
 /** Per-package lifecycle metadata (removed / deprecated / disabled state). */

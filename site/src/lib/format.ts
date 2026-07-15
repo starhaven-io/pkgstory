@@ -9,6 +9,16 @@ export interface VersionEvent {
   subject: string;
 }
 
+export interface ContributorSummary {
+  displayName: string;
+  githubLogin: string | null;
+  isBot: boolean;
+  touchCount: number;
+  versionCount: number;
+  firstAt: number;
+  lastAt: number;
+}
+
 // Lifecycle state of a package. The compact code travels in the KV catalog + home
 // blobs; the package page reads the raw columns and derives state with lifecycleState
 // — against today, so a future-scheduled stanza counts only once due.

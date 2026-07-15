@@ -1,10 +1,19 @@
 import type { DatabaseSync } from "node:sqlite";
-import { type D1Mode, d1Apply, d1Select, ensureD1PackageColumns, sqlLit } from "../db/d1remote.ts";
+import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
+import {
+  type D1Mode,
+  d1Apply,
+  d1Select,
+  ensureD1ContributorTables,
+  ensureD1PackageColumns,
+  sqlLit,
+} from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
 import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
 import { type Lifecycle, parseLifecycle } from "../parse/lifecycle.ts";
 import type { Source } from "../sources/index.ts";
+import { contributorWriter, rebuildPackageContributors } from "./contributors.ts";
 
 export interface SinceResult {
   status: "ok" | "no-cursor" | "up-to-date";
@@ -24,6 +33,7 @@ export interface DeltaEvent {
 export interface PackageDelta {
   name: string;
   touches: DeltaEvent[]; // time-ordered, only touches that parsed to a version
+  history: HistoryTouch[]; // one row per touching commit, including non-version changes
   // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
   lifecycle: Lifecycle | null;
@@ -37,19 +47,23 @@ export interface PackageDelta {
   } | null;
 }
 
+export interface HistoryTouch {
+  at: number;
+  blobSha: string;
+  sha: string;
+  subject: string;
+  status: string;
+  deleted: boolean;
+  contributors: ContributorAttribution[];
+}
+
 export interface Delta {
   head: string;
   commits: number;
   packages: PackageDelta[];
 }
 
-interface RawTouch {
-  committedAt: number;
-  blobSha: string;
-  commitSha: string;
-  subject: string;
-  deleted: boolean;
-}
+type RawTouch = HistoryTouch;
 
 /**
  * Parse `git log <lastSha>..HEAD` into per-package, time-ordered version touches plus
@@ -65,6 +79,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const shas: string[] = [];
   let anyDeleted = false;
   for (const commit of commits) {
+    const contributors = commitAttributions(commit);
     for (const file of commit.files) {
       const name = source.packageOf(file.path);
       if (!name) continue;
@@ -75,11 +90,13 @@ export function computeDelta(source: Source, lastSha: string): Delta {
         raw.set(name, list);
       }
       list.push({
-        committedAt: commit.committedAt,
+        at: commit.committedAt,
         blobSha: file.blobSha,
-        commitSha: commit.sha,
+        sha: commit.sha,
         subject: commit.subject,
+        status: file.status,
         deleted,
+        contributors,
       });
       if (deleted) anyDeleted = true;
       else shas.push(file.blobSha);
@@ -98,9 +115,12 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
     const parsed: DeltaEvent[] = [];
+    const historyBySha = new Map<string, HistoryTouch>();
     let latestLive: RawTouch | null = null;
     let lastDeletion: RawTouch | null = null;
     for (const t of touches) {
+      const prior = historyBySha.get(t.sha);
+      if (!prior || (prior.deleted && !t.deleted)) historyBySha.set(t.sha, t);
       // touches are oldest-first, so these settle on the last of each kind.
       if (t.deleted) {
         lastDeletion = t;
@@ -110,8 +130,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       const blob = blobs.get(t.blobSha);
       if (blob === undefined) continue;
       const { version, revision } = extractVersion(source.kind, name, t.subject, blob);
-      if (version)
-        parsed.push({ version, revision, at: t.committedAt, sha: t.commitSha, subject: t.subject });
+      if (version) parsed.push({ version, revision, at: t.at, sha: t.sha, subject: t.subject });
     }
 
     const isPresent = present ? present.has(name) : true;
@@ -119,15 +138,21 @@ export function computeDelta(source: Source, lastSha: string): Delta {
     const removed =
       !isPresent && lastDeletion
         ? {
-            at: lastDeletion.committedAt,
-            commit: lastDeletion.commitSha,
+            at: lastDeletion.at,
+            commit: lastDeletion.sha,
             renamedTo: replacement?.renamedTo ?? null,
             migratedTo: replacement?.migratedTo ?? null,
           }
         : null;
     const lifecycle = latestLive ? parseLifecycle(blobs.get(latestLive.blobSha) ?? "") : null;
 
-    packages.push({ name, touches: parsed, lifecycle, removed });
+    packages.push({
+      name,
+      touches: parsed,
+      history: [...historyBySha.values()],
+      lifecycle,
+      removed,
+    });
   }
   return { head, commits: commits.length, packages };
 }
@@ -156,6 +181,60 @@ interface PkgRow {
   latest_revision: number;
 }
 
+export interface ContributionAggregate {
+  contributor: ContributorAttribution;
+  touchCount: number;
+  versionCount: number;
+  firstAt: number;
+  lastAt: number;
+}
+
+export function aggregateContributions(
+  history: HistoryTouch[],
+  versionEvents: DeltaEvent[],
+): ContributionAggregate[] {
+  const versionShas = new Set(versionEvents.map((event) => event.sha));
+  const aggregates = new Map<string, ContributionAggregate>();
+  for (const touch of history) {
+    for (const contributor of touch.contributors) {
+      const existing = aggregates.get(contributor.key);
+      if (existing) {
+        existing.contributor = contributor;
+        existing.touchCount += 1;
+        if (versionShas.has(touch.sha)) existing.versionCount += 1;
+        existing.firstAt = Math.min(existing.firstAt, touch.at);
+        existing.lastAt = Math.max(existing.lastAt, touch.at);
+      } else {
+        aggregates.set(contributor.key, {
+          contributor,
+          touchCount: 1,
+          versionCount: versionShas.has(touch.sha) ? 1 : 0,
+          firstAt: touch.at,
+          lastAt: touch.at,
+        });
+      }
+    }
+  }
+  return [...aggregates.values()];
+}
+
+export function contributionStatements(
+  packageIdSql: string,
+  windowStartSha: string,
+  windowEndSha: string,
+  contributions: ContributionAggregate[],
+): string[] {
+  const statements: string[] = [];
+  for (const aggregate of contributions) {
+    const contributor = aggregate.contributor;
+    statements.push(
+      `INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at) VALUES (${sqlLit(contributor.key)}, ${sqlLit(contributor.displayName)}, ${sqlLit(contributor.githubLogin)}, ${contributor.isBot ? 1 : 0}, ${aggregate.lastAt}) ON CONFLICT (contributor_key) DO UPDATE SET display_name = excluded.display_name, github_login = excluded.github_login, is_bot = excluded.is_bot, last_seen_at = excluded.last_seen_at WHERE excluded.last_seen_at >= contributors.last_seen_at;`,
+      `INSERT INTO package_contribution_slices (package_id, contributor_key, window_start_sha, window_end_sha, touch_count, version_count, first_at, last_at) VALUES (${packageIdSql}, ${sqlLit(contributor.key)}, ${sqlLit(windowStartSha)}, ${sqlLit(windowEndSha)}, ${aggregate.touchCount}, ${aggregate.versionCount}, ${aggregate.firstAt}, ${aggregate.lastAt}) ON CONFLICT (package_id, contributor_key, window_start_sha) DO UPDATE SET window_end_sha = excluded.window_end_sha, touch_count = excluded.touch_count, version_count = excluded.version_count, first_at = excluded.first_at, last_at = excluded.last_at;`,
+    );
+  }
+  return statements;
+}
+
 /**
  * Incremental crawl into a local SQLite db. Requires a prior seed (`crawl --all`)
  * so baselines exist; otherwise reports no-cursor.
@@ -178,6 +257,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
+  const insertVersionChange = db.prepare(
+    "INSERT OR IGNORE INTO version_changes (package_id, commit_sha) VALUES (?, ?)",
+  );
   const updateLatest = db.prepare(
     `UPDATE packages
         SET latest_version = ?, latest_revision = ?, latest_at = ?,
@@ -193,18 +275,40 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   const clearRemoved = db.prepare(
     "UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL WHERE id = ? AND (removed_at IS NOT NULL OR renamed_to IS NOT NULL OR migrated_to IS NOT NULL)",
   );
+  const insertCommit = db.prepare(
+    `INSERT OR IGNORE INTO commit_index
+       (package_id, commit_sha, blob_sha, committed_at, author, subject, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const contributors = contributorWriter(db);
 
   let events = 0;
+  const changedPackageIds: number[] = [];
   db.exec("BEGIN");
-  for (const { name, touches, lifecycle, removed } of delta.packages) {
+  for (const { name, touches, history, lifecycle, removed } of delta.packages) {
     upsertPkg.run(source.id, name);
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
+    changedPackageIds.push(pkg.id);
+    for (const touch of history) {
+      const author = touch.contributors.find((contributor) => contributor.role === "author");
+      insertCommit.run(
+        pkg.id,
+        touch.sha,
+        touch.blobSha,
+        touch.at,
+        author?.displayName ?? null,
+        touch.subject,
+        touch.status,
+      );
+      contributors.linkAttributions(pkg.id, touch.sha, touch.at, touch.contributors);
+    }
     const { events: newEvents, latest } = foldPackage(
       pkg.latest_version,
       pkg.latest_revision ?? 0,
       touches,
     );
     for (const e of newEvents) {
+      insertVersionChange.run(pkg.id, e.sha);
       events += Number(
         insertEvent.run(pkg.id, e.version, e.revision, e.at, e.sha, e.subject).changes,
       );
@@ -222,6 +326,11 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       setRemoved.run(removed.at, removed.commit, removed.renamedTo, removed.migratedTo, pkg.id);
     else clearRemoved.run(pkg.id);
   }
+  rebuildPackageContributors(db, changedPackageIds);
+  db.prepare("UPDATE contributor_seeds SET seeded_at_sha = ? WHERE source = ?").run(
+    delta.head,
+    source.id,
+  );
   db.exec("COMMIT");
 
   setCrawlState(db, source.id, delta.head, now);
@@ -251,6 +360,7 @@ interface Baseline {
  */
 export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceResult {
   ensureD1PackageColumns(mode);
+  ensureD1ContributorTables(mode);
 
   const cur = d1Select(
     mode,
@@ -258,6 +368,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   );
   const lastSha = (cur[0]?.last_sha as string | undefined) ?? null;
   if (!lastSha) return { status: "no-cursor", events: 0, commits: 0 };
+  const contributorSeeded =
+    d1Select(mode, `SELECT 1 FROM contributor_seeds WHERE source = ${sqlLit(source.id)} LIMIT 1`)
+      .length > 0;
 
   const delta = computeDelta(source, lastSha);
   const cursorSql = `INSERT INTO crawl_state (source, last_sha, last_crawled_at) VALUES (${sqlLit(source.id)}, ${sqlLit(delta.head)}, ${now}) ON CONFLICT (source) DO UPDATE SET last_sha = excluded.last_sha, last_crawled_at = excluded.last_crawled_at;`;
@@ -295,9 +408,10 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
 
   const stmts: string[] = [];
   let events = 0;
-  for (const { name, touches, lifecycle, removed } of delta.packages) {
+  for (const { name, touches, history, lifecycle, removed } of delta.packages) {
     const base = baseline.get(name);
     const folded = foldPackage(base?.version ?? null, base?.revision ?? 0, touches);
+    const contributions = contributorSeeded ? aggregateContributions(history, folded.events) : [];
 
     const lifecycleChanged =
       lifecycle != null &&
@@ -313,13 +427,20 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         removed.migratedTo !== (base?.migratedTo ?? null)
       : baseRemoved != null || base?.renamedTo != null || base?.migratedTo != null;
 
-    if (folded.events.length === 0 && !lifecycleChanged && !removedChanged) continue;
+    if (
+      contributions.length === 0 &&
+      folded.events.length === 0 &&
+      !lifecycleChanged &&
+      !removedChanged
+    )
+      continue;
 
     const where = `source = ${sqlLit(source.id)} AND name = ${sqlLit(name)}`;
     const idSub = `(SELECT id FROM packages WHERE ${where})`;
     stmts.push(
       `INSERT OR IGNORE INTO packages (source, name) VALUES (${sqlLit(source.id)}, ${sqlLit(name)});`,
     );
+    stmts.push(...contributionStatements(idSub, lastSha, delta.head, contributions));
     for (const e of folded.events) {
       stmts.push(
         `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject) VALUES (${idSub}, ${sqlLit(e.version)}, ${e.revision}, ${e.at}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
@@ -343,6 +464,11 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
           : `UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL WHERE ${where};`,
       );
     }
+  }
+  if (contributorSeeded) {
+    stmts.push(
+      `UPDATE contributor_seeds SET seeded_at_sha = ${sqlLit(delta.head)} WHERE source = ${sqlLit(source.id)};`,
+    );
   }
   stmts.push(cursorSql);
   // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the

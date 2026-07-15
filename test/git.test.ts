@@ -5,14 +5,21 @@ import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { batchCat, parseBatchCat, parseLog, type RawCommit, streamLog } from "../src/git.ts";
 
-// Raw `git log --raw --format=<COMMIT>%H<FIELD>%at<FIELD>%an<FIELD>%s` output uses
-// \x1e/\x1f separators (never present in a subject) and one ":<modes> <shas> <status>\t<path>"
+// Raw `git log --raw --format=…` output uses
+// a record marker and NUL field separators, plus one ":<modes> <shas> <status>\t<path>"
 // line per touched file.
 const C = "\x1ecommit\x1e";
-const F = "\x1f";
+const F = "\0";
 
-function commitLine(sha: string, at: number, author: string, subject: string): string {
-  return `${C}${sha}${F}${at}${F}${author}${F}${subject}`;
+function commitLine(
+  sha: string,
+  at: number,
+  author: string,
+  email: string,
+  subject: string,
+  coauthors = "",
+): string {
+  return `${C}${sha}${F}${at}${F}${email}${F}${author}${F}${coauthors}${F}${subject}`;
 }
 
 const SHA_A = "a".repeat(40);
@@ -63,10 +70,10 @@ class GitRepo {
     writeFileSync(full, content);
   }
 
-  commit(message: string): string {
+  commit(message: string, author?: string): string {
     this.tick += 1;
     this.git("add", "-A");
-    this.git("commit", "-q", "-m", message);
+    this.git("commit", "-q", "-m", message, ...(author ? ["--author", author] : []));
     return this.git("rev-parse", "HEAD");
   }
 }
@@ -74,9 +81,16 @@ class GitRepo {
 describe("parseLog", () => {
   it("parses commits with their touched files", () => {
     const out = [
-      commitLine(SHA_A, 1700000000, "BrewTestBot", "git 2.54.0"),
+      commitLine(
+        SHA_A,
+        1700000000,
+        "BrewTestBot",
+        "1589480+BrewTestBot@users.noreply.github.com",
+        "git 2.54.0",
+        "Carlo Cabrera <30379873+carlocab@users.noreply.github.com>\x1dInvalid trailer",
+      ),
       `:100644 100644 ${BLOB_1} ${BLOB_2} M\tFormula/g/git.rb`,
-      commitLine(SHA_B, 1690000000, "Someone Else", "git: fix build"),
+      commitLine(SHA_B, 1690000000, "Someone Else", "else@example.com", "git: fix build"),
       `:100644 100644 ${BLOB_2} ${BLOB_1} M\tFormula/g/git.rb`,
       "",
     ].join("\n");
@@ -86,7 +100,16 @@ describe("parseLog", () => {
     expect(commits[0]).toEqual({
       sha: SHA_A,
       committedAt: 1700000000,
-      author: "BrewTestBot",
+      author: {
+        name: "BrewTestBot",
+        email: "1589480+BrewTestBot@users.noreply.github.com",
+      },
+      coauthors: [
+        {
+          name: "Carlo Cabrera",
+          email: "30379873+carlocab@users.noreply.github.com",
+        },
+      ],
       subject: "git 2.54.0",
       files: [{ status: "M", blobSha: BLOB_2, path: "Formula/g/git.rb" }],
     });
@@ -95,7 +118,7 @@ describe("parseLog", () => {
 
   it("keeps both sides of a relocation (delete + add in one commit)", () => {
     const out = [
-      commitLine(SHA_A, 1700000000, "Bot", "git: move to Formula/g/"),
+      commitLine(SHA_A, 1700000000, "Bot", "bot@example.com", "git: move to Formula/g/"),
       `:000000 100644 ${ZEROS} ${BLOB_1} A\tFormula/g/git.rb`,
       `:100644 000000 ${BLOB_1} ${ZEROS} D\tFormula/git.rb`,
     ].join("\n");
@@ -109,7 +132,7 @@ describe("parseLog", () => {
 
   it("handles a deletion's all-zero post-image blob", () => {
     const out = [
-      commitLine(SHA_A, 1700000000, "Bot", "terraform: delete"),
+      commitLine(SHA_A, 1700000000, "Bot", "bot@example.com", "terraform: delete"),
       `:100644 000000 ${BLOB_1} ${ZEROS} D\tFormula/t/terraform.rb`,
     ].join("\n");
 
@@ -123,6 +146,24 @@ describe("parseLog", () => {
   it("returns no commits for empty output", () => {
     expect(parseLog("")).toEqual([]);
     expect(parseLog("\n")).toEqual([]);
+  });
+
+  it("preserves control separators in untrusted identity and subject fields", () => {
+    const subject = `foo: preserve \x1f text`;
+    const out = commitLine(
+      SHA_A,
+      1700000000,
+      `Alice\x1fInjected`,
+      "alice@example.com",
+      subject,
+      "Bob <2+bob@users.noreply.github.com>",
+    );
+
+    expect(parseLog(out)[0]).toMatchObject({
+      author: { name: `Alice\x1fInjected`, email: "alice@example.com" },
+      coauthors: [{ name: "Bob", email: "2+bob@users.noreply.github.com" }],
+      subject,
+    });
   });
 });
 

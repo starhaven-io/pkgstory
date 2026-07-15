@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildCommitIndex } from "../src/crawl/commit-index.ts";
+import { buildPackageContributors } from "../src/crawl/contributors.ts";
 import { buildEvents } from "../src/crawl/events.ts";
 import {
   computeDelta,
@@ -75,11 +76,11 @@ class TapRepo {
   }
 
   /** Stage everything and commit at the next (or a pinned) timestamp. */
-  commit(message: string, at?: number): { sha: string; at: number } {
+  commit(message: string, at?: number, author?: string): { sha: string; at: number } {
     this.tick += 1;
     if (at !== undefined) this.pinned = at;
     this.git("add", "-A");
-    this.git("commit", "-q", "-m", message);
+    this.git("commit", "-q", "-m", message, ...(author ? ["--author", author] : []));
     const sha = this.git("rev-parse", "HEAD");
     const time = this.pinned ?? this.at();
     this.pinned = undefined;
@@ -278,6 +279,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 
     const db = openDb(dbPath);
     expect(db.prepare("SELECT source, last_sha FROM crawl_state").all()).toEqual([]);
+    expect(db.prepare("SELECT source, seeded_at_sha FROM contributor_seeds").all()).toEqual([]);
     db.close();
 
     const since = runCli(["crawl", "--db", dbPath, "--source", "homebrew-formula", "--since"], tap);
@@ -427,6 +429,100 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
       renamed_to: null,
       migrated_to: null,
     });
+    db.close();
+  });
+});
+
+describe("formula contributors", () => {
+  it("aggregates authors, co-authors, bots, and metadata-only incremental touches", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0", undefined, "Alice <1+alice@users.noreply.github.com>");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit(
+      "foo 1.1\n\nCo-authored-by: Bob <2+bob@users.noreply.github.com>",
+      undefined,
+      "BrewTestBot <1589480+BrewTestBot@users.noreply.github.com>",
+    );
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    buildPackageContributors(db, tap.source, ["foo"]);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), T0 + 900000);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM contributor_seeds").get()).toEqual({
+      count: 0,
+    });
+
+    const rows = () =>
+      db
+        .prepare(
+          `SELECT c.display_name, c.github_login, c.is_bot,
+                  pc.touch_count, pc.version_count
+             FROM package_contributors pc
+             JOIN contributors c ON c.contributor_key = pc.contributor_key
+             JOIN packages p ON p.id = pc.package_id
+            WHERE p.name = 'foo'
+            ORDER BY c.display_name`,
+        )
+        .all() as Record<string, unknown>[];
+    expect(rows()).toEqual([
+      {
+        display_name: "Alice",
+        github_login: "alice",
+        is_bot: 0,
+        touch_count: 1,
+        version_count: 1,
+      },
+      {
+        display_name: "Bob",
+        github_login: "bob",
+        is_bot: 0,
+        touch_count: 1,
+        version_count: 1,
+      },
+      {
+        display_name: "BrewTestBot",
+        github_login: "brewtestbot",
+        is_bot: 1,
+        touch_count: 1,
+        version_count: 1,
+      },
+    ]);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1", "  # metadata only\n"));
+    tap.commit("foo: adjust metadata", undefined, "Carol <3+carol@users.noreply.github.com>");
+    expect(crawlSince(db, tap.source, T0 + 900001).events).toBe(0);
+
+    expect(rows()).toContainEqual({
+      display_name: "Carol",
+      github_login: "carol",
+      is_bot: 0,
+      touch_count: 1,
+      version_count: 0,
+    });
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo: revert to 1.0", undefined, "Alice <1+alice@users.noreply.github.com>");
+    expect(crawlSince(db, tap.source, T0 + 900002).events).toBe(0);
+    expect(rows()).toContainEqual({
+      display_name: "Alice",
+      github_login: "alice",
+      is_bot: 0,
+      touch_count: 2,
+      version_count: 2,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM contributor_seeds").get()).toEqual({
+      count: 0,
+    });
+
+    buildPackageContributors(db, tap.source);
+    expect(
+      db.prepare("SELECT seeded_at_sha FROM contributor_seeds WHERE source = ?").get(tap.source.id),
+    ).toEqual({ seeded_at_sha: headSha(tap.dir) });
     db.close();
   });
 });

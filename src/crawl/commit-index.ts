@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { upsertPackage } from "../db/db.ts";
 import { logRaw, streamLog } from "../git.ts";
 import type { Source } from "../sources/index.ts";
+import { contributorWriter } from "./contributors.ts";
 
 /**
  * L0 — index every commit touching the requested packages' files. Scoped to the
@@ -19,6 +20,7 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const pkgIds = new Map<string, number>();
+  const contributors = contributorWriter(db);
   let rows = 0;
 
   db.exec("BEGIN");
@@ -38,10 +40,11 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
         commit.sha,
         file.blobSha,
         commit.committedAt,
-        commit.author,
+        commit.author.name,
         commit.subject,
         file.status,
       );
+      contributors.link(pid, commit);
       rows += Number(r.changes);
     }
   }
@@ -64,6 +67,7 @@ export async function buildCommitIndexAll(
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const pkgIds = new Map<string, number>();
+  const contributors = contributorWriter(db);
   let commits = 0;
   let rows = 0;
 
@@ -84,11 +88,12 @@ export async function buildCommitIndexAll(
           commit.sha,
           file.blobSha,
           commit.committedAt,
-          commit.author,
+          commit.author.name,
           commit.subject,
           file.status,
         ).changes,
       );
+      contributors.link(pid, commit);
     }
     if (commits % 25000 === 0) {
       db.exec("COMMIT");
