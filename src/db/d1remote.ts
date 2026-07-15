@@ -70,6 +70,51 @@ export function ensureD1PackageColumns(mode: D1Mode): void {
   if (stmts.length) d1Apply(mode, `${stmts.join("\n")}\n`);
 }
 
+/** Add the contributor read model to an already-seeded D1 database. */
+export function ensureD1ContributorTables(mode: D1Mode): void {
+  const tables = new Set(
+    d1Select(
+      mode,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('contributors', 'package_contribution_slices', 'contributor_seeds')",
+    ).map((row) => String(row.name)),
+  );
+  if (
+    tables.has("contributors") &&
+    tables.has("package_contribution_slices") &&
+    tables.has("contributor_seeds")
+  )
+    return;
+
+  d1Apply(
+    mode,
+    `CREATE TABLE IF NOT EXISTS contributors (
+  contributor_key TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  github_login TEXT,
+  is_bot INTEGER NOT NULL DEFAULT 0,
+  last_seen_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS package_contribution_slices (
+  package_id INTEGER NOT NULL,
+  contributor_key TEXT NOT NULL,
+  window_start_sha TEXT NOT NULL,
+  window_end_sha TEXT NOT NULL,
+  touch_count INTEGER NOT NULL,
+  version_count INTEGER NOT NULL,
+  first_at INTEGER NOT NULL,
+  last_at INTEGER NOT NULL,
+  PRIMARY KEY (package_id, contributor_key, window_start_sha)
+);
+CREATE TABLE IF NOT EXISTS contributor_seeds (
+  source TEXT PRIMARY KEY,
+  seeded_at_sha TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contribution_slices_package
+  ON package_contribution_slices (package_id);
+`,
+  );
+}
+
 /**
  * Write a value to the site-cache KV namespace (binding CACHE in wrangler.jsonc).
  * Values can be large (the ~1 MB search index), so they go via a temp file.

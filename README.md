@@ -41,9 +41,10 @@ four-layer index, drawn so the expensive extraction happens exactly once:
   and the package's current `deprecate!`/`disable!` lifecycle. Lean today; richer
   fields (dependencies, bottles, patches) layer in later by re-reading the same
   blobs — no re-crawl.
-- **L2 — version events.** Snapshots collapsed into the timeline: one row per
-  `(version, revision)` change, so bottle rebuilds and metadata-only commits
-  drop out. This is what the site renders.
+- **L2 — version events and contributors.** Snapshots collapse into one row per
+  `(version, revision)` change, while commit authors and explicit co-authors
+  collapse into per-package contribution summaries. Automation is classified
+  separately, and raw author email addresses are never exported to the site.
 
 A `git ls-tree` pass over `HEAD` after each crawl reconciles which packages still
 exist in the tap. For absent packages, pkgstory consults the tap-root
@@ -86,6 +87,10 @@ just check                                      # everything CI runs
 Run `just install-hooks` once per clone (DCO sign-off + pre-push checks). The
 `crawl --d1 local|remote` mode writes deltas straight to Cloudflare D1 and
 refreshes the KV cache — it's what the scheduled job runs.
+
+After adding contributor storage to an existing deployment, run a full catalog
+crawl and D1 reseed once. Until that historical seed lands, incremental crawls
+leave the contributor section empty instead of publishing incomplete history.
 
 <!-- fleet:block license-section -->
 

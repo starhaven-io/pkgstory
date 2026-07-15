@@ -7,17 +7,34 @@ export interface RawFile {
   path: string;
 }
 
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+
 export interface RawCommit {
   sha: string;
   committedAt: number; // unix seconds
-  author: string;
+  author: GitIdentity;
+  coauthors: GitIdentity[];
   subject: string;
   files: RawFile[];
 }
 
-// Record separators that never appear in a commit subject.
+// NUL cannot occur in normal Git identity or commit-message fields. Keep the
+// subject last and rejoin defensively so malformed input cannot forge trailers.
+// %aN/%aE honour a tap's own .mailmap when it has one; pkgstory ships no alias
+// list of its own, so identities are exactly what the tap's history reports.
 const COMMIT = "\x1ecommit\x1e";
-const FIELD = "\x1f";
+const FIELD = "\0";
+const IDENTITY = "\x1d";
+const FORMAT = `${COMMIT}%H%x00%at%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
+
+function parseIdentity(value: string): GitIdentity | null {
+  const match = value.trim().match(/^(.*?)\s*<([^<>]+)>$/);
+  if (!match) return null;
+  return { name: match[1]?.trim() ?? "", email: match[2]?.trim() ?? "" };
+}
 
 /** Resolve a Homebrew tap to its local clone, e.g. `brew --repository homebrew/core`. */
 export function repoRoot(tap: string): string {
@@ -48,7 +65,7 @@ export function logRaw(repoDir: string, pathspecs: string[]): RawCommit[] {
     "--no-renames",
     "--no-abbrev", // full 40-char blob shas — `--raw` abbreviates by default
     "--date=unix",
-    `--format=${COMMIT}%H${FIELD}%at${FIELD}%an${FIELD}%s`,
+    `--format=${FORMAT}`,
   ];
   if (pathspecs.length) args.push("--", ...pathspecs);
   const out = execFileSync("git", args, {
@@ -76,8 +93,12 @@ function logFolder(onCommit: (commit: RawCommit) => void): {
         cur = {
           sha: parts[0] ?? "",
           committedAt: Number(parts[1] ?? 0),
-          author: parts[2] ?? "",
-          subject: parts[3] ?? "",
+          author: { name: parts[3] ?? "", email: parts[2] ?? "" },
+          coauthors: (parts[4] ?? "")
+            .split(IDENTITY)
+            .map(parseIdentity)
+            .filter((identity): identity is GitIdentity => identity !== null),
+          subject: parts.slice(5).join(FIELD),
           files: [],
         };
       } else if (line.startsWith(":") && cur) {
@@ -211,7 +232,7 @@ export function logSince(repoDir: string, sinceSha: string): RawCommit[] {
       "--no-abbrev",
       "--reverse",
       "--date=unix",
-      `--format=${COMMIT}%H${FIELD}%at${FIELD}%an${FIELD}%s`,
+      `--format=${FORMAT}`,
       `${sinceSha}..HEAD`,
     ],
     { encoding: "utf8", maxBuffer: 1024 * 1024 * 256 },
@@ -238,7 +259,7 @@ export async function streamLog(
       "--no-renames",
       "--no-abbrev",
       "--date=unix",
-      `--format=${COMMIT}%H${FIELD}%at${FIELD}%an${FIELD}%s`,
+      `--format=${FORMAT}`,
     ],
     { stdio: ["ignore", "pipe", "inherit"] },
   );

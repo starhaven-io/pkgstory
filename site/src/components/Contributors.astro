@@ -1,0 +1,175 @@
+---
+import type { ContributorSummary } from '../lib/format.ts';
+import { isoDate } from '../lib/format.ts';
+
+interface Props {
+  contributors: ContributorSummary[];
+  sourceName: string;
+}
+
+const { contributors, sourceName } = Astro.props;
+const people = contributors.filter((contributor) => !contributor.isBot);
+const automation = contributors.filter((contributor) => contributor.isBot);
+const shown = people.slice(0, 12);
+const more = people.slice(12);
+const summary =
+  people.length > 0
+    ? `${people.length.toLocaleString()} ${people.length === 1 ? 'person' : 'people'}${automation.length > 0 ? ` · ${automation.length.toLocaleString()} automated` : ''}`
+    : `${automation.length.toLocaleString()} automated ${automation.length === 1 ? 'contributor' : 'contributors'}`;
+
+const commitLabel = (count: number) => `${count.toLocaleString()} ${count === 1 ? 'commit' : 'commits'}`;
+const versionLabel = (count: number) => `${count.toLocaleString()} version ${count === 1 ? 'change' : 'changes'}`;
+---
+
+{
+  contributors.length > 0 && (
+    <section aria-labelledby="contributors-title">
+      <div class="section-head">
+        <h2 id="contributors-title">Contributors</h2>
+        <p>{summary}</p>
+      </div>
+      <p class="contributors-note">
+        Authors and co-authors of {sourceName} file changes in Homebrew history, not the upstream project.
+      </p>
+      {shown.length > 0 && (
+        <div class="contributor-grid">
+          {shown.map((contributor) => (
+            <article class="contributor-card">
+              <h3>
+                {contributor.githubLogin ? (
+                  <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
+                    {contributor.displayName}
+                  </a>
+                ) : (
+                  contributor.displayName
+                )}
+              </h3>
+              <p>
+                {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
+              </p>
+              <small>
+                {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
+              </small>
+            </article>
+          ))}
+        </div>
+      )}
+      {more.length > 0 && (
+        <details class="contributors-more">
+          <summary>Show {more.length.toLocaleString()} more</summary>
+          <div class="contributor-grid">
+            {more.map((contributor) => (
+              <article class="contributor-card">
+                <h3>
+                  {contributor.githubLogin ? (
+                    <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
+                      {contributor.displayName}
+                    </a>
+                  ) : (
+                    contributor.displayName
+                  )}
+                </h3>
+                <p>
+                  {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
+                </p>
+                <small>
+                  {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
+                </small>
+              </article>
+            ))}
+          </div>
+        </details>
+      )}
+      {automation.length > 0 && (
+        <details class="contributors-more automation">
+          <summary>Automation</summary>
+          <div class="contributor-grid">
+            {automation.map((contributor) => (
+              <article class="contributor-card">
+                <h3>
+                  {contributor.githubLogin ? (
+                    <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
+                      {contributor.displayName}
+                    </a>
+                  ) : (
+                    contributor.displayName
+                  )}
+                </h3>
+                <p>
+                  {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
+                </p>
+                <small>
+                  {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
+                </small>
+              </article>
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  )
+}
+
+<style>
+  .contributors-note {
+    margin: -0.35rem 0 0.85rem;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .contributor-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+  .contributor-card {
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 0.75rem 0.85rem;
+  }
+  .contributor-card h3,
+  .contributor-card p {
+    overflow: hidden;
+    margin: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .contributor-card h3 {
+    color: var(--fg);
+    font: 700 0.92rem/1.35 var(--mono);
+  }
+  .contributor-card p,
+  .contributor-card small {
+    color: var(--muted);
+    font: 0.75rem/1.5 var(--mono);
+  }
+  .contributor-card p {
+    margin-top: 0.3rem;
+  }
+  .contributors-more {
+    margin-top: 0.75rem;
+  }
+  .contributors-more summary {
+    width: fit-content;
+    margin-bottom: 0.75rem;
+    color: var(--accent);
+    cursor: pointer;
+    font: 700 0.78rem/1.4 var(--mono);
+  }
+  .automation {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+  }
+  @media (max-width: 760px) {
+    .contributor-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 520px) {
+    .contributor-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

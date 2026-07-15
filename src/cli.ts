@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { buildCommitIndex, buildCommitIndexAll } from "./crawl/commit-index.ts";
+import { buildPackageContributors } from "./crawl/contributors.ts";
 import { buildEvents } from "./crawl/events.ts";
 import { crawlSince, crawlSinceD1 } from "./crawl/incremental.ts";
 import { reconcileRemovals } from "./crawl/removals.ts";
@@ -125,9 +126,10 @@ async function crawl(argv: string[]): Promise<void> {
       );
       console.log(`  L1: ${snaps.toLocaleString()} snapshots`);
       const events = buildEvents(db, source);
+      const contributors = buildPackageContributors(db, source);
       const removed = finalize(db, source, now, true);
       console.log(
-        `  L2: ${events.toLocaleString()} version events · ${removed.toLocaleString()} removed\n`,
+        `  L2: ${events.toLocaleString()} version events · ${contributors.toLocaleString()} contributor links · ${removed.toLocaleString()} removed\n`,
       );
     } else {
       const override = source.id === "homebrew-cask" ? list(values.casks) : list(values.formulae);
@@ -136,9 +138,10 @@ async function crawl(argv: string[]): Promise<void> {
       const commits = buildCommitIndex(db, source, names);
       const snaps = buildSnapshots(db, source);
       const events = buildEvents(db, source);
+      const contributors = buildPackageContributors(db, source, names);
       const removed = finalize(db, source, now, false);
       console.log(
-        `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events${removed ? ` · ${removed} removed` : ""}`,
+        `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events · ${contributors} contributor links${removed ? ` · ${removed} removed` : ""}`,
       );
     }
   }

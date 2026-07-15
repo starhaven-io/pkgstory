@@ -24,6 +24,9 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
        (package_id, version, revision, introduced_at, commit_sha, subject)
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
+  const insertChange = db.prepare(
+    "INSERT OR IGNORE INTO version_changes (package_id, commit_sha) VALUES (?, ?)",
+  );
   // id DESC on the timestamp tie: rows were inserted in git-log order (newest
   // first), so within one second a *larger* id is the *older* commit.
   const snaps = db.prepare(
@@ -44,6 +47,7 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
       const key = `${row.version}\x00${row.revision}`;
       if (key === lastKey) continue;
       lastKey = key;
+      insertChange.run(pkg.id, row.commit_sha);
       const r = insert.run(
         pkg.id,
         row.version,

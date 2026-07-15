@@ -3,7 +3,10 @@ import { sqlLit as lit } from "./d1remote.ts";
 
 // The D1 read-slice: only what the site queries. commit_index/snapshots are
 // crawler scaffolding and never leave the working database.
-const SCHEMA = `DROP TABLE IF EXISTS version_events;
+const SCHEMA = `DROP TABLE IF EXISTS contributor_seeds;
+DROP TABLE IF EXISTS package_contribution_slices;
+DROP TABLE IF EXISTS contributors;
+DROP TABLE IF EXISTS version_events;
 DROP TABLE IF EXISTS crawl_state;
 DROP TABLE IF EXISTS packages;
 CREATE TABLE packages (
@@ -34,6 +37,28 @@ CREATE TABLE version_events (
   subject       TEXT,
   UNIQUE (package_id, version, revision)
 );
+CREATE TABLE contributors (
+  contributor_key TEXT PRIMARY KEY,
+  display_name    TEXT NOT NULL,
+  github_login    TEXT,
+  is_bot          INTEGER NOT NULL DEFAULT 0,
+  last_seen_at    INTEGER NOT NULL
+);
+CREATE TABLE package_contribution_slices (
+  package_id      INTEGER NOT NULL,
+  contributor_key TEXT NOT NULL,
+  window_start_sha TEXT NOT NULL,
+  window_end_sha  TEXT NOT NULL,
+  touch_count     INTEGER NOT NULL,
+  version_count   INTEGER NOT NULL,
+  first_at        INTEGER NOT NULL,
+  last_at         INTEGER NOT NULL,
+  PRIMARY KEY (package_id, contributor_key, window_start_sha)
+);
+CREATE TABLE contributor_seeds (
+  source        TEXT PRIMARY KEY,
+  seeded_at_sha TEXT NOT NULL
+);
 CREATE TABLE crawl_state (
   source          TEXT PRIMARY KEY,
   last_sha        TEXT,
@@ -42,6 +67,7 @@ CREATE TABLE crawl_state (
 CREATE INDEX idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX idx_events_time ON version_events (introduced_at DESC);
 CREATE INDEX idx_packages_name ON packages (name);
+CREATE INDEX idx_contribution_slices_package ON package_contribution_slices (package_id);
 `;
 
 // Rows per INSERT. Keeps statement count low (~2k for the full catalog) so
@@ -90,6 +116,34 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
   dumpTable(
     db,
     write,
+    "contributors",
+    "contributor_key,display_name,github_login,is_bot,last_seen_at",
+    `SELECT c.contributor_key, c.display_name, c.github_login, c.is_bot, c.last_seen_at
+       FROM contributors c
+      WHERE c.contributor_key IN (SELECT pc.contributor_key
+                                    FROM package_contributors pc
+                                    JOIN packages p ON p.id = pc.package_id
+                                    JOIN contributor_seeds cs ON cs.source = p.source)`,
+    (r) =>
+      `${lit(r.contributor_key)},${lit(r.display_name)},${lit(r.github_login)},${lit(r.is_bot)},${lit(r.last_seen_at)}`,
+  );
+  dumpTable(
+    db,
+    write,
+    "package_contribution_slices",
+    "package_id,contributor_key,window_start_sha,window_end_sha,touch_count,version_count,first_at,last_at",
+    `SELECT pc.package_id, pc.contributor_key,
+            'seed' AS window_start_sha, cs.seeded_at_sha AS window_end_sha,
+            pc.touch_count, pc.version_count, pc.first_at, pc.last_at
+       FROM package_contributors pc
+       JOIN packages p ON p.id = pc.package_id
+       JOIN contributor_seeds cs ON cs.source = p.source`,
+    (r) =>
+      `${lit(r.package_id)},${lit(r.contributor_key)},${lit(r.window_start_sha)},${lit(r.window_end_sha)},${lit(r.touch_count)},${lit(r.version_count)},${lit(r.first_at)},${lit(r.last_at)}`,
+  );
+  dumpTable(
+    db,
+    write,
     "version_events",
     "package_id,version,revision,introduced_at,commit_sha,subject",
     "SELECT package_id, version, revision, introduced_at, commit_sha, subject FROM version_events",
@@ -103,5 +157,15 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     "source,last_sha,last_crawled_at",
     "SELECT source, last_sha, last_crawled_at FROM crawl_state",
     (r) => `${lit(r.source)},${lit(r.last_sha)},${lit(r.last_crawled_at)}`,
+  );
+  // The marker lands last: a partial non-transactional reseed must not enable
+  // incremental contributor writes on top of an incomplete historical seed.
+  dumpTable(
+    db,
+    write,
+    "contributor_seeds",
+    "source,seeded_at_sha",
+    "SELECT source, seeded_at_sha FROM contributor_seeds",
+    (r) => `${lit(r.source)},${lit(r.seeded_at_sha)}`,
   );
 }

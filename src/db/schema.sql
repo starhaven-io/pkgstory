@@ -43,6 +43,25 @@ CREATE TABLE IF NOT EXISTS commit_index (
   UNIQUE (package_id, commit_sha)
 );
 
+-- Canonicalized public identity metadata plus the raw L0 commit relationship.
+-- Email addresses are used transiently to derive contributor_key and are not stored.
+CREATE TABLE IF NOT EXISTS contributors (
+  contributor_key TEXT PRIMARY KEY,
+  display_name    TEXT NOT NULL,
+  github_login    TEXT,
+  is_bot          INTEGER NOT NULL DEFAULT 0,
+  last_seen_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS commit_contributors (
+  package_id      INTEGER NOT NULL,
+  commit_sha      TEXT NOT NULL,
+  contributor_key TEXT NOT NULL REFERENCES contributors (contributor_key),
+  role            TEXT NOT NULL CHECK (role IN ('author', 'coauthor')),
+  PRIMARY KEY (package_id, commit_sha, contributor_key),
+  FOREIGN KEY (package_id, commit_sha) REFERENCES commit_index (package_id, commit_sha)
+);
+
 -- L1: parsed snapshot of the file at each commit. Lean columns now; rich columns
 -- (url, sha256, deps, bottles…) get added here later without reshaping anything.
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -56,6 +75,15 @@ CREATE TABLE IF NOT EXISTS snapshots (
   UNIQUE (package_id, commit_sha)
 );
 
+-- Every version transition, including a revert to a previously-seen version. The
+-- public timeline dedupes re-introductions, but contribution counts must not.
+CREATE TABLE IF NOT EXISTS version_changes (
+  package_id INTEGER NOT NULL,
+  commit_sha TEXT NOT NULL,
+  PRIMARY KEY (package_id, commit_sha),
+  FOREIGN KEY (package_id, commit_sha) REFERENCES commit_index (package_id, commit_sha)
+);
+
 -- L2: the deduped version timeline — one row per (version, revision) change.
 CREATE TABLE IF NOT EXISTS version_events (
   id            INTEGER PRIMARY KEY,
@@ -66,6 +94,24 @@ CREATE TABLE IF NOT EXISTS version_events (
   commit_sha    TEXT,
   subject       TEXT,
   UNIQUE (package_id, version, revision)
+);
+
+-- Compact L2 read model: one row per package/identity instead of every commit.
+CREATE TABLE IF NOT EXISTS package_contributors (
+  package_id      INTEGER NOT NULL REFERENCES packages (id),
+  contributor_key TEXT NOT NULL REFERENCES contributors (contributor_key),
+  touch_count     INTEGER NOT NULL,
+  version_count   INTEGER NOT NULL,
+  first_at        INTEGER NOT NULL,
+  last_at         INTEGER NOT NULL,
+  PRIMARY KEY (package_id, contributor_key)
+);
+
+-- Present only after the full contributor aggregation has covered a source's history.
+-- Incremental crawls may advance an existing seed but must never create one.
+CREATE TABLE IF NOT EXISTS contributor_seeds (
+  source        TEXT PRIMARY KEY,
+  seeded_at_sha TEXT NOT NULL
 );
 
 -- Per-source crawl cursor + heartbeat: last_sha drives `crawl --since`

@@ -3,11 +3,12 @@ export const prerender = false;
 
 import Base from '../../../layouts/Base.astro';
 import Chip from '../../../components/Chip.astro';
+import Contributors from '../../../components/Contributors.astro';
 import Lifecycle from '../../../components/Lifecycle.astro';
 import Sparkline from '../../../components/Sparkline.astro';
 import StatusChip from '../../../components/StatusChip.astro';
 import Version from '../../../components/Version.astro';
-import { getDb, lastChecked, packageMeta, timeline } from '../../../lib/d1.ts';
+import { contributors, getDb, lastChecked, packageMeta, timeline } from '../../../lib/d1.ts';
 import {
   decodeRouteParam,
   displayVersion,
@@ -26,7 +27,11 @@ if (!isKnownSource(source)) {
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta] = await Promise.all([timeline(db, source, name), packageMeta(db, source, name)]);
+const [events, meta, packageContributors] = await Promise.all([
+  timeline(db, source, name),
+  packageMeta(db, source, name),
+  contributors(db, source, name),
+]);
 
 if (events.length === 0) {
   return Astro.rewrite('/404');
@@ -158,6 +163,8 @@ const monthFmt = (t: number) =>
       </div>
     )
   }
+
+  <Contributors contributors={packageContributors} sourceName={sourceName} />
 
   <section>
     <div class="section-head">
