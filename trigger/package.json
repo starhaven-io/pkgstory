@@ -16,7 +16,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260708.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.107.1"
+    "wrangler": "^4.110.0"
   },
   "allowScripts": {
     "esbuild": true,
