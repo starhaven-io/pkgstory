@@ -51,7 +51,7 @@ export async function contributors(db: D1, source: string, name: string): Promis
          JOIN contributor_seeds cs ON cs.source = p.source
         WHERE p.source = ? AND p.name = ?
         GROUP BY pcs.contributor_key, c.display_name, c.github_login, c.is_bot
-        ORDER BY c.is_bot ASC, lastAt DESC, touchCount DESC`,
+        ORDER BY c.is_bot ASC, touchCount DESC, lastAt DESC, pcs.contributor_key ASC`,
       )
       .bind(source, name)
       .all<Omit<ContributorSummary, 'isBot'> & { isBot: number }>();
