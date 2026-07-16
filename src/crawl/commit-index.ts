@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { upsertPackage } from "../db/db.ts";
 import { logRaw, streamLog } from "../git.ts";
 import type { Source } from "../sources/index.ts";
-import { contributorWriter } from "./contributors.ts";
+import { clearContributorLinks, contributorWriter } from "./contributors.ts";
 
 /**
  * L0 — index every commit touching the requested packages' files. Scoped to the
@@ -24,6 +24,7 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
   let rows = 0;
 
   db.exec("BEGIN");
+  clearContributorLinks(db, source, wanted.size ? names : undefined);
   for (const commit of commits) {
     for (const file of commit.files) {
       const name = source.packageOf(file.path);
@@ -72,6 +73,7 @@ export async function buildCommitIndexAll(
   let rows = 0;
 
   db.exec("BEGIN");
+  clearContributorLinks(db, source);
   await streamLog(source.repoDir, (commit) => {
     commits += 1;
     for (const file of commit.files) {

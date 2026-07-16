@@ -434,6 +434,40 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 });
 
 describe("formula contributors", () => {
+  it("re-crawling does not leave a commit linked under a stale contributor key", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0", undefined, "BrewTestBot <ops@brew.sh>");
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildPackageContributors(db, tap.source, ["foo"]);
+
+    // Stand in for a change to how contributor_key is derived: the same commit,
+    // re-linked under a different key. Without a clear, INSERT OR IGNORE keeps both
+    // and the contributor aggregates into two identical cards.
+    db.exec(
+      "INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at) VALUES ('stale:brewtestbot', 'BrewTestBot', NULL, 1, 1)",
+    );
+    db.exec("UPDATE commit_contributors SET contributor_key = 'stale:brewtestbot'");
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildPackageContributors(db, tap.source, ["foo"]);
+
+    expect(
+      db
+        .prepare(
+          `SELECT c.display_name, pc.touch_count FROM package_contributors pc
+             JOIN contributors c ON c.contributor_key = pc.contributor_key
+             JOIN packages p ON p.id = pc.package_id
+            WHERE p.name = 'foo'`,
+        )
+        .all(),
+    ).toEqual([{ display_name: "BrewTestBot", touch_count: 1 }]);
+    db.close();
+  });
+
   it("aggregates authors, co-authors, bots, and metadata-only incremental touches", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
