@@ -46,7 +46,10 @@ export function contributorWriter(db: DatabaseSync): ContributorWriter {
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT (contributor_key) DO UPDATE SET
        display_name = excluded.display_name,
-       github_login = excluded.github_login,
+       -- One bot key collects every address it has authored under, and only some
+       -- carry a login. Keep the one we've seen instead of letting the newest
+       -- loginless address blank the profile link.
+       github_login = COALESCE(excluded.github_login, contributors.github_login),
        is_bot = excluded.is_bot,
        last_seen_at = excluded.last_seen_at
      WHERE excluded.last_seen_at >= contributors.last_seen_at`,

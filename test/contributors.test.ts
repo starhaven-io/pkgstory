@@ -17,6 +17,48 @@ describe("contributor identities", () => {
     });
   });
 
+  it("collapses one bot's many addresses into a single identity", () => {
+    // Every address BrewTestBot has authored formula changes under since 2014.
+    const keys = [
+      "1589480+BrewTestBot@users.noreply.github.com",
+      "BrewTestBot@users.noreply.github.com",
+      "ops@brew.sh",
+      "brew-test-bot@googlegroups.com",
+      "homebrew-test-bot@lists.sfconservancy.org",
+    ].map((email) => contributorFromIdentity({ name: "BrewTestBot", email }));
+
+    expect(new Set(keys.map((c) => c.key))).toEqual(new Set(["bot:brewtestbot"]));
+    expect(keys.every((c) => c.isBot)).toBe(true);
+    // Only the noreply addresses carry a login; the crawler's COALESCE upsert is
+    // what keeps it once seen.
+    expect(keys.map((c) => c.githubLogin)).toEqual([
+      "brewtestbot",
+      "brewtestbot",
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("keys distinct bots apart and never merges a bot with a person", () => {
+    const distinct = [
+      contributorFromIdentity({ name: "BrewTestBot", email: "ops@brew.sh" }),
+      contributorFromIdentity({
+        name: "dependabot[bot]",
+        email: "49699333+dependabot[bot]@users.noreply.github.com",
+      }),
+      contributorFromIdentity({
+        name: "Pulumi Bot",
+        email: "30351955+pulumi-bot@users.noreply.github.com",
+      }),
+      // A person whose name merely ends in bot-ish letters stays email-keyed.
+      contributorFromIdentity({ name: "botantony", email: "antonsm21@gmail.com" }),
+    ];
+    expect(new Set(distinct.map((c) => c.key)).size).toBe(4);
+    expect(distinct.map((c) => c.isBot)).toEqual([true, true, true, false]);
+    expect(distinct[3]?.key).toMatch(/^email:/);
+  });
+
   it("hashes non-GitHub email identities case-insensitively", () => {
     const first = contributorFromIdentity({ name: "Someone", email: "Person@Example.com" });
     const second = contributorFromIdentity({ name: "Renamed", email: "person@example.com" });
