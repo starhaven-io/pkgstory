@@ -39,6 +39,29 @@ function writeAttributions(
   }
 }
 
+/**
+ * commit_contributors keys on contributor_key, which is *derived* from the author
+ * identity rather than read from git. A change to that derivation re-links every
+ * commit under a new key, and INSERT OR IGNORE would leave the old rows next to the
+ * new ones — one contributor aggregating into two identical cards. commit_index is
+ * immune because (package_id, commit_sha) never changes shape. So a full pass clears
+ * its scope first and treats the re-walk as authoritative.
+ */
+export function clearContributorLinks(db: DatabaseSync, source: Source, names?: string[]): void {
+  if (!names) {
+    db.prepare(
+      "DELETE FROM commit_contributors WHERE package_id IN (SELECT id FROM packages WHERE source = ?)",
+    ).run(source.id);
+    return;
+  }
+  const getPackage = db.prepare("SELECT id FROM packages WHERE source = ? AND name = ?");
+  const remove = db.prepare("DELETE FROM commit_contributors WHERE package_id = ?");
+  for (const name of new Set(names)) {
+    const row = getPackage.get(source.id, name) as { id: number } | undefined;
+    if (row) remove.run(row.id);
+  }
+}
+
 export function contributorWriter(db: DatabaseSync): ContributorWriter {
   const latestWritten = new Map<string, number>();
   const upsert = db.prepare(
