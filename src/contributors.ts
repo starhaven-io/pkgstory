@@ -35,9 +35,16 @@ export function contributorFromIdentity(identity: GitIdentity): Contributor {
     /(?:^|[ _-])bot$/i.test(displayName);
 
   return {
-    key: githubLogin
-      ? `github:${githubLogin.toLowerCase()}`
-      : `email:${digest(email || displayName.toLowerCase())}`,
+    // Automation is a role, not a person: BrewTestBot has authored under four
+    // addresses since 2014, so keying it by mailbox splits one bot into four
+    // cards. Key bots by the name they run under and no alias list is needed.
+    // People stay keyed by address — merging those would mean asserting who is
+    // who, which is a claim this crawler has no basis to make.
+    key: isBot
+      ? `bot:${displayName.toLowerCase()}`
+      : githubLogin
+        ? `github:${githubLogin.toLowerCase()}`
+        : `email:${digest(email || displayName.toLowerCase())}`,
     displayName,
     githubLogin,
     isBot,
