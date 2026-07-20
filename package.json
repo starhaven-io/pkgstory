@@ -28,6 +28,6 @@
     "vitest": "4.1.10"
   },
   "allowScripts": {
-    "fsevents": true
+    "fsevents": false
   }
 }

@@ -71,9 +71,12 @@ jobs:
         with:
           node-version: 26
 
+      - name: Check npm install-script policy
+        run: node scripts/check-npm-install-policy.mjs . site trigger
+
       - name: Install wrangler
         working-directory: site
-        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
       - name: Crawl deltas into D1
