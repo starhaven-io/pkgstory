@@ -8,6 +8,12 @@ build:
 install:
     npm ci --strict-allow-scripts
 
+# fleet:block npm-policy
+# Verify every dependency install script is denied or exactly approved
+npm-policy:
+    node scripts/check-npm-install-policy.mjs . site trigger
+# fleet:end
+
 # Test
 
 # Run tests
@@ -139,6 +145,7 @@ check:
         echo "--- $1 --- skipped ($2 not found)"
         skipped+=("$2 (brew install $3)")
     }
+    run npm-policy node scripts/check-npm-install-policy.mjs . site trigger
     run typecheck npm run --silent typecheck
     run lint npm run --silent lint
     if command -v typos &>/dev/null; then

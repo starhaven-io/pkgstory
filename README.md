@@ -73,6 +73,8 @@ data, so the site stays current without a rebuild.
 
 Requires Node 26+ (it runs the TypeScript directly — no build step) and, for
 crawling, a local Homebrew clone (`homebrew/core` and/or `homebrew/cask`).
+The root, site, and trigger projects deny their current dependency install
+scripts; `just npm-policy` verifies all three lockfiles.
 
 ```sh
 just install                                    # install dependencies

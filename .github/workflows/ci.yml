@@ -142,9 +142,13 @@ jobs:
           node-version: 26
           cache: npm
 
+      - name: Check npm install-script policy
+        if: matrix.check == 'lint' || matrix.check == 'test'
+        run: node scripts/check-npm-install-policy.mjs . site trigger
+
       - name: Install dependencies
         if: matrix.check == 'lint' || matrix.check == 'test'
-        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
 
@@ -207,10 +211,14 @@ jobs:
         with:
           node-version: 26
 
+      - name: Check npm install-script policy (site)
+        if: matrix.check == 'site'
+        run: node scripts/check-npm-install-policy.mjs . site trigger
+
       - name: Install site dependencies
         if: matrix.check == 'site'
         working-directory: site
-        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
       - name: Check formatting
@@ -237,10 +245,14 @@ jobs:
         with:
           node-version: 26
 
+      - name: Check npm install-script policy (trigger)
+        if: matrix.check == 'trigger'
+        run: node scripts/check-npm-install-policy.mjs . site trigger
+
       - name: Install trigger dependencies
         if: matrix.check == 'trigger'
         working-directory: trigger
-        # Fail closed on unreviewed install scripts (npm v12 default; see allowScripts in package.json).
+        # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
       - name: Typecheck trigger

@@ -40,6 +40,8 @@ is a secret.
    npm run deploy
    npx wrangler secret put APP_PRIVATE_KEY < starhaven-bot.pk8.pem
    ```
+   The trigger explicitly denies its current dependency install scripts; run
+   `just npm-policy` from the repository root after dependency changes.
    Until the secret is set, scheduled fires error (visible in `npx wrangler tail`).
    Once set, it persists across redeploys.
 

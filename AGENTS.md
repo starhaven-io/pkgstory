@@ -25,6 +25,8 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 
 - Run `just check` for the full local gate: typecheck, tests, lint, formatting,
   typos, and site checks.
+- Run `just npm-policy` after dependency changes to verify install-script
+  denials and exact approvals across the root, site, and trigger projects.
 - For focused CLI/parser changes, run `just test` and `just build` before the
   broader gate.
 - For focused site changes, run `just site-build` and `just site-format-check`
