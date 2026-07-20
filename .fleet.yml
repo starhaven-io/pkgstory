@@ -15,6 +15,8 @@ params:
     - package-ecosystem: "npm"
       group: "npm-dependencies"
       directory: "/trigger"
+  npm-policy:
+    projects: [".", "site", "trigger"]
   link-check:
     targets: "--config lychee.toml README.md trigger/README.md"
     build-site: true
