@@ -8,13 +8,7 @@ params:
       directory: "/"
     - package-ecosystem: "npm"
       group: "npm-dependencies"
-      directory: "/"
-    - package-ecosystem: "npm"
-      group: "npm-dependencies"
-      directory: "/site"
-    - package-ecosystem: "npm"
-      group: "npm-dependencies"
-      directory: "/trigger"
+      directories: ["/", "/site", "/trigger"]
   npm-policy:
     projects: [".", "site", "trigger"]
   link-check:
