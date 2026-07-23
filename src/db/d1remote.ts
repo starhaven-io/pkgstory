@@ -12,10 +12,11 @@ export type D1Mode = "local" | "remote";
 
 const SITE = resolve(dirname(fileURLToPath(import.meta.url)), "../../site");
 const DB_NAME = "pkgstory";
+const WRANGLER = resolve(SITE, "node_modules/.bin/wrangler");
 
 function run(args: string[]): string {
-  // cwd = site so wrangler finds wrangler.jsonc and the local .wrangler/state.
-  return execFileSync("npx", ["wrangler", "d1", "execute", DB_NAME, ...args], {
+  // Use only the lockfile-installed CLI; a missing site install must fail closed.
+  return execFileSync(WRANGLER, ["d1", "execute", DB_NAME, ...args], {
     cwd: SITE,
     encoding: "utf8",
     maxBuffer: 1024 * 1024 * 128,
@@ -122,8 +123,8 @@ CREATE INDEX IF NOT EXISTS idx_contribution_slices_package
 export function kvPut(mode: D1Mode, key: string, value: string): void {
   withTempFile(`${key}.json`, value, (file) =>
     execFileSync(
-      "npx",
-      ["wrangler", "kv", "key", "put", key, "--binding", "CACHE", `--${mode}`, "--path", file],
+      WRANGLER,
+      ["kv", "key", "put", key, "--binding", "CACHE", `--${mode}`, "--path", file],
       { cwd: SITE, encoding: "utf8", maxBuffer: 1024 * 1024 * 8 },
     ),
   );

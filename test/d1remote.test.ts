@@ -1,5 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { sqlLit } from "../src/db/d1remote.ts";
+import { execFileSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { d1Select, sqlLit } from "../src/db/d1remote.ts";
+
+vi.mock("node:child_process", () => ({
+  execFileSync: vi.fn(() => "[]"),
+}));
+
+const execFileSyncMock = vi.mocked(execFileSync);
+
+describe("Wrangler execution", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("uses the lockfile-installed site binary instead of npx", () => {
+    d1Select("local", "SELECT 1");
+
+    const site = resolve(dirname(fileURLToPath(import.meta.url)), "../site");
+    const wrangler = resolve(site, "node_modules/.bin/wrangler");
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      wrangler,
+      ["d1", "execute", "pkgstory", "--local", "--json", "--command", "SELECT 1"],
+      expect.objectContaining({ cwd: site }),
+    );
+  });
+});
 
 // Names, versions, commit subjects, and lifecycle reasons all flow through sqlLit
 // into generated SQL, and a commit subject is writable by anyone with a merged

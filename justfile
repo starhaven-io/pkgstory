@@ -60,17 +60,17 @@ site-build:
     cd site && npm run build
 
 # Seed the local Wrangler D1/KV site state from a SQLite crawl database
-site-seed-local db="pkgstory.db":
+site-seed-local db="pkgstory.db": site-install
     #!/usr/bin/env bash
     set -euo pipefail
     sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
     trap 'rm -f "$sql"' EXIT
     node src/cli.ts export --db "{{db}}" > "$sql"
-    (cd site && npx wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
+    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
     node src/cli.ts cache --d1 local
 
 # Reseed the deployed D1/KV site state from a full-crawl database
-site-seed-remote db="pkgstory.db":
+site-seed-remote db="pkgstory.db": site-install
     #!/usr/bin/env bash
     set -euo pipefail
     # The slice drops and rebuilds every table, so the deployed site serves errors from
@@ -81,7 +81,7 @@ site-seed-remote db="pkgstory.db":
     sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
     trap 'rm -f "$sql"' EXIT
     node src/cli.ts export --db "{{db}}" > "$sql"
-    (cd site && npx wrangler d1 execute pkgstory --remote --yes --file "$sql" >/dev/null)
+    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler d1 execute pkgstory --remote --yes --file "$sql" >/dev/null)
     node src/cli.ts cache --d1 remote
 
 # Start the site dev server
@@ -122,9 +122,13 @@ trigger-dev:
 trigger-typecheck:
     cd trigger && npm run typecheck
 
+# Verify the trigger Worker deployment without publishing
+trigger-deploy-dry:
+    cd trigger && WRANGLER_SEND_METRICS=false npm run deploy:dry
+
 # Deploy the trigger Worker to Cloudflare
 trigger-deploy:
-    cd trigger && npm run deploy
+    cd trigger && WRANGLER_SEND_METRICS=false npm run deploy
 
 # Check
 
@@ -163,8 +167,12 @@ check:
     (cd site && npm run format:check) || failed=1
     echo "--- site-build ---"
     (cd site && npm run build) || failed=1
+    echo "--- site-deploy-dry ---"
+    (cd site && WRANGLER_SEND_METRICS=false npm run deploy:dry) || failed=1
     echo "--- trigger-typecheck ---"
     (cd trigger && npm run typecheck) || failed=1
+    echo "--- trigger-deploy-dry ---"
+    (cd trigger && WRANGLER_SEND_METRICS=false npm run deploy:dry) || failed=1
     if [ ${#skipped[@]} -gt 0 ]; then
         echo ""
         echo "Checks skipped due to missing tools:"
