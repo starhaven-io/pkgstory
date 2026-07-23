@@ -86,7 +86,7 @@ jobs:
             add_check '{"name":"Site","check":"site","runner":"ubuntu-slim"}'
           fi
 
-          # Trigger Worker changes: typecheck
+          # Trigger Worker changes: typecheck + deploy dry-run
           if echo "${CHANGED}" | grep -qE '^trigger/'; then
             add_check '{"name":"Trigger","check":"trigger","runner":"ubuntu-slim"}'
           fi
@@ -259,6 +259,13 @@ jobs:
         if: matrix.check == 'trigger'
         working-directory: trigger
         run: npm run typecheck
+
+      - name: Deploy trigger dry-run
+        if: matrix.check == 'trigger'
+        working-directory: trigger
+        run: npm run deploy:dry
+        env:
+          WRANGLER_SEND_METRICS: "false"
 
 
   codeql:
