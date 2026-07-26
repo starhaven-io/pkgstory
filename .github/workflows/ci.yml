@@ -74,9 +74,14 @@ jobs:
           # one on the same SHA, bypassing tests, site checks and the rest.
           CHANGED=$(git diff --name-only "${BASE_SHA}...HEAD")
 
-          # Crawler / tooling changes: lint + test
-          if echo "${CHANGED}" | grep -qE '\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^\.github/workflows/ci\.yml$'; then
+          # Root-owned paths — src/, test/, and the pure site helpers root tests
+          # import. Trigger edits add Lint (Biome covers them) but not Test.
+          # Astro-only site edits get neither leg, so typos does not see them.
+          ROOT_PATHS='^(src|test)/|^site/src/lib/.*\.ts$|^vitest\.config\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^\.github/workflows/ci\.yml$'
+          if echo "${CHANGED}" | grep -qE "${ROOT_PATHS}|^trigger/"; then
             add_check '{"name":"Lint","check":"lint","runner":"ubuntu-24.04"}'
+          fi
+          if echo "${CHANGED}" | grep -qE "${ROOT_PATHS}"; then
             add_check '{"name":"Test","check":"test","runner":"ubuntu-24.04"}'
             RUN_CODECOV=true
           fi
