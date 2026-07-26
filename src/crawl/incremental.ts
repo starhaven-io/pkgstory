@@ -291,7 +291,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     upsertPkg.run(source.id, name);
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     changedPackageIds.push(pkg.id);
-    for (const touch of history) {
+    // Newest-first, matching a full crawl's git-log order: L2 tie-breaks
+    // same-second commits on "larger commit_index id = older commit".
+    for (const touch of history.toReversed()) {
       const author = touch.contributors.find((contributor) => contributor.role === "author");
       insertCommit.run(
         pkg.id,

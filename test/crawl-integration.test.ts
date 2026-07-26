@@ -485,6 +485,43 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
+  it("keeps same-second ordering intact when an L2 rebuild follows incremental crawls", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    // Both bumps land in one window at the same second, so only insertion order
+    // separates them.
+    const tied = T0 + 5000;
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit("foo 1.1", tied);
+    tap.write("Formula/f/foo.rb", formula("foo", "1.2"));
+    tap.commit("foo 1.2", tied);
+    expect(crawlSince(db, tap.source, now + 1).events).toBe(2);
+
+    const latest = () =>
+      (
+        db.prepare("SELECT latest_version FROM packages WHERE name = 'foo'").get() as {
+          latest_version: string;
+        }
+      ).latest_version;
+    expect(latest()).toBe("1.2");
+
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    expect(latest()).toBe("1.2"); // the child commit still wins the tie
+    db.close();
+  });
+
   it("clears rename metadata when an incrementally removed package is re-added", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
