@@ -38,7 +38,13 @@ export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
   // Tolerate leading banner lines, anchored to line start so a "▲ [WARNING] …"
   // banner's own bracket can't fool it — the JSON array opens at column 0.
   const start = out.search(/^\[/m);
-  if (start === -1) return [];
+  // Throw rather than read as an empty result set: callers like the
+  // contributor_seeds probe treat [] as a real answer ("not seeded").
+  if (start === -1) {
+    throw new Error(
+      `wrangler d1 execute produced no JSON array (has its output format changed?): ${JSON.stringify(out.slice(0, 400))}`,
+    );
+  }
   const parsed = JSON.parse(out.slice(start)) as Array<{ results?: Record<string, unknown>[] }>;
   return parsed[0]?.results ?? [];
 }

@@ -28,6 +28,47 @@ describe("Wrangler execution", () => {
   });
 });
 
+describe("d1Select output parsing", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("parses a plain JSON result set", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"n":1},{"n":2}],"success":true}]');
+    expect(d1Select("local", "SELECT n FROM t")).toEqual([{ n: 1 }, { n: 2 }]);
+  });
+
+  it("skips leading banner lines, including ones containing brackets", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      [
+        " ⛅️ wrangler 4.110.0",
+        "▲ [WARNING] Processing wrangler.jsonc configuration:",
+        '[{"results":[{"last_sha":"abc"}],"success":true}]',
+        "",
+      ].join("\n"),
+    );
+    expect(d1Select("local", "SELECT last_sha FROM crawl_state")).toEqual([{ last_sha: "abc" }]);
+  });
+
+  it("returns [] for a genuinely empty result set", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
+    expect(d1Select("local", "SELECT 1 WHERE 0")).toEqual([]);
+  });
+
+  it("throws when the output contains no JSON array (never a silent [])", () => {
+    // A silent [] drops the window's contributor data while the cursor advances.
+    execFileSyncMock.mockReturnValueOnce("▲ [WARNING] something changed\nno json here\n");
+    expect(() => d1Select("local", "SELECT 1")).toThrow(/no JSON array/);
+    execFileSyncMock.mockReturnValueOnce("");
+    expect(() => d1Select("local", "SELECT 1")).toThrow(/no JSON array/);
+  });
+
+  it("throws on a truncated or malformed JSON payload", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"n":1}');
+    expect(() => d1Select("local", "SELECT 1")).toThrow();
+  });
+});
+
 // Names, versions, commit subjects, and lifecycle reasons all flow through sqlLit
 // into generated SQL, and a commit subject is writable by anyone with a merged
 // Homebrew commit — escaping here is a security boundary.
