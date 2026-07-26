@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { batchCat, parseBatchCat, parseLog, type RawCommit, streamLog } from "../src/git.ts";
 
 // Raw `git log --raw --format=…` output uses
@@ -215,12 +215,32 @@ describe("streamLog", () => {
     expect(commits[0]?.files[0]?.path).toBe("Formula/f/foo.rb");
   });
 
-  it("rejects a nonzero git log exit", async () => {
+  it("rejects a nonzero git log exit with git's own stderr in the message", async () => {
     const commits: RawCommit[] = [];
     await expect(
       streamLog(join(tmpdir(), "pkgstory-missing-repo"), (c) => commits.push(c)),
-    ).rejects.toThrow(/git log exited/);
+    ).rejects.toThrow(/git log exited \d+: .*pkgstory-missing-repo/s);
     expect(commits).toEqual([]);
+  });
+
+  it("warns when a successful git log writes stderr", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "pkgstory-fake-git-"));
+    cleanups.push(bin);
+    const fakeGit = join(bin, "git");
+    writeFileSync(fakeGit, "#!/bin/sh\nprintf 'maintenance warning\\n' >&2\n");
+    chmodSync(fakeGit, 0o755);
+
+    const oldPath = process.env.PATH;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    process.env.PATH = bin;
+    try {
+      await streamLog(".", () => {});
+      expect(warn).toHaveBeenCalledWith("git log warning: maintenance warning");
+    } finally {
+      warn.mockRestore();
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
+    }
   });
 
   it("rejects a spawn failure", async () => {

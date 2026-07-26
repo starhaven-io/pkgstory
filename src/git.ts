@@ -261,17 +261,29 @@ export async function streamLog(
       "--date=unix",
       `--format=${FORMAT}`,
     ],
-    { stdio: ["ignore", "pipe", "inherit"] },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
+
+  // Drain stderr eagerly — the cap bounds what we keep, not what we read, so the
+  // pipe can never fill and block git. Reported either way: attached to the
+  // thrown error on failure, warned about on success.
+  let stderr = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk: string) => {
+    if (stderr.length < 8192) stderr += chunk.slice(0, 8192 - stderr.length);
+  });
 
   const exit = new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", (code, signal) => {
-      if (code === 0) resolve();
-      else
-        reject(
-          new Error(signal ? `git log exited with signal ${signal}` : `git log exited ${code}`),
-        );
+      const detail = stderr.trim();
+      if (code === 0) {
+        if (detail) console.warn(`git log warning: ${detail}`);
+        resolve();
+        return;
+      }
+      const cause = signal ? `git log exited with signal ${signal}` : `git log exited ${code}`;
+      reject(new Error(detail ? `${cause}: ${detail}` : cause));
     });
   });
 
