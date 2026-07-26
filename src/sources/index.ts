@@ -46,6 +46,8 @@ const DEFS: SourceDef[] = [
   { id: "homebrew-cask", label: "Homebrew cask", tap: "homebrew/cask", dir: "Casks", kind: "cask" },
 ];
 
+export const SOURCE_IDS: readonly SourceId[] = DEFS.map((source) => source.id);
+
 // Observed tap layouts: core shards lib* into Formula/lib/, cask shards fonts two
 // deep (Casks/font/font-a/font-abc.rb); everything else by first character.
 function shardOf(kind: PackageKind, name: string): string {

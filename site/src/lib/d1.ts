@@ -20,16 +20,24 @@ export function getDb(): D1 {
   return (env as unknown as { DB: D1 }).DB;
 }
 
-export async function timeline(db: D1, source: string, name: string, limit = TIMELINE_LIMIT): Promise<VersionEvent[]> {
+export async function timeline(
+  db: D1,
+  source: string,
+  name: string,
+  limit = TIMELINE_LIMIT,
+  offset = 0,
+): Promise<VersionEvent[]> {
+  // OFFSET rather than a keyset cursor: reseeds renumber version_events ids, so
+  // a shared cursor URL would rot. idx_events_pkg_time keeps the skip cheap.
   const { results } = await db
     .prepare(
       `SELECT ve.version, ve.revision, ve.introduced_at AS introducedAt, ve.commit_sha AS commitSha, ve.subject
          FROM version_events ve JOIN packages p ON p.id = ve.package_id
         WHERE p.source = ? AND p.name = ?
         ORDER BY ve.introduced_at DESC, ve.id DESC
-        LIMIT ?`,
+        LIMIT ? OFFSET ?`,
     )
-    .bind(source, name, limit)
+    .bind(source, name, limit, offset)
     .all<VersionEvent>();
   return results;
 }
@@ -82,8 +90,19 @@ export async function packageMeta(db: D1, source: string, name: string): Promise
   return row;
 }
 
-/** Most recent successful crawl across sources — the freshness heartbeat. */
+/** Most recent successful crawl across sources — the "last checked" display. */
 export async function lastChecked(db: D1): Promise<number | null> {
   const row = await db.prepare('SELECT MAX(last_crawled_at) AS at FROM crawl_state').first<{ at: number | null }>();
   return row?.at ?? null;
+}
+
+/**
+ * Per-source crawl heartbeats. The health probe cannot use the max: a
+ * permanently failing cask crawl stays invisible behind a fresh formula one.
+ */
+export async function lastCheckedBySource(db: D1): Promise<Map<string, number>> {
+  const { results } = await db
+    .prepare('SELECT source, last_crawled_at AS at FROM crawl_state')
+    .all<{ source: string; at: number }>();
+  return new Map(results.map((row) => [row.source, Number(row.at)]));
 }

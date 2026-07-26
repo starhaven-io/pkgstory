@@ -8,7 +8,7 @@ import Lifecycle from '../../../components/Lifecycle.astro';
 import Sparkline from '../../../components/Sparkline.astro';
 import StatusChip from '../../../components/StatusChip.astro';
 import Version from '../../../components/Version.astro';
-import { contributors, getDb, lastChecked, packageMeta, timeline } from '../../../lib/d1.ts';
+import { contributors, getDb, lastChecked, packageMeta, timeline, TIMELINE_LIMIT } from '../../../lib/d1.ts';
 import {
   decodeRouteParam,
   displayVersion,
@@ -25,14 +25,23 @@ if (!isKnownSource(source)) {
   return Astro.rewrite('/404');
 }
 
+// ?page=N pages back through timelines longer than TIMELINE_LIMIT (offset paging
+// on the idx_events_pkg_time index). Page 1 is the bare, canonical URL.
+const pageParam = Astro.url.searchParams.get('page');
+const page = pageParam === null ? 1 : Number.parseInt(pageParam, 10);
+if (pageParam !== null && (!Number.isInteger(page) || page < 1 || String(page) !== pageParam)) {
+  return Astro.rewrite('/404');
+}
+
 const encodedName = encodeURIComponent(name);
 const db = getDb();
 const [events, meta, packageContributors] = await Promise.all([
-  timeline(db, source, name),
+  timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
 ]);
 
+// Unknown package — or a page past the end of the timeline.
 if (events.length === 0) {
   return Astro.rewrite('/404');
 }
@@ -45,7 +54,10 @@ const latestVersion = meta?.latestVersion ?? latestEvent.version;
 const latestRevision = meta?.latestVersion ? meta.latestRevision : latestEvent.revision;
 const latestShipped = displayVersion(latestVersion, latestRevision);
 const totalEvents = meta?.eventCount ?? events.length;
-const timelineTruncated = totalEvents > events.length;
+const totalPages = Math.max(1, Math.ceil(totalEvents / TIMELINE_LIMIT));
+const rangeStart = (page - 1) * TIMELINE_LIMIT + 1;
+const rangeEnd = (page - 1) * TIMELINE_LIMIT + events.length;
+const pageHref = (p: number) => (p <= 1 ? `/${source}/${encodedName}/` : `/${source}/${encodedName}/?page=${p}`);
 
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
@@ -83,6 +95,7 @@ const monthFmt = (t: number) =>
   description={`${name} version history (${sourceName})`}
   feedHref={feedHref}
   lastCheckedAt={checkedAt}
+  canonicalPath={pageHref(page)}
 >
   <p class="crumb"><a href="/">All packages</a> / {sourceName}</p>
 
@@ -171,8 +184,8 @@ const monthFmt = (t: number) =>
       <h2>Version timeline</h2>
       <p>
         {
-          timelineTruncated
-            ? `Showing latest ${events.length.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
+          totalPages > 1
+            ? `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
             : `${totalEvents.toLocaleString()} version-changing commits`
         }
       </p>
@@ -212,5 +225,16 @@ const monthFmt = (t: number) =>
         </tbody>
       </table>
     </div>
+    {
+      totalPages > 1 && (
+        <nav class="pager" aria-label="Timeline pages">
+          {page > 1 ? <a href={pageHref(page - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+          <span class="pager-status">
+            Page {page} of {totalPages.toLocaleString()}
+          </span>
+          {page < totalPages ? <a href={pageHref(page + 1)}>Older &rarr;</a> : <span aria-hidden="true" />}
+        </nav>
+      )
+    }
   </section>
 </Base>

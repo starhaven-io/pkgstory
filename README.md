@@ -67,7 +67,30 @@ A GitHub Action re-crawls every 30 minutes: it derives the delta since the last
 commit it saw, writes only the new version events to D1, and republishes the KV
 blobs. A small Cloudflare Worker (`trigger/`) fires that schedule on a reliable
 cron — GitHub's own `schedule:` trigger drops most fires. Deploys ship code, not
-data, so the site stays current without a rebuild.
+data, so the site stays current without a rebuild. Operational procedures
+(staleness triage, reseeding, and cache refreshes) live in
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+## Data & API
+
+The version-history data is CC-BY-4.0 and served per package alongside the HTML:
+
+- `/<source>/<name>/index.json` — status, current version, lifecycle metadata,
+  and the version timeline. Timelines longer than 500 events use the same
+  `?page=N` paging contract as the HTML page.
+- `/<source>/<name>/badge.json` — a [Shields](https://shields.io) endpoint for
+  the current packaged version:
+
+  ```md
+  ![homebrew](https://img.shields.io/endpoint?url=https%3A%2F%2Fpkgstory.dev%2Fhomebrew-formula%2Fwget%2Fbadge.json)
+  ```
+
+- `/<source>/<name>/rss.xml` — that package's update feed.
+- `/health.json` — per-source crawl heartbeats; it serves HTTP 503 when either
+  expected source is missing or more than two hours stale.
+
+`<source>` is `homebrew-formula` or `homebrew-cask`. Bulk dumps are not
+published yet.
 
 ## Development
 

@@ -156,6 +156,13 @@ jobs:
         # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
+      - name: Install site dependencies
+        if: matrix.check == 'test'
+        working-directory: site
+        # Root tests import pure helpers from site/src/lib, and Vitest resolves
+        # site/tsconfig.json for them, which extends astro's.
+        run: npm ci --strict-allow-scripts
+
 
       - name: Typecheck
         if: matrix.check == 'lint'
