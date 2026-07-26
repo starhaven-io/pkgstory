@@ -46,14 +46,25 @@ export function upsertPackage(db: DatabaseSync, source: string, name: string): n
   return row.id;
 }
 
-/** Refresh each package's denormalized current state from its version events. */
+/** Refresh each package's denormalized current state from its snapshots and events. */
 export function finalizeLatest(db: DatabaseSync, source: string): void {
+  // Re-introduced versions keep their original version_events row, so the shipping
+  // version must come from the newest snapshot rather than the newest event.
   db.prepare(
     `UPDATE packages
-        SET latest_version  = (SELECT version       FROM version_events ve WHERE ve.package_id = packages.id ORDER BY introduced_at DESC, id DESC LIMIT 1),
-            latest_revision = COALESCE((SELECT revision FROM version_events ve WHERE ve.package_id = packages.id ORDER BY introduced_at DESC, id DESC LIMIT 1), 0),
-            latest_at       = (SELECT introduced_at FROM version_events ve WHERE ve.package_id = packages.id ORDER BY introduced_at DESC, id DESC LIMIT 1),
-            event_count     = (SELECT COUNT(*)      FROM version_events ve WHERE ve.package_id = packages.id)
+        SET latest_version  = (SELECT version  FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
+            latest_revision = COALESCE((SELECT revision FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1), 0),
+            event_count     = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id)
+      WHERE source = ?`,
+  ).run(source);
+  // latest_at is when the shipping version was first introduced, not when a
+  // downgrade reinstated it — the same instant the public timeline shows.
+  db.prepare(
+    `UPDATE packages
+        SET latest_at = (SELECT ve.introduced_at FROM version_events ve
+                          WHERE ve.package_id = packages.id
+                            AND ve.version = packages.latest_version
+                            AND ve.revision = packages.latest_revision)
       WHERE source = ?`,
   ).run(source);
 }

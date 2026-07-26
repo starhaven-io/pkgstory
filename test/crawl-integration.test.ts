@@ -391,6 +391,100 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
+  it("reports a downgraded version with its original introduction time", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const intro = tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
+    tap.commit("foo 2.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo: revert to 1.0");
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+
+    expect(
+      db
+        .prepare(
+          "SELECT latest_version, latest_revision, latest_at, event_count FROM packages WHERE name = 'foo'",
+        )
+        .get(),
+    ).toEqual({
+      latest_version: "1.0",
+      latest_revision: 0,
+      latest_at: intro.at,
+      event_count: 2,
+    });
+    db.close();
+  });
+
+  it("keeps incremental and full current state identical after a downgrade", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const intro = tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
+    tap.commit("foo 2.0");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo: revert to 1.0");
+    expect(crawlSince(db, tap.source, now + 1).status).toBe("ok");
+
+    const current = () =>
+      db
+        .prepare(
+          "SELECT latest_version, latest_revision, latest_at, event_count FROM packages WHERE name = 'foo'",
+        )
+        .get();
+    const expected = {
+      latest_version: "1.0",
+      latest_revision: 0,
+      latest_at: intro.at,
+      event_count: 2,
+    };
+    expect(current()).toEqual(expected);
+
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    expect(current()).toEqual(expected);
+    db.close();
+  });
+
+  it("selects the child snapshot when a same-second commit downgrades", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    const tied = T0 + 5000;
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit("foo 1.1", tied);
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo: revert to 1.0", tied);
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+
+    expect(db.prepare("SELECT latest_version FROM packages WHERE name = 'foo'").get()).toEqual({
+      latest_version: "1.0",
+    });
+    db.close();
+  });
+
   it("clears rename metadata when an incrementally removed package is re-added", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");

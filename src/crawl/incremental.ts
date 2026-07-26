@@ -262,7 +262,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const updateLatest = db.prepare(
     `UPDATE packages
-        SET latest_version = ?, latest_revision = ?, latest_at = ?,
+        SET latest_version = ?, latest_revision = ?,
+            latest_at = (SELECT introduced_at FROM version_events
+                          WHERE package_id = ? AND version = ? AND revision = ?),
             event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = ?)
       WHERE id = ?`,
   );
@@ -313,7 +315,16 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         insertEvent.run(pkg.id, e.version, e.revision, e.at, e.sha, e.subject).changes,
       );
     }
-    if (latest) updateLatest.run(latest.version, latest.revision, latest.at, pkg.id, pkg.id);
+    if (latest)
+      updateLatest.run(
+        latest.version,
+        latest.revision,
+        pkg.id,
+        latest.version,
+        latest.revision,
+        pkg.id,
+        pkg.id,
+      );
     if (lifecycle)
       setLifecycle.run(
         lifecycle.deprecate?.date ?? null,
@@ -449,7 +460,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     }
     if (folded.latest) {
       stmts.push(
-        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = ${folded.latest.at}, event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
+        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = (SELECT introduced_at FROM version_events ve WHERE ve.package_id = packages.id AND ve.version = ${sqlLit(folded.latest.version)} AND ve.revision = ${folded.latest.revision}), event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
       );
     }
     if (lifecycleChanged && lifecycle) {
