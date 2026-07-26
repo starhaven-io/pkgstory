@@ -10,12 +10,16 @@ interface Props {
   tagline?: string;
   feedHref?: string;
   lastCheckedAt?: number | null;
+  // Re-encoded route path (plus any allowed query) for rel=canonical.
+  // decodeRouteParam makes libsigc%252B%252B and libsigc%2B%2B render the same
+  // page, so pages that use it pass this to collapse the aliases.
+  canonicalPath?: string;
 }
-const { title, description, tagline, feedHref, lastCheckedAt } = Astro.props;
+const { title, description, tagline, feedHref, lastCheckedAt, canonicalPath } = Astro.props;
 const checkedIso = lastCheckedAt ? new Date(lastCheckedAt * 1000).toISOString() : null;
 // Canonical origin (not the request host) so og:url/canonical stay stable behind the
 // edge cache; description falls back to the tagline for social unfurls.
-const canonical = new URL(Astro.url.pathname, Astro.site ?? Astro.url.origin).href;
+const canonical = new URL(canonicalPath ?? Astro.url.pathname, Astro.site ?? Astro.url.origin).href;
 const ogDescription = description ?? tagline;
 ---
 

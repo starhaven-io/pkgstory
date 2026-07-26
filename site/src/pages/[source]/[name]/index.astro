@@ -95,6 +95,7 @@ const monthFmt = (t: number) =>
   description={`${name} version history (${sourceName})`}
   feedHref={feedHref}
   lastCheckedAt={checkedAt}
+  canonicalPath={pageHref(page)}
 >
   <p class="crumb"><a href="/">All packages</a> / {sourceName}</p>
 
