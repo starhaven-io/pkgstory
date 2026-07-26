@@ -1,13 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
-import {
-  type D1Mode,
-  d1Apply,
-  d1Select,
-  ensureD1ContributorTables,
-  ensureD1PackageColumns,
-  sqlLit,
-} from "../db/d1remote.ts";
+import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
 import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
@@ -370,11 +363,11 @@ interface Baseline {
  * runner. Only packages touched in the window are re-derived, so rows removed before
  * rename/migration support existed keep their plain-removed status until a full crawl
  * plus export/import reseed backfills them.
+ *
+ * Callers must run ensureD1Schema first (once per process, not once per source —
+ * each ensure probe costs a wrangler spawn).
  */
 export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceResult {
-  ensureD1PackageColumns(mode);
-  ensureD1ContributorTables(mode);
-
   const cur = d1Select(
     mode,
     `SELECT last_sha FROM crawl_state WHERE source = ${sqlLit(source.id)}`,

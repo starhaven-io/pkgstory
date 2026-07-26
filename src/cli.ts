@@ -9,6 +9,7 @@ import { buildEvents } from "./crawl/events.ts";
 import { crawlSince, crawlSinceD1 } from "./crawl/incremental.ts";
 import { reconcileRemovals } from "./crawl/removals.ts";
 import { buildSnapshots } from "./crawl/snapshot.ts";
+import { ensureD1Schema } from "./db/d1remote.ts";
 import { finalizeLatest, openDb, setCrawlState } from "./db/db.ts";
 import { exportSlice } from "./db/export.ts";
 import { refreshSiteCache } from "./db/sitecache.ts";
@@ -43,6 +44,16 @@ function list(csv: string | undefined): string[] | null {
     .filter(Boolean);
 }
 
+// "remote" writes the production D1/KV, so a typo must fail rather than land on
+// either side of the split.
+function parseD1Mode(value: string): "local" | "remote" {
+  if (value !== "local" && value !== "remote") {
+    console.error(`invalid --d1 value ${JSON.stringify(value)}: expected "local" or "remote"`);
+    process.exit(2);
+  }
+  return value;
+}
+
 function finalize(db: DatabaseSync, source: Source, now: number, writeCursor: boolean): number {
   finalizeLatest(db, source.id);
   const removed = reconcileRemovals(db, source);
@@ -64,6 +75,8 @@ async function crawl(argv: string[]): Promise<void> {
     },
   });
 
+  const d1mode = values.d1 === undefined ? null : parseD1Mode(values.d1);
+
   const dbPath = values.db ?? DEFAULT_DB;
   let sources = resolveSources();
   if (values.source) sources = sources.filter((s) => s.id === values.source);
@@ -74,9 +87,9 @@ async function crawl(argv: string[]): Promise<void> {
 
   const now = Math.floor(Date.now() / 1000);
 
-  if (values.d1) {
-    const d1mode = values.d1 === "remote" ? "remote" : "local";
+  if (d1mode) {
     console.log(`pkgstory crawl → D1 (${d1mode}) · incremental\n`);
+    ensureD1Schema(d1mode); // once per invocation, not per source
     let seeded = false;
     for (const source of sources) {
       const r = crawlSinceD1(source, d1mode, now);
@@ -164,8 +177,15 @@ function exportCmd(argv: string[]): void {
 
 function cacheCmd(argv: string[]): void {
   const { values } = parseArgs({ args: argv, options: { d1: { type: "string" } } });
-  const mode = values.d1 === "local" ? "local" : "remote";
-  const { packages } = refreshSiteCache(mode);
+  // No default: this writes KV, and the unnamed target would be production.
+  if (values.d1 === undefined) {
+    console.error("pkgstory cache requires --d1 local or --d1 remote");
+    process.exit(2);
+  }
+  const mode = parseD1Mode(values.d1);
+  ensureD1Schema(mode);
+  // A manual rebuild follows a reseed, so any carried-over spotlight is stale.
+  const { packages } = refreshSiteCache(mode, { spotlight: "rebuild" });
   console.log(`site cache (${mode}): ${packages.toLocaleString()} packages → KV`);
 }
 
@@ -225,7 +245,7 @@ switch (command) {
         "usage:",
         "  pkgstory crawl [--all | --since | --d1 local|remote] [--source <id>] [--db PATH] [--formulae a,b] [--casks a,b]",
         "  pkgstory export [--db PATH]    # emit the D1 site-slice as SQL on stdout",
-        "  pkgstory cache [--d1 local|remote]  # rebuild the site-cache KV blobs from D1",
+        "  pkgstory cache --d1 local|remote  # rebuild the site-cache KV blobs from D1",
       ].join("\n"),
     );
     break;

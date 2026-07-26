@@ -27,6 +27,9 @@ export interface HomePayload {
   spotlight: SpotlightPackage[];
   recent: RecentChange[];
   checkedAt: number | null;
+  // When the crawler last recomputed the cards; it carries them over for up to
+  // a day. Absent in blobs written before this field.
+  spotlightAt?: number;
 }
 
 const EMPTY_HOME: HomePayload = {

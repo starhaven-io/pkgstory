@@ -1,4 +1,4 @@
-import { type D1Mode, d1Select, ensureD1PackageColumns, kvPut } from "./d1remote.ts";
+import { type D1Mode, d1Select, d1SelectMany, kvGet, kvPut } from "./d1remote.ts";
 
 // Precompute the catalog-wide payloads the site would otherwise derive with an
 // expensive per-request scan, and stash them in KV. Reads on the hot paths
@@ -17,7 +17,7 @@ function inEffect(date: unknown, reason: unknown, today: string): boolean {
   return present && (date == null || String(date) <= today);
 }
 
-function statusCode(
+export function statusCode(
   removedAt: unknown,
   renamedTo: unknown,
   migratedTo: unknown,
@@ -73,6 +73,9 @@ interface HomePayload {
   spotlight: SpotlightItem[];
   recent: RecentItem[];
   checkedAt: number | null;
+  // When the cards were last recomputed; they carry over between crawls until
+  // SPOTLIGHT_TTL_SECONDS old.
+  spotlightAt: number;
 }
 
 function sourceId(e: CatalogEntry): string {
@@ -331,21 +334,28 @@ function buildSpotlight(mode: D1Mode, catalog: CatalogEntry[]): SpotlightItem[] 
   return pickSpotlightStories(categories.map((cat) => () => runCategory(mode, byPkg, cat)));
 }
 
-/** The lean search index — one row per package with events. ~22k-row scan (no join). */
-function buildCatalog(mode: D1Mode, today: string): CatalogEntry[] {
-  const rows = d1Select(
-    mode,
-    `SELECT name AS n,
-            CASE source WHEN 'homebrew-cask' THEN 'c' ELSE 'f' END AS s,
-            latest_version  AS v,
-            latest_revision AS r,
-            event_count     AS c,
-            removed_at, renamed_to, migrated_to,
-            deprecate_date, deprecate_reason, disable_date, disable_reason
-       FROM packages
-      WHERE event_count > 0
-      ORDER BY name`,
-  );
+// The lean search index — one row per package with events. ~22k-row scan (no join).
+const CATALOG_SQL = `SELECT name AS n,
+       CASE source WHEN 'homebrew-cask' THEN 'c' ELSE 'f' END AS s,
+       latest_version  AS v,
+       latest_revision AS r,
+       event_count     AS c,
+       removed_at, renamed_to, migrated_to,
+       deprecate_date, deprecate_reason, disable_date, disable_reason
+  FROM packages
+ WHERE event_count > 0
+ ORDER BY name`;
+
+const RECENT_SQL = `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
+       p.removed_at, p.renamed_to, p.migrated_to,
+       p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
+  FROM version_events ve JOIN packages p ON p.id = ve.package_id
+ ORDER BY ve.introduced_at DESC, ve.id DESC
+ LIMIT 25`;
+
+const CHECKED_SQL = "SELECT MAX(last_crawled_at) AS at FROM crawl_state";
+
+function buildCatalog(rows: Record<string, unknown>[], today: string): CatalogEntry[] {
   return rows.map((row) => {
     const x = statusCode(
       row.removed_at,
@@ -368,23 +378,8 @@ function buildCatalog(mode: D1Mode, today: string): CatalogEntry[] {
   });
 }
 
-function buildHome(mode: D1Mode, catalog: CatalogEntry[], today: string): HomePayload {
-  let formulae = 0;
-  let casks = 0;
-  for (const e of catalog) {
-    if (e.s === "c") casks += 1;
-    else formulae += 1;
-  }
-
-  const recent = d1Select(
-    mode,
-    `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
-            p.removed_at, p.renamed_to, p.migrated_to,
-            p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
-       FROM version_events ve JOIN packages p ON p.id = ve.package_id
-      ORDER BY ve.introduced_at DESC, ve.id DESC
-      LIMIT 25`,
-  ).map((row) => {
+function buildRecent(rows: Record<string, unknown>[], today: string): RecentItem[] {
+  return rows.map((row) => {
     const x = statusCode(
       row.removed_at,
       row.renamed_to,
@@ -404,21 +399,77 @@ function buildHome(mode: D1Mode, catalog: CatalogEntry[], today: string): HomePa
       ...(x ? { x } : {}),
     };
   });
-
-  const checkedRow = d1Select(mode, "SELECT MAX(last_crawled_at) AS at FROM crawl_state");
-  const checkedAt = checkedRow[0]?.at != null ? Number(checkedRow[0].at) : null;
-
-  return { formulae, casks, spotlight: buildSpotlight(mode, catalog), recent, checkedAt };
 }
 
-/** Rebuild and publish the site-cache KV blobs from current D1 state. */
-export function refreshSiteCache(mode: D1Mode): { packages: number } {
-  ensureD1PackageColumns(mode);
+// Spotlight superlatives move on the scale of days, but their window-function
+// scans walk all of version_events — the dominant D1 read cost of a crawl. 23h
+// rather than 24 so the rebuild can't drift a crawl period later each day.
+const SPOTLIGHT_TTL_SECONDS = 23 * 3600;
+
+function reusableSpotlight(
+  mode: D1Mode,
+  now: number,
+): { spotlight: SpotlightItem[]; spotlightAt: number } | null {
+  const raw = kvGet(mode, "home");
+  if (raw === null) return null;
+  try {
+    // Slice from the first brace: banner-tolerant, same reasoning as d1Exec.
+    const start = raw.indexOf("{");
+    if (start === -1) return null;
+    const prior = JSON.parse(raw.slice(start)) as Partial<HomePayload>;
+    if (
+      Array.isArray(prior.spotlight) &&
+      prior.spotlight.length > 0 &&
+      typeof prior.spotlightAt === "number" &&
+      prior.spotlightAt <= now && // a future stamp is clock skew — rebuild
+      now - prior.spotlightAt <= SPOTLIGHT_TTL_SECONDS
+    ) {
+      return { spotlight: prior.spotlight, spotlightAt: prior.spotlightAt };
+    }
+  } catch {
+    // Unparsable prior blob — fall through and rebuild from D1.
+  }
+  return null;
+}
+
+export interface RefreshOptions {
+  // "auto" (crawl cadence): reuse the published spotlight until it ages out.
+  // "rebuild" (manual `pkgstory cache`, post-reseed): always recompute.
+  spotlight?: "auto" | "rebuild";
+}
+
+/**
+ * Rebuild and publish the site-cache KV blobs from current D1 state. Callers
+ * must run ensureD1Schema first (once per process).
+ */
+export function refreshSiteCache(mode: D1Mode, opts: RefreshOptions = {}): { packages: number } {
   // Effective state is date-relative; stamp it once so a scheduled package's chip
   // appears the day its deprecate/disable date lands, on the next crawl.
   const today = new Date().toISOString().slice(0, 10);
-  const catalog = buildCatalog(mode, today);
-  const home = buildHome(mode, catalog, today);
+  const now = Math.floor(Date.now() / 1000);
+
+  // One wrangler spawn for all three catalog-wide reads.
+  const [catalogRows, recentRows, checkedRows] = d1SelectMany(mode, [
+    CATALOG_SQL,
+    RECENT_SQL,
+    CHECKED_SQL,
+  ]);
+  const catalog = buildCatalog(catalogRows ?? [], today);
+  const recent = buildRecent(recentRows ?? [], today);
+  const checkedAt = checkedRows?.[0]?.at != null ? Number(checkedRows[0]?.at) : null;
+
+  let formulae = 0;
+  let casks = 0;
+  for (const e of catalog) {
+    if (e.s === "c") casks += 1;
+    else formulae += 1;
+  }
+
+  const reused = (opts.spotlight ?? "auto") === "auto" ? reusableSpotlight(mode, now) : null;
+  const spotlight = reused?.spotlight ?? buildSpotlight(mode, catalog);
+  const spotlightAt = reused?.spotlightAt ?? now;
+
+  const home: HomePayload = { formulae, casks, spotlight, recent, checkedAt, spotlightAt };
   kvPut(mode, "catalog", JSON.stringify(catalog));
   kvPut(mode, "home", JSON.stringify(home));
   return { packages: catalog.length };

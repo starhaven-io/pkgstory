@@ -30,17 +30,46 @@ export function sqlLit(v: unknown): string {
     if (!Number.isFinite(v)) throw new RangeError(`non-finite number in SQL literal: ${v}`);
     return String(v);
   }
-  return `'${String(v).replace(/'/g, "''")}'`;
+  // Strip C0 controls (keeping \n and \t): a NUL in an attacker-supplied commit
+  // subject would truncate the generated SQL file. Doubling quotes is the rest.
+  return `'${String(v)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "")
+    .replace(/'/g, "''")}'`;
 }
 
-export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
+function d1Exec(mode: D1Mode, sql: string): Array<{ results?: Record<string, unknown>[] }> {
   const out = run([`--${mode}`, "--json", "--command", sql]);
   // Tolerate leading banner lines, anchored to line start so a "▲ [WARNING] …"
   // banner's own bracket can't fool it — the JSON array opens at column 0.
   const start = out.search(/^\[/m);
-  if (start === -1) return [];
-  const parsed = JSON.parse(out.slice(start)) as Array<{ results?: Record<string, unknown>[] }>;
-  return parsed[0]?.results ?? [];
+  // Throw rather than read as an empty result set: callers like the
+  // contributor_seeds probe treat [] as a real answer ("not seeded").
+  if (start === -1) {
+    throw new Error(
+      `wrangler d1 execute produced no JSON array (has its output format changed?): ${JSON.stringify(out.slice(0, 400))}`,
+    );
+  }
+  return JSON.parse(out.slice(start)) as Array<{ results?: Record<string, unknown>[] }>;
+}
+
+export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
+  return d1Exec(mode, sql)[0]?.results ?? [];
+}
+
+/**
+ * Run several SELECT statements in one wrangler invocation (one process spawn
+ * instead of one per statement) and return each statement's rows, in order.
+ */
+export function d1SelectMany(mode: D1Mode, sqls: string[]): Record<string, unknown>[][] {
+  if (sqls.length === 0) return [];
+  const parsed = d1Exec(mode, sqls.join(";\n"));
+  if (parsed.length !== sqls.length) {
+    throw new Error(
+      `wrangler d1 execute returned ${parsed.length} result sets for ${sqls.length} statements`,
+    );
+  }
+  return parsed.map((entry) => entry.results ?? []);
 }
 
 // Write content to a freshly-created private temp dir (mkdtemp → unique, mode 0700),
@@ -59,6 +88,16 @@ function withTempFile(name: string, content: string, fn: (path: string) => void)
 
 export function d1Apply(mode: D1Mode, sql: string): void {
   withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--file", file]));
+}
+
+/**
+ * Bring an already-seeded D1 database up to the current read-model schema.
+ * Callers run this once per process before crawling into or reading D1 —
+ * the per-call ensure probes cost one wrangler spawn (~1-2s) each.
+ */
+export function ensureD1Schema(mode: D1Mode): void {
+  ensureD1PackageColumns(mode);
+  ensureD1ContributorTables(mode);
 }
 
 export function ensureD1PackageColumns(mode: D1Mode): void {
@@ -114,6 +153,32 @@ CREATE INDEX IF NOT EXISTS idx_contribution_slices_package
   ON package_contribution_slices (package_id);
 `,
   );
+}
+
+/**
+ * Read a site-cache KV value. Missing keys (and any other wrangler failure)
+ * warn and read as null — every caller treats null as "rebuild from D1", so
+ * failing open here can only cost work, never serve stale data.
+ */
+export function kvGet(mode: D1Mode, key: string): string | null {
+  try {
+    return execFileSync(
+      WRANGLER,
+      ["kv", "key", "get", key, "--binding", "CACHE", `--${mode}`, "--text"],
+      {
+        cwd: SITE,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024 * 32,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `CACHE key ${JSON.stringify(key)} could not be read; rebuilding from D1: ${detail}`,
+    );
+    return null;
+  }
 }
 
 /**
