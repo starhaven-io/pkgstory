@@ -5,7 +5,9 @@ build:
     npm run typecheck
 
 # Install dependencies
-install:
+# Site deps too: root tests import pure helpers from site/src/lib, and Vitest
+# resolves site/tsconfig.json for them, which extends astro's.
+install: site-install
     npm ci --strict-allow-scripts
 
 # fleet:block npm-policy
