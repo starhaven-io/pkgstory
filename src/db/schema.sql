@@ -126,3 +126,5 @@ CREATE INDEX IF NOT EXISTS idx_events_pkg_time ON version_events (package_id, in
 CREATE INDEX IF NOT EXISTS idx_events_time ON version_events (introduced_at DESC);
 -- Reconcile-removals reads each absent package's latest commit (the deletion).
 CREATE INDEX IF NOT EXISTS idx_commit_pkg_time ON commit_index (package_id, committed_at DESC);
+-- finalizeLatest reads each package's newest snapshot (the shipping version).
+CREATE INDEX IF NOT EXISTS idx_snapshots_pkg_time ON snapshots (package_id, committed_at DESC);
