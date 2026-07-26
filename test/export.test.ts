@@ -4,6 +4,69 @@ import { type ContributionAggregate, contributionStatements } from "../src/crawl
 import { openDb } from "../src/db/db.ts";
 import { exportSlice } from "../src/db/export.ts";
 
+describe("exportSlice round-trip", () => {
+  it("recreates the full site slice in a fresh database, seed marker last", () => {
+    const source = openDb(":memory:");
+    source.exec(`
+      INSERT INTO packages (id, source, name, latest_version, latest_revision, latest_at, event_count)
+      VALUES (1, 'homebrew-formula', 'foo', '1.1', 0, 1700000100, 2),
+             (2, 'homebrew-cask', 'bar-app', '2.0', 1, 1700000200, 1);
+      INSERT INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject)
+      VALUES (1, '1.0', 0, 1700000000, '${"a".repeat(40)}', 'foo 1.0'),
+             (1, '1.1', 0, 1700000100, '${"b".repeat(40)}', 'foo 1.1 with ''quotes'''),
+             (2, '2.0', 1, 1700000200, '${"c".repeat(40)}', 'bar-app 2.0');
+      INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at)
+      VALUES ('github:alice', 'Alice', 'alice', 0, 1700000100);
+      INSERT INTO package_contributors (package_id, contributor_key, touch_count, version_count, first_at, last_at)
+      VALUES (1, 'github:alice', 2, 2, 1700000000, 1700000100);
+      INSERT INTO crawl_state (source, last_sha, last_crawled_at)
+      VALUES ('homebrew-formula', '${"b".repeat(40)}', 1700000300);
+      INSERT INTO contributor_seeds (source, seeded_at_sha) VALUES ('homebrew-formula', '${"b".repeat(40)}');
+    `);
+
+    let sql = "";
+    exportSlice(source, (chunk) => {
+      sql += chunk;
+    });
+    source.close();
+
+    // The seed marker must land after every data table: a partial reseed that died
+    // mid-file must not enable incremental contributor writes on a half-seed.
+    const inserts = sql
+      .split("\n")
+      .filter((line) => line.startsWith("INSERT INTO "))
+      .map((line) => line.split(" ")[2]);
+    expect(inserts.at(-1)).toBe("contributor_seeds");
+    expect(inserts.indexOf("contributor_seeds")).toBe(inserts.length - 1);
+
+    const exported = new DatabaseSync(":memory:");
+    exported.exec(sql);
+    const count = (table: string) =>
+      (exported.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+    expect(count("packages")).toBe(2);
+    expect(count("version_events")).toBe(3);
+    expect(count("contributors")).toBe(1);
+    expect(count("package_contribution_slices")).toBe(1);
+    expect(count("crawl_state")).toBe(1);
+    expect(count("contributor_seeds")).toBe(1);
+
+    expect(
+      exported
+        .prepare(
+          "SELECT version, revision, subject FROM version_events WHERE package_id = 1 ORDER BY introduced_at",
+        )
+        .all(),
+    ).toEqual([
+      { version: "1.0", revision: 0, subject: "foo 1.0" },
+      { version: "1.1", revision: 0, subject: "foo 1.1 with 'quotes'" },
+    ]);
+    expect(
+      exported.prepare("SELECT latest_version, event_count FROM packages WHERE id = 2").get(),
+    ).toEqual({ latest_version: "2.0", event_count: 1 });
+    exported.close();
+  });
+});
+
 describe("exportSlice contributors", () => {
   it("withholds incremental-only contributor data without a proven full seed", () => {
     const source = openDb(":memory:");

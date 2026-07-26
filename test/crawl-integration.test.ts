@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildCommitIndex } from "../src/crawl/commit-index.ts";
 import { buildPackageContributors } from "../src/crawl/contributors.ts";
@@ -16,100 +16,17 @@ import { reconcileRemovals } from "../src/crawl/removals.ts";
 import { buildSnapshots } from "../src/crawl/snapshot.ts";
 import { finalizeLatest, openDb, setCrawlState } from "../src/db/db.ts";
 import { headSha } from "../src/git.ts";
-import { makeSource, type Source } from "../src/sources/index.ts";
+import {
+  cleanupFixtures,
+  fakeBrewBin,
+  formula,
+  GIT_ENV,
+  T0,
+  TapRepo,
+  trackFixture,
+} from "./helpers/tap.ts";
 
-// A throwaway git repo shaped like a tap. Config is isolated (GIT_CONFIG_GLOBAL=
-// /dev/null) so a developer's gpgsign/hooksPath can't break fixture commits, and
-// commit timestamps are explicit so ordering assertions are deterministic.
-const GIT_ENV = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_AUTHOR_NAME: "pkgstory-test",
-  GIT_AUTHOR_EMAIL: "test@pkgstory.invalid",
-  GIT_COMMITTER_NAME: "pkgstory-test",
-  GIT_COMMITTER_EMAIL: "test@pkgstory.invalid",
-};
-
-const T0 = 1750000000;
-const cleanups: string[] = [];
-afterAll(() => {
-  for (const dir of cleanups) rmSync(dir, { recursive: true, force: true });
-});
-
-class TapRepo {
-  readonly dir: string;
-  readonly source: Source;
-  private tick = 0;
-
-  constructor() {
-    this.dir = mkdtempSync(join(tmpdir(), "pkgstory-tap-"));
-    cleanups.push(this.dir);
-    this.git("init", "-q", "-b", "main");
-    this.source = makeSource(
-      {
-        id: "homebrew-formula",
-        label: "Test tap",
-        tap: "test/tap",
-        dir: "Formula",
-        kind: "formula",
-      },
-      this.dir,
-    );
-  }
-
-  git(...args: string[]): string {
-    return execFileSync("git", ["-C", this.dir, ...args], {
-      encoding: "utf8",
-      env: {
-        ...GIT_ENV,
-        GIT_AUTHOR_DATE: `${this.at()} +0000`,
-        GIT_COMMITTER_DATE: `${this.at()} +0000`,
-      },
-    }).trim();
-  }
-
-  write(path: string, content: string): void {
-    const full = join(this.dir, path);
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, content);
-  }
-
-  /** Stage everything and commit at the next (or a pinned) timestamp. */
-  commit(message: string, at?: number, author?: string): { sha: string; at: number } {
-    this.tick += 1;
-    if (at !== undefined) this.pinned = at;
-    this.git("add", "-A");
-    this.git("commit", "-q", "-m", message, ...(author ? ["--author", author] : []));
-    const sha = this.git("rev-parse", "HEAD");
-    const time = this.pinned ?? this.at();
-    this.pinned = undefined;
-    return { sha, at: time };
-  }
-
-  private pinned: number | undefined;
-  private at(): number {
-    return this.pinned ?? T0 + this.tick * 1000;
-  }
-}
-
-function fakeBrewBin(): string {
-  const dir = mkdtempSync(join(tmpdir(), "pkgstory-brew-"));
-  cleanups.push(dir);
-  const brew = join(dir, "brew");
-  writeFileSync(
-    brew,
-    `#!/bin/sh
-if [ "$1" = "--repository" ] && [ "$2" = "homebrew/core" ]; then
-  printf '%s\\n' "$PKGSTORY_TEST_TAP"
-  exit 0
-fi
-exit 1
-`,
-  );
-  chmodSync(brew, 0o755);
-  return dir;
-}
+afterAll(cleanupFixtures);
 
 function runCli(args: string[], tap: TapRepo): string {
   const fakeBin = fakeBrewBin();
@@ -121,11 +38,6 @@ function runCli(args: string[], tap: TapRepo): string {
       PKGSTORY_TEST_TAP: tap.dir,
     },
   });
-}
-
-function formula(name: string, version: string, extra = ""): string {
-  const cls = (name[0] ?? "x").toUpperCase() + name.slice(1);
-  return `class ${cls} < Formula\n  url "https://example.com/${name}-${version}.tar.gz"\n${extra}end\n`;
 }
 
 function firstPackage(delta: Delta): PackageDelta {
@@ -265,7 +177,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
   it("does not treat a demo crawl as an incremental seed", () => {
     const tap = new TapRepo();
     const dbDir = mkdtempSync(join(tmpdir(), "pkgstory-db-"));
-    cleanups.push(dbDir);
+    trackFixture(dbDir);
     const dbPath = join(dbDir, "demo.db");
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));

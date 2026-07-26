@@ -58,8 +58,8 @@ export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
 }
 
 /**
- * Run several SELECTs in one wrangler invocation (one process spawn instead of
- * one per statement) and return each statement's rows, in statement order.
+ * Run several SELECT statements in one wrangler invocation (one process spawn
+ * instead of one per statement) and return each statement's rows, in order.
  */
 export function d1SelectMany(mode: D1Mode, sqls: string[]): Record<string, unknown>[][] {
   if (sqls.length === 0) return [];

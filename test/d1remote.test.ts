@@ -1,8 +1,18 @@
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { d1Select, d1SelectMany, sqlLit } from "../src/db/d1remote.ts";
+import {
+  d1Apply,
+  d1Select,
+  d1SelectMany,
+  ensureD1ContributorTables,
+  ensureD1PackageColumns,
+  kvGet,
+  kvPut,
+  sqlLit,
+} from "../src/db/d1remote.ts";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "[]"),
@@ -98,6 +108,123 @@ describe("d1SelectMany", () => {
   it("does not spawn wrangler for an empty statement list", () => {
     expect(d1SelectMany("local", [])).toEqual([]);
     expect(execFileSyncMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("d1Apply", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("ships the SQL through a temp file that is removed afterwards", () => {
+    let seenPath = "";
+    let seenContent = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      seenPath = args[args.indexOf("--file") + 1] ?? "";
+      seenContent = readFileSync(seenPath, "utf8");
+      return "";
+    }) as never);
+
+    d1Apply("local", "UPDATE t SET x = 1;\n");
+
+    const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
+    expect(args.slice(0, 3)).toEqual(["d1", "execute", "pkgstory"]);
+    expect(args).toContain("--local");
+    expect(seenContent).toBe("UPDATE t SET x = 1;\n");
+    expect(() => readFileSync(seenPath)).toThrow(); // private temp dir cleaned up
+  });
+});
+
+describe("ensure* schema probes", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("adds only the missing package columns", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"id"},{"name":"renamed_to"}],"success":true}]',
+    );
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+
+    ensureD1PackageColumns("local");
+    expect(applied).toBe("ALTER TABLE packages ADD COLUMN migrated_to TEXT;\n");
+  });
+
+  it("does nothing when the package columns already exist", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"renamed_to"},{"name":"migrated_to"}],"success":true}]',
+    );
+    ensureD1PackageColumns("local");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1); // probe only, no apply
+  });
+
+  it("creates the contributor tables only when any is missing", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"contributors"},{"name":"package_contribution_slices"},{"name":"contributor_seeds"}],"success":true}]',
+    );
+    ensureD1ContributorTables("local");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+
+    execFileSyncMock.mockClear();
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"name":"contributors"}],"success":true}]');
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+    ensureD1ContributorTables("local");
+    expect(applied).toContain("CREATE TABLE IF NOT EXISTS package_contribution_slices");
+    expect(applied).toContain("CREATE TABLE IF NOT EXISTS contributor_seeds");
+  });
+});
+
+describe("kv helpers", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("kvGet returns the raw value from the CACHE binding", () => {
+    execFileSyncMock.mockReturnValueOnce('{"formulae":1}');
+    expect(kvGet("local", "home")).toBe('{"formulae":1}');
+    expect(execFileSyncMock).toHaveBeenCalledWith(
+      expect.stringContaining("wrangler"),
+      ["kv", "key", "get", "home", "--binding", "CACHE", "--local", "--text"],
+      expect.objectContaining({ encoding: "utf8" }),
+    );
+  });
+
+  it("kvGet warns and fails open to null on any wrangler failure (caller rebuilds)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    execFileSyncMock.mockImplementationOnce(() => {
+      throw new Error("key not found");
+    });
+    try {
+      expect(kvGet("local", "home")).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        'CACHE key "home" could not be read; rebuilding from D1: key not found',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("kvPut writes the value via a temp file to the CACHE binding", () => {
+    let seenContent = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      seenContent = readFileSync(args[args.indexOf("--path") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+
+    kvPut("remote", "catalog", "[1,2,3]");
+
+    const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
+    expect(args.slice(0, 4)).toEqual(["kv", "key", "put", "catalog"]);
+    expect(args).toContain("--remote");
+    expect(seenContent).toBe("[1,2,3]");
   });
 });
 

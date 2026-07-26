@@ -427,7 +427,7 @@ function reusableSpotlight(
       return { spotlight: prior.spotlight, spotlightAt: prior.spotlightAt };
     }
   } catch {
-    // Unparseable prior blob — fall through and rebuild from D1.
+    // Unparsable prior blob — fall through and rebuild from D1.
   }
   return null;
 }

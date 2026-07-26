@@ -183,7 +183,62 @@ describe("refreshSiteCache", () => {
     expect(d1SelectMock).toHaveBeenCalled();
   });
 
-  it("rebuilds when the prior home blob is missing or unparseable", () => {
+  it("builds one card per category, in priority order, from the D1 rows", () => {
+    d1SelectManyMock.mockReturnValue([
+      ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"].map((n) => catalogRow(n, "f")),
+      [],
+      [{ at: 1700000000 }],
+    ]);
+    d1SelectMock.mockImplementation((_mode, sql) => {
+      const pick = (name: string, extra: Record<string, unknown> = {}) => [
+        { source: "homebrew-formula", name, ...extra },
+      ];
+      if (sql.includes("ORDER BY event_count DESC")) return pick("alpha");
+      if (sql.includes("introduced_at >=")) return pick("beta", { events: 12 });
+      if (sql.includes("ORDER BY gap DESC"))
+        return pick("gamma", { at: 1700000000, prev_at: 1600000000, gap: 100000000 });
+      if (sql.includes("ORDER BY first_at ASC")) return pick("delta", { first_at: 1000000000 });
+      if (sql.includes("WHERE ve.revision > 0")) return pick("epsilon", { revisions: 5 });
+      if (sql.includes("p.removed_at IS NOT NULL"))
+        return pick("zeta", { removed_at: 1700000000, first_at: 1500000000 });
+      return [];
+    });
+
+    refreshSiteCache("local");
+
+    const spotlight = putHome().spotlight;
+    expect(spotlight.map((s) => `${s.title}:${s.name}`)).toEqual([
+      "Most updates:alpha",
+      "Hottest lately:beta",
+      "Longest pause:gamma",
+      "Oldest trail:delta",
+      "Most revisions:epsilon",
+      "Retired epic:zeta",
+    ]);
+    expect(spotlight[0]?.stat).toBe("3 events"); // catalog event count
+    expect(spotlight[1]?.stat).toBe("12 in a year");
+    expect(spotlight[2]?.stat).toBe("3.2 years quiet");
+    expect(spotlight[3]?.stat).toBe("since 2001-09-09");
+  });
+
+  it("drops category rows for packages that fell out of the catalog", () => {
+    d1SelectManyMock.mockReturnValue([[catalogRow("alpha", "f")], [], [{ at: 1 }]]);
+    d1SelectMock.mockImplementation((_mode, sql) => {
+      if (sql.includes("ORDER BY event_count DESC")) {
+        return [
+          { source: "homebrew-formula", name: "ghost" }, // not in the catalog
+          { source: "homebrew-formula", name: "alpha" },
+        ];
+      }
+      return [];
+    });
+
+    refreshSiteCache("local");
+
+    expect(putHome().spotlight.map((s) => s.name)).toEqual(["alpha"]);
+  });
+
+  it("rebuilds when the prior home blob is missing or unparsable", () => {
     kvGetMock.mockReturnValueOnce(null);
     refreshSiteCache("local");
     expect(d1SelectMock).toHaveBeenCalled();

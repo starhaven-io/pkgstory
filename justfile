@@ -162,7 +162,7 @@ check:
     else
         skip audit zizmor zizmor
     fi
-    run test npm test
+    run test npm run test:coverage
     echo "--- site-format-check ---"
     (cd site && npm run format:check) || failed=1
     echo "--- site-build ---"
