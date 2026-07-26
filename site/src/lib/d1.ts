@@ -20,16 +20,24 @@ export function getDb(): D1 {
   return (env as unknown as { DB: D1 }).DB;
 }
 
-export async function timeline(db: D1, source: string, name: string, limit = TIMELINE_LIMIT): Promise<VersionEvent[]> {
+export async function timeline(
+  db: D1,
+  source: string,
+  name: string,
+  limit = TIMELINE_LIMIT,
+  offset = 0,
+): Promise<VersionEvent[]> {
+  // OFFSET rather than a keyset cursor: reseeds renumber version_events ids, so
+  // a shared cursor URL would rot. idx_events_pkg_time keeps the skip cheap.
   const { results } = await db
     .prepare(
       `SELECT ve.version, ve.revision, ve.introduced_at AS introducedAt, ve.commit_sha AS commitSha, ve.subject
          FROM version_events ve JOIN packages p ON p.id = ve.package_id
         WHERE p.source = ? AND p.name = ?
         ORDER BY ve.introduced_at DESC, ve.id DESC
-        LIMIT ?`,
+        LIMIT ? OFFSET ?`,
     )
-    .bind(source, name, limit)
+    .bind(source, name, limit, offset)
     .all<VersionEvent>();
   return results;
 }
