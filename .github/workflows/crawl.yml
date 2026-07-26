@@ -110,3 +110,29 @@ jobs:
             while IFS= read -r cache_id; do
               gh cache delete "${cache_id}" || echo "::warning::failed to delete tap cache ${cache_id}"
             done
+
+  alert:
+    name: Alert on crawl failure
+    needs: crawl
+    if: ${{ always() && needs.crawl.result == 'failure' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write # required to find, create, and comment on the failure issue
+    steps:
+      - name: File or update failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_TITLE: Crawl workflow failing
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          number="$(gh issue list --state open --search "\"${ISSUE_TITLE}\" in:title" --limit 100 \
+            --json number,title \
+            --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number // empty")"
+          if [ -n "${number}" ]; then
+            gh issue comment "${number}" --body "Crawl run failed: ${RUN_URL}"
+          else
+            printf 'Crawl run failed: %s\n\nFiled automatically by crawl.yml; close once the pipeline recovers.\n' \
+              "${RUN_URL}" | gh issue create --title "${ISSUE_TITLE}" --body-file -
+          fi

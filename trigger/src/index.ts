@@ -101,8 +101,17 @@ async function dispatchCrawl(env: Env): Promise<void> {
   await ensureOk(res, "repository_dispatch");
 }
 
+async function tick(env: Env): Promise<void> {
+  try {
+    await dispatchCrawl(env);
+  } catch (e) {
+    console.error(`crawl dispatch failed: ${e}`);
+    throw e;
+  }
+}
+
 export default {
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(dispatchCrawl(env));
+    ctx.waitUntil(tick(env));
   },
 } satisfies ExportedHandler<Env>;

@@ -123,8 +123,62 @@ const SOURCE_LABELS = {
 
 export type KnownSource = keyof typeof SOURCE_LABELS;
 
+/** Every source the crawl is expected to keep fresh (drives the health probe). */
+export const KNOWN_SOURCES = Object.keys(SOURCE_LABELS) as KnownSource[];
+
 export function isKnownSource(source: string): source is KnownSource {
   return Object.hasOwn(SOURCE_LABELS, source);
+}
+
+export interface SourceHealth {
+  checkedAt: number | null;
+  ageSeconds: number | null;
+  stale: boolean;
+}
+
+export interface HealthReport {
+  // Worst case across expected sources: the oldest heartbeat, null when any
+  // source has none. Never the freshest — that would hide a failing source.
+  checkedAt: number | null;
+  ageSeconds: number | null;
+  stale: boolean;
+  sources: Record<string, SourceHealth>;
+}
+
+/** Pure aggregation for /health.json: stale if ANY expected source is missing or old. */
+export function healthReport(
+  expected: readonly string[],
+  checkedBySource: ReadonlyMap<string, number>,
+  now: number,
+  staleAfterSeconds: number,
+): HealthReport {
+  const sources: Record<string, SourceHealth> = {};
+  let stale = expected.length === 0; // no expected sources is a misconfiguration, not health
+  let anyMissing = false;
+  let oldest: number | null = null;
+
+  for (const source of expected) {
+    const at = checkedBySource.get(source);
+    if (at == null) {
+      sources[source] = { checkedAt: null, ageSeconds: null, stale: true };
+      anyMissing = true;
+      stale = true;
+      continue;
+    }
+    const ageSeconds = Math.max(0, now - at);
+    const sourceStale = ageSeconds > staleAfterSeconds;
+    sources[source] = { checkedAt: at, ageSeconds, stale: sourceStale };
+    if (sourceStale) stale = true;
+    oldest = oldest == null ? at : Math.min(oldest, at);
+  }
+
+  const checkedAt = anyMissing ? null : oldest;
+  return {
+    checkedAt,
+    ageSeconds: checkedAt == null ? null : Math.max(0, now - checkedAt),
+    stale,
+    sources,
+  };
 }
 
 export function sourceLabel(source: string): string {

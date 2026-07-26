@@ -82,8 +82,19 @@ export async function packageMeta(db: D1, source: string, name: string): Promise
   return row;
 }
 
-/** Most recent successful crawl across sources — the freshness heartbeat. */
+/** Most recent successful crawl across sources — the "last checked" display. */
 export async function lastChecked(db: D1): Promise<number | null> {
   const row = await db.prepare('SELECT MAX(last_crawled_at) AS at FROM crawl_state').first<{ at: number | null }>();
   return row?.at ?? null;
+}
+
+/**
+ * Per-source crawl heartbeats. The health probe cannot use the max: a
+ * permanently failing cask crawl stays invisible behind a fresh formula one.
+ */
+export async function lastCheckedBySource(db: D1): Promise<Map<string, number>> {
+  const { results } = await db
+    .prepare('SELECT source, last_crawled_at AS at FROM crawl_state')
+    .all<{ source: string; at: number }>();
+  return new Map(results.map((row) => [row.source, Number(row.at)]));
 }
