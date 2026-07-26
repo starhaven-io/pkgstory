@@ -30,7 +30,12 @@ export function sqlLit(v: unknown): string {
     if (!Number.isFinite(v)) throw new RangeError(`non-finite number in SQL literal: ${v}`);
     return String(v);
   }
-  return `'${String(v).replace(/'/g, "''")}'`;
+  // Strip C0 controls (keeping \n and \t): a NUL in an attacker-supplied commit
+  // subject would truncate the generated SQL file. Doubling quotes is the rest.
+  return `'${String(v)
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+    .replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "")
+    .replace(/'/g, "''")}'`;
 }
 
 export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {

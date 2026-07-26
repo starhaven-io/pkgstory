@@ -99,4 +99,12 @@ describe("sqlLit", () => {
     expect(sqlLit("a;b")).toBe("'a;b'");
     expect(sqlLit("line1\nline2")).toBe("'line1\nline2'");
   });
+
+  it("strips C0 control characters (a NUL would break the SQL file parse)", () => {
+    expect(sqlLit("a\x00b")).toBe("'ab'");
+    expect(sqlLit("esc\x1b[31mred")).toBe("'esc[31mred'");
+    expect(sqlLit("bell\x07 backspace\x08 delete\x7f")).toBe("'bell backspace delete'");
+    expect(sqlLit("cr\r\nlf")).toBe("'cr\nlf'");
+    expect(sqlLit("keep\ttabs\nand newlines")).toBe("'keep\ttabs\nand newlines'");
+  });
 });

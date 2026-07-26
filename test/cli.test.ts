@@ -29,8 +29,8 @@ describe("cli --d1 validation", () => {
     expect(r.stderr).toContain('invalid --d1 value "locl"');
   });
 
-  it("rejects crawl --d1 remote typos that used to fall back to local", () => {
-    const r = cli("crawl", "--d1", "remot");
+  it("rejects near-miss crawl --d1 values that used to fall back to local", () => {
+    const r = cli("crawl", "--d1", "Remote");
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('expected "local" or "remote"');
   });
