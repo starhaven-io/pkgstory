@@ -726,6 +726,26 @@ describe("reconcileRemovals (full-crawl path)", () => {
     db.close();
   });
 
+  it("records the child removal commit when package touches share a second", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    const tied = T0 + 5000;
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit("foo 1.1", tied);
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    const removal = tap.commit("foo: delete", tied);
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    expect(reconcileRemovals(db, tap.source)).toBe(1);
+    expect(
+      db.prepare("SELECT removed_at, removed_commit FROM packages WHERE name = 'foo'").get(),
+    ).toEqual({ removed_at: tied, removed_commit: removal.sha });
+    db.close();
+  });
+
   it("persists root rename and migration metadata for absent packages", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
