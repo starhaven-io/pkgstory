@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { d1Select, sqlLit } from "../src/db/d1remote.ts";
+import { d1Select, d1SelectMany, sqlLit } from "../src/db/d1remote.ts";
 
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn(() => "[]"),
@@ -66,6 +66,38 @@ describe("d1Select output parsing", () => {
   it("throws on a truncated or malformed JSON payload", () => {
     execFileSyncMock.mockReturnValueOnce('[{"results":[{"n":1}');
     expect(() => d1Select("local", "SELECT 1")).toThrow();
+  });
+});
+
+describe("d1SelectMany", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockClear();
+  });
+
+  it("runs all statements in one wrangler spawn and maps results per statement", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"a":1}],"success":true},{"results":[],"success":true},{"results":[{"c":3}],"success":true}]',
+    );
+    expect(d1SelectMany("local", ["SELECT a", "SELECT b", "SELECT c"])).toEqual([
+      [{ a: 1 }],
+      [],
+      [{ c: 3 }],
+    ]);
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
+    expect(args[args.indexOf("--command") + 1]).toBe("SELECT a;\nSELECT b;\nSELECT c");
+  });
+
+  it("throws when the result-set count does not match the statement count", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"a":1}],"success":true}]');
+    expect(() => d1SelectMany("local", ["SELECT a", "SELECT b"])).toThrow(
+      /1 result sets for 2 statements/,
+    );
+  });
+
+  it("does not spawn wrangler for an empty statement list", () => {
+    expect(d1SelectMany("local", [])).toEqual([]);
+    expect(execFileSyncMock).not.toHaveBeenCalled();
   });
 });
 

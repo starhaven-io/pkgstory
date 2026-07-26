@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { durationLabel, pickSpotlightStories, type SpotlightItem } from "../src/db/sitecache.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { d1Select, d1SelectMany, kvGet, kvPut } from "../src/db/d1remote.ts";
+import {
+  durationLabel,
+  pickSpotlightStories,
+  refreshSiteCache,
+  type SpotlightItem,
+  statusCode,
+} from "../src/db/sitecache.ts";
+
+vi.mock("../src/db/d1remote.ts", () => ({
+  d1Select: vi.fn(() => []),
+  d1SelectMany: vi.fn(() => [[], [], []]),
+  kvGet: vi.fn(() => null),
+  kvPut: vi.fn(),
+}));
 
 function story(name: string, title: string): SpotlightItem {
   return {
@@ -13,6 +27,174 @@ function story(name: string, title: string): SpotlightItem {
     context: "formula",
   };
 }
+
+const TODAY = "2026-07-24";
+
+describe("statusCode", () => {
+  const active = [null, null, null, null] as const; // deprecate date/reason, disable date/reason
+
+  it("classifies removals, with renamed outranking migrated", () => {
+    expect(statusCode(100, "new-name", null, ...active, TODAY)).toBe("n");
+    expect(statusCode(100, null, "other/tap", ...active, TODAY)).toBe("m");
+    expect(statusCode(100, "new-name", "other/tap", ...active, TODAY)).toBe("n");
+    expect(statusCode(100, null, null, ...active, TODAY)).toBe("r");
+  });
+
+  it("removal outranks any live lifecycle stanza", () => {
+    expect(statusCode(100, null, null, "2020-01-01", "old", "2020-01-01", "dead", TODAY)).toBe("r");
+  });
+
+  it("disable! outranks deprecate! once both are in effect", () => {
+    expect(statusCode(null, null, null, "2020-01-01", "old", "2020-01-01", "dead", TODAY)).toBe(
+      "x",
+    );
+  });
+
+  it("treats a future-dated stanza as scheduled, not in effect", () => {
+    expect(statusCode(null, null, null, null, null, "2099-01-01", "eol", TODAY)).toBeUndefined();
+    expect(statusCode(null, null, null, "2099-01-01", "eol", null, null, TODAY)).toBeUndefined();
+    // A scheduled disable does not mask an in-effect deprecation.
+    expect(statusCode(null, null, null, "2020-01-01", "old", "2099-01-01", "eol", TODAY)).toBe("d");
+  });
+
+  it("counts a stanza with only a reason (no date) as in effect", () => {
+    expect(statusCode(null, null, null, null, "unmaintained", null, null, TODAY)).toBe("d");
+    expect(statusCode(null, null, null, null, null, null, "does not build", TODAY)).toBe("x");
+  });
+
+  it("flips a dated stanza exactly on its date", () => {
+    expect(statusCode(null, null, null, TODAY, null, null, null, TODAY)).toBe("d");
+  });
+
+  it("returns undefined for an active package", () => {
+    expect(statusCode(null, null, null, ...active, TODAY)).toBeUndefined();
+  });
+});
+
+interface HomeBlob {
+  formulae: number;
+  casks: number;
+  spotlight: SpotlightItem[];
+  recent: unknown[];
+  checkedAt: number | null;
+  spotlightAt: number;
+}
+
+describe("refreshSiteCache", () => {
+  const d1SelectMock = vi.mocked(d1Select);
+  const d1SelectManyMock = vi.mocked(d1SelectMany);
+  const kvGetMock = vi.mocked(kvGet);
+  const kvPutMock = vi.mocked(kvPut);
+
+  const catalogRow = (n: string, s: "c" | "f") => ({
+    n,
+    s,
+    v: "1.0",
+    r: 0,
+    c: 3,
+    removed_at: null,
+    renamed_to: null,
+    migrated_to: null,
+    deprecate_date: null,
+    deprecate_reason: null,
+    disable_date: null,
+    disable_reason: null,
+  });
+
+  const priorHome = (spotlightAt: number): string =>
+    JSON.stringify({
+      formulae: 1,
+      casks: 1,
+      spotlight: [
+        {
+          source: "homebrew-formula",
+          name: "cached-card",
+          version: "1.0",
+          revision: 0,
+          title: "Most updates",
+          stat: "3 events",
+          note: "from the prior blob",
+          context: "formula",
+        },
+      ],
+      recent: [],
+      checkedAt: 1,
+      spotlightAt,
+    });
+
+  const putHome = (): HomeBlob => {
+    const call = kvPutMock.mock.calls.find(([, key]) => key === "home");
+    if (!call) throw new Error("expected a home kvPut");
+    return JSON.parse(call[2]) as HomeBlob;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    d1SelectMock.mockReturnValue([]);
+    d1SelectManyMock.mockReturnValue([
+      [catalogRow("alpha", "f"), catalogRow("beta", "c")],
+      [],
+      [{ at: 1700000000 }],
+    ]);
+    kvGetMock.mockReturnValue(null);
+  });
+
+  it("publishes catalog and home from one batched D1 read", () => {
+    const { packages } = refreshSiteCache("local");
+    expect(packages).toBe(2);
+    expect(d1SelectManyMock).toHaveBeenCalledTimes(1);
+    const home = putHome();
+    expect(home.formulae).toBe(1);
+    expect(home.casks).toBe(1);
+    expect(home.checkedAt).toBe(1700000000);
+    expect(typeof home.spotlightAt).toBe("number");
+    const catalogCall = kvPutMock.mock.calls.find(([, key]) => key === "catalog");
+    expect(JSON.parse((catalogCall as unknown[])?.[2] as string)).toHaveLength(2);
+  });
+
+  it("reuses a fresh published spotlight without any category scans", () => {
+    const spotlightAt = Math.floor(Date.now() / 1000) - 3600;
+    kvGetMock.mockReturnValue(priorHome(spotlightAt));
+
+    refreshSiteCache("local");
+
+    expect(d1SelectMock).not.toHaveBeenCalled(); // no window-function scans
+    const home = putHome();
+    expect(home.spotlight.map((s) => s.name)).toEqual(["cached-card"]);
+    expect(home.spotlightAt).toBe(spotlightAt);
+  });
+
+  it("rebuilds the spotlight once the published one ages out", () => {
+    const spotlightAt = Math.floor(Date.now() / 1000) - 24 * 3600;
+    kvGetMock.mockReturnValue(priorHome(spotlightAt));
+
+    refreshSiteCache("local");
+
+    expect(d1SelectMock).toHaveBeenCalled(); // category scans ran
+    expect(putHome().spotlightAt).toBeGreaterThan(spotlightAt);
+  });
+
+  it("always rebuilds when asked to (manual cache refresh after a reseed)", () => {
+    kvGetMock.mockReturnValue(priorHome(Math.floor(Date.now() / 1000) - 60));
+
+    refreshSiteCache("local", { spotlight: "rebuild" });
+
+    expect(kvGetMock).not.toHaveBeenCalled();
+    expect(d1SelectMock).toHaveBeenCalled();
+  });
+
+  it("rebuilds when the prior home blob is missing or unparseable", () => {
+    kvGetMock.mockReturnValueOnce(null);
+    refreshSiteCache("local");
+    expect(d1SelectMock).toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    d1SelectManyMock.mockReturnValue([[], [], []]);
+    kvGetMock.mockReturnValue("▲ [WARNING] not json at all");
+    refreshSiteCache("local");
+    expect(d1SelectMock).toHaveBeenCalled();
+  });
+});
 
 describe("durationLabel", () => {
   it("renders quiet gaps at useful human scales", () => {

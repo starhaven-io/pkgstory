@@ -9,6 +9,7 @@ import { buildEvents } from "./crawl/events.ts";
 import { crawlSince, crawlSinceD1 } from "./crawl/incremental.ts";
 import { reconcileRemovals } from "./crawl/removals.ts";
 import { buildSnapshots } from "./crawl/snapshot.ts";
+import { ensureD1Schema } from "./db/d1remote.ts";
 import { finalizeLatest, openDb, setCrawlState } from "./db/db.ts";
 import { exportSlice } from "./db/export.ts";
 import { refreshSiteCache } from "./db/sitecache.ts";
@@ -88,6 +89,7 @@ async function crawl(argv: string[]): Promise<void> {
 
   if (d1mode) {
     console.log(`pkgstory crawl → D1 (${d1mode}) · incremental\n`);
+    ensureD1Schema(d1mode); // once per invocation, not per source
     let seeded = false;
     for (const source of sources) {
       const r = crawlSinceD1(source, d1mode, now);
@@ -181,7 +183,9 @@ function cacheCmd(argv: string[]): void {
     process.exit(2);
   }
   const mode = parseD1Mode(values.d1);
-  const { packages } = refreshSiteCache(mode);
+  ensureD1Schema(mode);
+  // A manual rebuild follows a reseed, so any carried-over spotlight is stale.
+  const { packages } = refreshSiteCache(mode, { spotlight: "rebuild" });
   console.log(`site cache (${mode}): ${packages.toLocaleString()} packages → KV`);
 }
 
