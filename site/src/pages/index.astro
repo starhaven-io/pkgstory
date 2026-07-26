@@ -168,6 +168,9 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
       };
       // Warm the ~1 MB index while the user is still reaching for their first key.
       input.addEventListener('focus', () => void load(), { once: true });
+      // INVARIANT: this goes to innerHTML. Every catalog-derived string must pass
+      // through esc() or encodeURIComponent; kind and status text come only from
+      // the fixed STATUS table. Adding a field means keeping that, or building DOM.
       const rowHtml = (p: Pkg): string => {
         const kind = p.s === 'c' ? 'cask' : 'formula';
         const src = p.s === 'c' ? 'homebrew-cask' : 'homebrew-formula';
