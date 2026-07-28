@@ -77,7 +77,9 @@ jobs:
           # Root-owned paths — src/, test/, and the pure site helpers root tests
           # import. Trigger edits add Lint (Biome covers them) but not Test.
           # Astro-only site edits get neither leg, so typos does not see them.
-          ROOT_PATHS='^(src|test)/|^site/src/lib/.*\.ts$|^vitest\.config\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^\.github/workflows/ci\.yml$'
+          # renovate.json is fleet-rendered but Biome checks it, so it must reach
+          # Lint here; otherwise a sync PR merges green and reddens main instead.
+          ROOT_PATHS='^(src|test)/|^site/src/lib/.*\.ts$|^vitest\.config\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^renovate\.json$|^\.github/workflows/ci\.yml$'
           if echo "${CHANGED}" | grep -qE "${ROOT_PATHS}|^trigger/"; then
             add_check '{"name":"Lint","check":"lint","runner":"ubuntu-24.04"}'
           fi
