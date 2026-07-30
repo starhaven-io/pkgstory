@@ -118,6 +118,8 @@ backfills them.
 
 - Conventional Commits: `type(scope): description`. Valid types: `feat`,
   `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`.
+  Mark a breaking change with `!` before the colon (`feat!:`,
+  `feat(scope)!:`).
 - Commits require DCO sign-off. Make all commits with `git commit -s` (enforced
   by the `.githooks/commit-msg` hook; run `just install-hooks` once per clone).
 - Do not identify an AI tool or model as an author, co-author, committer, or
