@@ -111,28 +111,58 @@ jobs:
               gh cache delete "${cache_id}" || echo "::warning::failed to delete tap cache ${cache_id}"
             done
 
-  alert:
-    name: Alert on crawl failure
+  crawl-issue:
+    name: Open/close crawl issue
     needs: crawl
-    if: ${{ always() && needs.crawl.result == 'failure' }}
+    if: ${{ always() && (needs.crawl.result == 'success' || needs.crawl.result == 'failure') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    continue-on-error: true # issue bookkeeping must not override the crawl result
     permissions:
-      issues: write # required to find, create, and comment on the failure issue
+      issues: write # required to find, create, comment on, and close the failure issue
     steps:
-      - name: File or update failure issue
+      - name: Open, update, or close crawl issue
         env:
+          CRAWL_RESULT: ${{ needs.crawl.result }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           ISSUE_TITLE: Crawl workflow failing
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          number="$(gh issue list --state open --search "\"${ISSUE_TITLE}\" in:title" --limit 100 \
-            --json number,title \
-            --jq "map(select(.title == \"${ISSUE_TITLE}\")) | .[0].number // empty")"
-          if [ -n "${number}" ]; then
-            gh issue comment "${number}" --body "Crawl run failed: ${RUN_URL}"
-          else
-            printf 'Crawl run failed: %s\n\nFiled automatically by crawl.yml; close once the pipeline recovers.\n' \
-              "${RUN_URL}" | gh issue create --title "${ISSUE_TITLE}" --body-file -
+          if ! numbers="$(gh api --paginate --method GET "repos/${GH_REPO}/issues" \
+              -f state=open \
+              -f 'creator=github-actions[bot]' \
+              -f per_page=100 \
+              --jq '.[] | select(.title == env.ISSUE_TITLE and (has("pull_request") | not)) | .number')"; then
+            echo "::warning::failed to list crawl failure issues"
+            exit 1
           fi
+
+          bookkeeping_status=0
+
+          if [ "${CRAWL_RESULT}" = "success" ]; then
+            while IFS= read -r number; do
+              [ -n "${number}" ] || continue
+              if ! gh issue close "${number}" --reason completed \
+                  --comment "Crawl run succeeded: ${RUN_URL}" </dev/null; then
+                echo "::warning::failed to close crawl issue #${number}"
+                bookkeeping_status=1
+              fi
+            done <<< "${numbers}"
+          elif [ "${CRAWL_RESULT}" = "failure" ]; then
+            number="${numbers%%$'\n'*}"
+            if [ -n "${number}" ]; then
+              if ! gh issue comment "${number}" --body "Crawl run failed: ${RUN_URL}" </dev/null; then
+                echo "::warning::failed to comment on crawl issue #${number}"
+                bookkeeping_status=1
+              fi
+            else
+              if ! printf 'Crawl run failed: %s\n\nFiled automatically by crawl.yml; the next successful crawl closes this issue.\n' \
+                  "${RUN_URL}" | gh issue create --title "${ISSUE_TITLE}" --body-file -; then
+                echo "::warning::failed to create crawl failure issue"
+                bookkeeping_status=1
+              fi
+            fi
+          fi
+
+          exit "${bookkeeping_status}"
