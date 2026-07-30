@@ -15,8 +15,9 @@ Runbook for the deployed pkgstory pipeline (crawler → D1/KV → site).
 
 ## When the crawl is stale
 
-A failed `crawl.yml` run files or appends to the `Crawl workflow failing`
-issue, with a link to the failed run.
+A failed `crawl.yml` run files or appends to a GitHub Actions-authored
+`Crawl workflow failing` issue, with a link to the failed run. The next
+successful run closes any such open issues automatically.
 
 Triage in this order:
 
