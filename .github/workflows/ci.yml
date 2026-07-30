@@ -80,31 +80,31 @@ jobs:
           # renovate.json is fleet-rendered but Biome checks it, so it must reach
           # Lint here; otherwise a sync PR merges green and reddens main instead.
           ROOT_PATHS='^(src|test)/|^site/src/lib/.*\.ts$|^vitest\.config\.ts$|^package(-lock)?\.json$|^tsconfig\.json$|^biome\.json$|^renovate\.json$|^\.github/workflows/ci\.yml$'
-          if echo "${CHANGED}" | grep -qE "${ROOT_PATHS}|^trigger/"; then
+          if grep -qE "${ROOT_PATHS}|^trigger/" <<<"${CHANGED}"; then
             add_check '{"name":"Lint","check":"lint","runner":"ubuntu-24.04"}'
           fi
-          if echo "${CHANGED}" | grep -qE "${ROOT_PATHS}"; then
+          if grep -qE "${ROOT_PATHS}" <<<"${CHANGED}"; then
             add_check '{"name":"Test","check":"test","runner":"ubuntu-24.04"}'
             RUN_CODECOV=true
           fi
 
           # Site changes: format check + build
-          if echo "${CHANGED}" | grep -qE '^site/'; then
+          if grep -qE '^site/' <<<"${CHANGED}"; then
             add_check '{"name":"Site","check":"site","runner":"ubuntu-slim"}'
           fi
 
           # Trigger Worker changes: typecheck + deploy dry-run
-          if echo "${CHANGED}" | grep -qE '^trigger/'; then
+          if grep -qE '^trigger/' <<<"${CHANGED}"; then
             add_check '{"name":"Trigger","check":"trigger","runner":"ubuntu-slim"}'
           fi
 
           # Source changes: CodeQL
-          if echo "${CHANGED}" | grep -qE '^src/|^site/|^trigger/'; then
+          if grep -qE '^src/|^site/|^trigger/' <<<"${CHANGED}"; then
             RUN_CODEQL=true
           fi
 
           # Workflow changes: Actions security audit
-          if echo "${CHANGED}" | grep -qE '^\.github/workflows/'; then
+          if grep -qE '^\.github/workflows/' <<<"${CHANGED}"; then
             RUN_ZIZMOR=true
           fi
 
