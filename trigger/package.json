@@ -22,7 +22,6 @@
   "allowScripts": {
     "esbuild": false,
     "fsevents": false,
-    "sharp": false,
     "workerd": false
   }
 }
