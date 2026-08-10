@@ -60,7 +60,7 @@ jobs:
           restore-keys: taps-v1-
 
       - name: Set up Homebrew taps
-        uses: Homebrew/actions/setup-homebrew@5037c6f1012cc5ea0b9f03fedbaf9955ed9e51e0 # 2026.08.03.1
+        uses: Homebrew/actions/setup-homebrew@fd832223f9f99ebf0244dd20658680e5d4aca049 # 2026.08.03.2
         with:
           # Full (non-shallow) tap clones — brew dropped shallow taps — so the crawler's
           # `git log <cursor>..HEAD` always reaches the stored cursor.
