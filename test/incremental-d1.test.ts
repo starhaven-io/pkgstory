@@ -178,4 +178,46 @@ describe("crawlSinceD1", () => {
     expect(all).toHaveLength(1); // only the cursor upsert
     expect(all[0]).toContain(`'${head.sha}'`);
   });
+
+  it("clears stale removal metadata when a package is restored", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const cursor = tap.commit("foo 1.0");
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    const removal = tap.commit("remove foo");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const restored = tap.commit("restore foo");
+    scriptD1({
+      cursor: cursor.sha,
+      seeded: false,
+      baselines: [
+        {
+          name: "foo",
+          latest_version: "1.0",
+          latest_revision: 0,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: null,
+          disable_reason: null,
+          removed_at: removal.at,
+          removed_commit: removal.sha,
+          renamed_to: "bar",
+          migrated_to: null,
+        },
+      ],
+    });
+
+    expect(crawlSinceD1(tap.source, "local", 1751000000)).toEqual({
+      status: "ok",
+      events: 0,
+      commits: 2,
+      head: restored.sha,
+    });
+    const sql = appliedSql();
+    expect(sql).toContain(
+      "UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL",
+    );
+    expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
+    expect(statements(sql).at(-1)).toContain(`'${restored.sha}'`);
+  });
 });

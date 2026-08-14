@@ -152,6 +152,64 @@ describe("refreshSiteCache", () => {
     expect(JSON.parse((catalogCall as unknown[])?.[2] as string)).toHaveLength(2);
   });
 
+  it("publishes recent changes with their effective lifecycle state", () => {
+    d1SelectManyMock.mockReturnValue([
+      [catalogRow("alpha", "f"), catalogRow("old-app", "c")],
+      [
+        {
+          source: "homebrew-formula",
+          name: "alpha",
+          version: "1.1",
+          revision: 2,
+          introducedAt: 1700000001,
+          removed_at: null,
+          renamed_to: null,
+          migrated_to: null,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: "2020-01-01",
+          disable_reason: "does not build",
+        },
+        {
+          source: "homebrew-cask",
+          name: "old-app",
+          version: "2.0",
+          revision: 0,
+          introducedAt: 1700000000,
+          removed_at: 1700000100,
+          renamed_to: "new-app",
+          migrated_to: null,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: null,
+          disable_reason: null,
+        },
+      ],
+      [{ at: 1700000200 }],
+    ]);
+
+    refreshSiteCache("local");
+
+    expect(putHome().recent).toEqual([
+      {
+        source: "homebrew-formula",
+        name: "alpha",
+        version: "1.1",
+        revision: 2,
+        introducedAt: 1700000001,
+        x: "x",
+      },
+      {
+        source: "homebrew-cask",
+        name: "old-app",
+        version: "2.0",
+        revision: 0,
+        introducedAt: 1700000000,
+        x: "n",
+      },
+    ]);
+  });
+
   it("reuses a fresh published spotlight without any category scans", () => {
     const spotlightAt = Math.floor(Date.now() / 1000) - 3600;
     kvGetMock.mockReturnValue(priorHome(spotlightAt));
@@ -219,6 +277,40 @@ describe("refreshSiteCache", () => {
     expect(spotlight[1]?.stat).toBe("12 in a year");
     expect(spotlight[2]?.stat).toBe("3.2 years quiet");
     expect(spotlight[3]?.stat).toBe("since 2001-09-09");
+  });
+
+  it("uses the real reserve category stories when the core categories are empty", () => {
+    d1SelectManyMock.mockReturnValue([
+      [catalogRow("newcomer", "f"), catalogRow("steady", "c")],
+      [],
+      [{ at: 1700000000 }],
+    ]);
+    d1SelectMock.mockImplementation((_mode, sql) => {
+      if (sql.includes("HAVING COUNT(*) >= 3")) {
+        return [{ source: "homebrew-formula", name: "newcomer", first_at: 1700000000 }];
+      }
+      if (sql.includes("HAVING COUNT(gaps.g) >= 8")) {
+        return [{ source: "homebrew-cask", name: "steady", mean_days: 14.4 }];
+      }
+      return [];
+    });
+
+    refreshSiteCache("local");
+
+    expect(putHome().spotlight).toEqual([
+      expect.objectContaining({
+        name: "newcomer",
+        title: "Newest arrival",
+        stat: "added 2023-11-14",
+        context: "3 events · formula",
+      }),
+      expect.objectContaining({
+        name: "steady",
+        title: "Steadiest cadence",
+        stat: "~14d apart",
+        context: "3 events · cask",
+      }),
+    ]);
   });
 
   it("drops category rows for packages that fell out of the catalog", () => {

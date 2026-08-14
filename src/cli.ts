@@ -14,12 +14,12 @@ import { finalizeLatest, openDb, setCrawlState } from "./db/db.ts";
 import { exportSlice } from "./db/export.ts";
 import { refreshSiteCache } from "./db/sitecache.ts";
 import { headSha } from "./git.ts";
-import { resolveSources, type Source } from "./sources/index.ts";
+import { resolveSources, type Source, type SourceId } from "./sources/index.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_DB = resolve(here, "../pkgstory.db");
 
-const DEMO: Record<string, string[]> = {
+const DEMO = {
   // terraform is here on purpose: removed from core (BUSL), it exercises the removed +
   // disabled lifecycle path in the default demo crawl.
   "homebrew-formula": [
@@ -34,7 +34,7 @@ const DEMO: Record<string, string[]> = {
     "terraform",
   ],
   "homebrew-cask": ["visual-studio-code", "firefox", "rectangle", "iterm2", "docker"],
-};
+} satisfies Record<SourceId, string[]>;
 
 function list(csv: string | undefined): string[] | null {
   if (!csv) return null;
@@ -146,7 +146,7 @@ async function crawl(argv: string[]): Promise<void> {
       );
     } else {
       const override = source.id === "homebrew-cask" ? list(values.casks) : list(values.formulae);
-      const names = override ?? DEMO[source.id] ?? [];
+      const names = override ?? DEMO[source.id];
       if (names.length === 0) continue;
       const commits = buildCommitIndex(db, source, names);
       const snaps = buildSnapshots(db, source);
@@ -222,34 +222,42 @@ function sampleTimeline(db: DatabaseSync): void {
   }
 }
 
-const [command, ...rest] = process.argv.slice(2);
-switch (command) {
-  case "crawl":
-    crawl(rest).catch((e) => {
-      console.error(e);
-      process.exit(1);
-    });
-    break;
-  case "export":
-    exportCmd(rest);
-    break;
-  case "cache":
-    cacheCmd(rest);
-    break;
-  case undefined:
-  case "help":
-  case "--help":
-  case "-h":
-    console.log(
-      [
-        "usage:",
-        "  pkgstory crawl [--all | --since | --d1 local|remote] [--source <id>] [--db PATH] [--formulae a,b] [--casks a,b]",
-        "  pkgstory export [--db PATH]    # emit the D1 site-slice as SQL on stdout",
-        "  pkgstory cache --d1 local|remote  # rebuild the site-cache KV blobs from D1",
-      ].join("\n"),
-    );
-    break;
-  default:
-    console.error(`unknown command: ${command}`);
-    process.exit(2);
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const [command, ...rest] = argv;
+  switch (command) {
+    case "crawl":
+      try {
+        await crawl(rest);
+      } catch (e) {
+        console.error(e);
+        process.exit(1);
+      }
+      break;
+    case "export":
+      exportCmd(rest);
+      break;
+    case "cache":
+      cacheCmd(rest);
+      break;
+    case undefined:
+    case "help":
+    case "--help":
+    case "-h":
+      console.log(
+        [
+          "usage:",
+          "  pkgstory crawl [--all | --since | --d1 local|remote] [--source <id>] [--db PATH] [--formulae a,b] [--casks a,b]",
+          "  pkgstory export [--db PATH]    # emit the D1 site-slice as SQL on stdout",
+          "  pkgstory cache --d1 local|remote  # rebuild the site-cache KV blobs from D1",
+        ].join("\n"),
+      );
+      break;
+    default:
+      console.error(`unknown command: ${command}`);
+      process.exit(2);
+  }
+}
+
+if (import.meta.main) {
+  void main();
 }
