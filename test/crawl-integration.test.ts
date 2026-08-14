@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { buildCommitIndex } from "../src/crawl/commit-index.ts";
+import { buildCommitIndex, buildCommitIndexAll } from "../src/crawl/commit-index.ts";
 import { buildPackageContributors } from "../src/crawl/contributors.ts";
 import { buildEvents } from "../src/crawl/events.ts";
 import {
@@ -51,6 +51,53 @@ function packageNamed(delta: Delta, name: string): PackageDelta {
   if (!pkg) throw new Error(`expected the delta to contain ${name}`);
   return pkg;
 }
+
+describe("buildCommitIndexAll", () => {
+  it("indexes package files from the whole streamed history", async () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("README.md", "fixture\n");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("add foo");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.write("Formula/b/bar.rb", formula("bar", "2.0"));
+    tap.commit("update packages");
+    tap.write("README.md", "fixture docs\n");
+    tap.commit("update docs");
+
+    await expect(buildCommitIndexAll(db, tap.source)).resolves.toEqual({
+      commits: 3,
+      rows: 3,
+      packages: 2,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT p.name, COUNT(*) AS commits
+             FROM commit_index ci JOIN packages p ON p.id = ci.package_id
+            GROUP BY p.id ORDER BY p.name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "bar", commits: 1 },
+      { name: "foo", commits: 2 },
+    ]);
+    expect(
+      db
+        .prepare(
+          `SELECT p.name, COUNT(*) AS contributors
+             FROM commit_contributors cc JOIN packages p ON p.id = cc.package_id
+            GROUP BY p.id ORDER BY p.name`,
+        )
+        .all(),
+    ).toEqual([
+      { name: "bar", contributors: 1 },
+      { name: "foo", contributors: 2 },
+    ]);
+    db.close();
+  });
+});
 
 describe("computeDelta (against a real git repo)", () => {
   it("parses a version bump since the cursor", () => {

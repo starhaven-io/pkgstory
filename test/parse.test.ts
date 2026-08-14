@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseCask } from "../src/parse/cask.ts";
+import { extractVersion } from "../src/parse/extract.ts";
 import { parseFormula, versionFromUrl } from "../src/parse/formula.ts";
 import { parseLifecycle } from "../src/parse/lifecycle.ts";
 import { versionFromSubject } from "../src/parse/subject.ts";
@@ -175,6 +176,31 @@ describe("parseCask", () => {
   end
 end`;
     expect(parseCask(src).version).toBe("2.5.0,arm64.001");
+  });
+});
+
+describe("extractVersion", () => {
+  it("uses the cask version stanza", () => {
+    expect(
+      extractVersion("cask", "app", "app 9.9", 'cask "app" do\n  version "2.5,123"\nend'),
+    ).toEqual({
+      version: "2.5,123",
+      revision: 0,
+      versionSrc: "version-stanza",
+    });
+  });
+
+  it("falls back to a conservative matching commit subject", () => {
+    expect(extractVersion("formula", "foo", "foo 1.2.3", "class Foo < Formula\nend")).toEqual({
+      version: "1.2.3",
+      revision: 0,
+      versionSrc: "subject",
+    });
+    expect(extractVersion("cask", "app", "app 4.5", 'cask "app" do\nend')).toEqual({
+      version: "4.5",
+      revision: 0,
+      versionSrc: "subject",
+    });
   });
 });
 
