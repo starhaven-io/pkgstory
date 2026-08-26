@@ -18,9 +18,9 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^14.2.2",
+    "@astrojs/cloudflare": "^14.2.3",
     "@astrojs/rss": "^4.0.19",
-    "astro": "^7.2.3"
+    "astro": "^7.2.4"
   },
   "devDependencies": {
     "prettier": "^3.9.6",
