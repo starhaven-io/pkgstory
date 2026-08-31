@@ -80,6 +80,14 @@ site-seed-remote db="pkgstory.db": site-install
     # an incremental-only one exports no contributors at all.
     read -rp "Reseed the DEPLOYED pkgstory D1 from {{db}}? The live site errors until it finishes. [y/N] " reply
     [[ "${reply}" == [yY] ]] || { echo "aborted"; exit 1; }
+    # wrangler offers its browser login only when stdin and stdout are both TTYs, and
+    # every remote call below reads wrangler through a pipe. `whoami` never prompts, so
+    # gate on it here: a stale login then fails before the first DROP rather than
+    # partway through, with the deployed site already emptied.
+    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler whoami --json >/dev/null) || {
+        echo "wrangler is not authenticated; run: cd site && npx wrangler login" >&2
+        exit 1
+    }
     sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
     trap 'rm -f "$sql"' EXIT
     node src/cli.ts export --db "{{db}}" > "$sql"
