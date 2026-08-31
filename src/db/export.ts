@@ -6,6 +6,7 @@ import { sqlLit as lit } from "./d1remote.ts";
 const SCHEMA = `DROP TABLE IF EXISTS contributor_seeds;
 DROP TABLE IF EXISTS package_contribution_slices;
 DROP TABLE IF EXISTS contributors;
+DROP TABLE IF EXISTS bottle_intervals;
 DROP TABLE IF EXISTS bottle_events;
 DROP TABLE IF EXISTS version_events;
 DROP TABLE IF EXISTS crawl_state;
@@ -18,8 +19,10 @@ CREATE TABLE packages (
   latest_revision INTEGER NOT NULL DEFAULT 0,
   latest_at       INTEGER,
   latest_bottled  INTEGER,
+  latest_bottle_tags TEXT,
   event_count     INTEGER NOT NULL DEFAULT 0,
   bottle_event_count INTEGER NOT NULL DEFAULT 0,
+  bottle_interval_count INTEGER NOT NULL DEFAULT 0,
   removed_at       INTEGER,
   removed_commit   TEXT,
   renamed_to       TEXT,
@@ -51,6 +54,18 @@ CREATE TABLE bottle_events (
   subject    TEXT,
   UNIQUE (package_id, commit_sha)
 );
+CREATE TABLE bottle_intervals (
+  id INTEGER PRIMARY KEY,
+  package_id INTEGER NOT NULL,
+  tag TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  started_commit TEXT NOT NULL,
+  started_subject TEXT,
+  ended_at INTEGER,
+  ended_commit TEXT,
+  ended_subject TEXT,
+  UNIQUE (package_id, tag, started_commit)
+);
 CREATE TABLE contributors (
   contributor_key TEXT PRIMARY KEY,
   display_name    TEXT NOT NULL,
@@ -81,6 +96,8 @@ CREATE TABLE crawl_state (
 CREATE INDEX idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX idx_events_time ON version_events (introduced_at DESC);
 CREATE INDEX idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
+CREATE INDEX idx_bottle_intervals_pkg_time ON bottle_intervals (package_id, started_at DESC);
+CREATE INDEX idx_bottle_intervals_open ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
 CREATE INDEX idx_packages_name ON packages (name);
 CREATE INDEX idx_contribution_slices_package ON package_contribution_slices (package_id);
 `;
@@ -123,10 +140,10 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     db,
     write,
     "packages",
-    "id,source,name,latest_version,latest_revision,latest_at,latest_bottled,event_count,bottle_event_count,removed_at,removed_commit,renamed_to,migrated_to,deprecate_date,deprecate_reason,disable_date,disable_reason",
-    "SELECT id, source, name, latest_version, latest_revision, latest_at, latest_bottled, event_count, bottle_event_count, removed_at, removed_commit, renamed_to, migrated_to, deprecate_date, deprecate_reason, disable_date, disable_reason FROM packages",
+    "id,source,name,latest_version,latest_revision,latest_at,latest_bottled,latest_bottle_tags,event_count,bottle_event_count,bottle_interval_count,removed_at,removed_commit,renamed_to,migrated_to,deprecate_date,deprecate_reason,disable_date,disable_reason",
+    "SELECT id, source, name, latest_version, latest_revision, latest_at, latest_bottled, latest_bottle_tags, event_count, bottle_event_count, bottle_interval_count, removed_at, removed_commit, renamed_to, migrated_to, deprecate_date, deprecate_reason, disable_date, disable_reason FROM packages",
     (r) =>
-      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.latest_bottled)},${lit(r.event_count)},${lit(r.bottle_event_count)},${lit(r.removed_at)},${lit(r.removed_commit)},${lit(r.renamed_to)},${lit(r.migrated_to)},${lit(r.deprecate_date)},${lit(r.deprecate_reason)},${lit(r.disable_date)},${lit(r.disable_reason)}`,
+      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.latest_bottled)},${lit(r.latest_bottle_tags)},${lit(r.event_count)},${lit(r.bottle_event_count)},${lit(r.bottle_interval_count)},${lit(r.removed_at)},${lit(r.removed_commit)},${lit(r.renamed_to)},${lit(r.migrated_to)},${lit(r.deprecate_date)},${lit(r.deprecate_reason)},${lit(r.disable_date)},${lit(r.disable_reason)}`,
   );
   dumpTable(
     db,
@@ -155,6 +172,15 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
        JOIN contributor_seeds cs ON cs.source = p.source`,
     (r) =>
       `${lit(r.package_id)},${lit(r.contributor_key)},${lit(r.window_start_sha)},${lit(r.window_end_sha)},${lit(r.touch_count)},${lit(r.version_count)},${lit(r.first_at)},${lit(r.last_at)}`,
+  );
+  dumpTable(
+    db,
+    write,
+    "bottle_intervals",
+    "package_id,tag,started_at,started_commit,started_subject,ended_at,ended_commit,ended_subject",
+    "SELECT package_id, tag, started_at, started_commit, started_subject, ended_at, ended_commit, ended_subject FROM bottle_intervals",
+    (r) =>
+      `${lit(r.package_id)},${lit(r.tag)},${lit(r.started_at)},${lit(r.started_commit)},${lit(r.started_subject)},${lit(r.ended_at)},${lit(r.ended_commit)},${lit(r.ended_subject)}`,
   );
   dumpTable(
     db,

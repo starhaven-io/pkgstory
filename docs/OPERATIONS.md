@@ -50,14 +50,14 @@ Caveats:
   complete contributor history, and `contributor_seeds` intentionally lands
   last so a partial import cannot enable incremental contributor writes on top
   of an incomplete seed.
-- After deploying bottle-history support to an existing D1 database, run a full
-  crawl and remote reseed before relying on historical bottle events. The schema
-  migration can establish bottle state on future touches, but it cannot infer
-  whether an already-bottled formula had changed at that first post-migration
-  commit. The same ambiguity can occur if a non-transactional D1 apply stops
-  after inserting a brand-new package row but before its initial bottle event;
+- After deploying per-platform bottle history to an existing D1 database, run a
+  full crawl and remote reseed before relying on bottle intervals. The schema
+  migration can establish current tags on future touches, but it cannot infer
+  when an existing tag first appeared. The same ambiguity can occur if a
+  non-transactional D1 apply stops after inserting a brand-new package row but
+  before its initial interval. Already-applied transitions are safe to replay;
   retrying establishes the correct current state, while a full reseed restores
-  the missing historical event.
+  the missing historical interval.
 - `just site-seed-local` runs the same procedure against local D1/KV for site
   testing.
 

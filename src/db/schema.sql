@@ -13,10 +13,12 @@ CREATE TABLE IF NOT EXISTS packages (
   -- Latest live snapshot's bottle-block state. NULL means not yet derived; cask
   -- readers ignore it. bottle_event_count supports bounded, paginated site reads.
   latest_bottled  INTEGER CHECK (latest_bottled IN (0, 1)),
+  latest_bottle_tags TEXT,
   -- Denormalized count of version_events: lets the search-index build avoid a
   -- full events join (a per-render scan of the whole catalog otherwise).
   event_count     INTEGER NOT NULL DEFAULT 0,
   bottle_event_count INTEGER NOT NULL DEFAULT 0,
+  bottle_interval_count INTEGER NOT NULL DEFAULT 0,
   -- End-of-life state. removed_at is set (with the deleting commit) once the file is
   -- gone from the tap at HEAD. deprecate_/disable_ mirror the latest live blob's
   -- deprecate!/disable! stanzas verbatim (date may be future/scheduled); the *current*
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   revision     INTEGER NOT NULL DEFAULT 0,
   version_src  TEXT,
   bottled      INTEGER NOT NULL DEFAULT 0,
+  bottle_tags  TEXT NOT NULL DEFAULT '[]',
   UNIQUE (package_id, commit_sha)
 );
 
@@ -116,6 +119,21 @@ CREATE TABLE IF NOT EXISTS bottle_events (
   UNIQUE (package_id, commit_sha)
 );
 
+-- Per-platform availability ranges. ended_* is NULL while that bottle tag is
+-- present in the latest formula snapshot.
+CREATE TABLE IF NOT EXISTS bottle_intervals (
+  id              INTEGER PRIMARY KEY,
+  package_id      INTEGER NOT NULL REFERENCES packages (id),
+  tag             TEXT NOT NULL,
+  started_at      INTEGER NOT NULL,
+  started_commit  TEXT NOT NULL,
+  started_subject TEXT,
+  ended_at        INTEGER,
+  ended_commit    TEXT,
+  ended_subject   TEXT,
+  UNIQUE (package_id, tag, started_commit)
+);
+
 -- Compact L2 read model: one row per package/identity instead of every commit.
 CREATE TABLE IF NOT EXISTS package_contributors (
   package_id      INTEGER NOT NULL REFERENCES packages (id),
@@ -145,6 +163,8 @@ CREATE TABLE IF NOT EXISTS crawl_state (
 CREATE INDEX IF NOT EXISTS idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_time ON version_events (introduced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time ON bottle_intervals (package_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bottle_intervals_open ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
 -- Reconcile-removals reads each absent package's latest commit (the deletion).
 CREATE INDEX IF NOT EXISTS idx_commit_pkg_time ON commit_index (package_id, committed_at DESC);
 -- finalizeLatest reads each package's newest snapshot (the shipping version).

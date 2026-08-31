@@ -112,16 +112,22 @@ export function ensureD1PackageColumns(mode: D1Mode): void {
     stmts.push("ALTER TABLE packages ADD COLUMN latest_bottled INTEGER;");
   if (!existing.has("bottle_event_count"))
     stmts.push("ALTER TABLE packages ADD COLUMN bottle_event_count INTEGER NOT NULL DEFAULT 0;");
+  if (!existing.has("latest_bottle_tags"))
+    stmts.push("ALTER TABLE packages ADD COLUMN latest_bottle_tags TEXT;");
+  if (!existing.has("bottle_interval_count"))
+    stmts.push("ALTER TABLE packages ADD COLUMN bottle_interval_count INTEGER NOT NULL DEFAULT 0;");
   if (stmts.length) d1Apply(mode, `${stmts.join("\n")}\n`);
 }
 
-/** Add the bottle-transition read model to an already-seeded D1 database. */
+/** Add bottle transition and per-platform interval tables to an existing D1 database. */
 export function ensureD1BottleSchema(mode: D1Mode): void {
-  const present = d1Select(
-    mode,
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bottle_events' LIMIT 1",
+  const tables = new Set(
+    d1Select(
+      mode,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('bottle_events', 'bottle_intervals')",
+    ).map((row) => String(row.name)),
   );
-  if (present.length) return;
+  if (tables.has("bottle_events") && tables.has("bottle_intervals")) return;
 
   d1Apply(
     mode,
@@ -138,6 +144,22 @@ export function ensureD1BottleSchema(mode: D1Mode): void {
 );
 CREATE INDEX IF NOT EXISTS idx_bottle_events_pkg_time
   ON bottle_events (package_id, changed_at DESC);
+CREATE TABLE IF NOT EXISTS bottle_intervals (
+  id INTEGER PRIMARY KEY,
+  package_id INTEGER NOT NULL,
+  tag TEXT NOT NULL,
+  started_at INTEGER NOT NULL,
+  started_commit TEXT NOT NULL,
+  started_subject TEXT,
+  ended_at INTEGER,
+  ended_commit TEXT,
+  ended_subject TEXT,
+  UNIQUE (package_id, tag, started_commit)
+);
+CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time
+  ON bottle_intervals (package_id, started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bottle_intervals_open
+  ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
 `,
   );
 }

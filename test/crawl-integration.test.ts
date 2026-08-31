@@ -127,6 +127,7 @@ describe("computeDelta (against a real git repo)", () => {
         version: "1.1",
         revision: 0,
         bottled: false,
+        bottleTags: [],
         at: bump.at,
         sha: bump.sha,
         subject: "foo 1.1",
@@ -148,6 +149,7 @@ describe("computeDelta (against a real git repo)", () => {
         version: null,
         revision: 0,
         bottled: true,
+        bottleTags: ["legacy"],
         at: bottled.at,
         sha: bottled.sha,
         subject: "foo: add bottle",
@@ -189,7 +191,17 @@ describe("computeDelta (against a real git repo)", () => {
 
     const pkg = firstPackage(computeDelta(tap.source, cursor.sha));
     expect(pkg.removed).toEqual({ at: rm.at, commit: rm.sha, renamedTo: null, migratedTo: null });
-    expect(pkg.touches).toEqual([]);
+    expect(pkg.touches).toEqual([
+      {
+        version: null,
+        revision: 0,
+        bottled: false,
+        bottleTags: [],
+        at: rm.at,
+        sha: rm.sha,
+        subject: "foo: delete",
+      },
+    ]);
     expect(pkg.lifecycle).toBeNull(); // no live blob in the window — leave columns alone
   });
 
@@ -251,7 +263,7 @@ describe("computeDelta (against a real git repo)", () => {
 
     const pkg = firstPackage(computeDelta(tap.source, cursor.sha));
     expect(pkg.removed).toBeNull();
-    expect(pkg.touches.map((t) => t.version)).toEqual(["1.2"]);
+    expect(pkg.touches.map((t) => t.version)).toEqual([null, "1.2"]);
   });
 });
 
@@ -417,6 +429,136 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     expect(
       db.prepare("SELECT COUNT(*) AS count FROM bottle_events WHERE package_id = 1").get(),
     ).toEqual({ count: 3 });
+    db.close();
+  });
+
+  it("tracks independent platform intervals and closes them when bottles disappear", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+    const bottle = (tags: string[]) =>
+      `  bottle do\n${tags.map((tag) => `    sha256 cellar: :any, ${tag}: "aaa"`).join("\n")}\n  end\n`;
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle(["arm64_sonoma", "sonoma"])));
+    const firstBottled = tap.commit("foo: bottle Sonoma");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle(["arm64_sonoma"])));
+    const intelRemoved = tap.commit("foo: remove Intel Sonoma bottle");
+    tap.git("rm", "-q", "Formula/f/foo.rb");
+    const formulaRemoved = tap.commit("foo: remove formula");
+    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 0 });
+
+    const intervals = () =>
+      db
+        .prepare(
+          `SELECT tag, started_at, started_commit, ended_at, ended_commit
+             FROM bottle_intervals ORDER BY tag`,
+        )
+        .all();
+    const expected = [
+      {
+        tag: "arm64_sonoma",
+        started_at: firstBottled.at,
+        started_commit: firstBottled.sha,
+        ended_at: formulaRemoved.at,
+        ended_commit: formulaRemoved.sha,
+      },
+      {
+        tag: "sonoma",
+        started_at: firstBottled.at,
+        started_commit: firstBottled.sha,
+        ended_at: intelRemoved.at,
+        ended_commit: intelRemoved.sha,
+      },
+    ];
+    expect(intervals()).toEqual(expected);
+    expect(
+      db
+        .prepare(
+          "SELECT latest_bottle_tags, bottle_interval_count FROM packages WHERE name = 'foo'",
+        )
+        .get(),
+    ).toEqual({ latest_bottle_tags: "[]", bottle_interval_count: 2 });
+
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    expect(intervals()).toEqual(expected);
+    db.close();
+  });
+
+  it("keeps bottle intervals unchanged when an incremental window is replayed", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+    const bottle = '  bottle do\n    sha256 cellar: :any, arm64_sonoma: "aaa"\n  end\n';
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const cursor = tap.commit("foo: bottled");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, cursor.sha, now);
+
+    const transitionAt = T0 + 2000;
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    const lost = tap.commit("foo: bottle lost", transitionAt);
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1", bottle));
+    const regained = tap.commit("foo: bottle restored", transitionAt);
+
+    const intervals = () =>
+      db
+        .prepare(
+          `SELECT tag, started_at, started_commit, ended_at, ended_commit
+             FROM bottle_intervals ORDER BY id`,
+        )
+        .all();
+    const expected = [
+      {
+        tag: "arm64_sonoma",
+        started_at: cursor.at,
+        started_commit: cursor.sha,
+        ended_at: lost.at,
+        ended_commit: lost.sha,
+      },
+      {
+        tag: "arm64_sonoma",
+        started_at: regained.at,
+        started_commit: regained.sha,
+        ended_at: null,
+        ended_commit: null,
+      },
+    ];
+
+    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 1 });
+    expect(intervals()).toEqual(expected);
+
+    setCrawlState(db, tap.source.id, cursor.sha, now + 2);
+    expect(crawlSince(db, tap.source, now + 3)).toMatchObject({ status: "ok", events: 0 });
+    expect(intervals()).toEqual(expected);
+    expect(
+      db
+        .prepare("SELECT COUNT(*) AS count FROM bottle_intervals WHERE ended_at < started_at")
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM (
+             SELECT package_id, tag FROM bottle_intervals
+              WHERE ended_at IS NULL GROUP BY package_id, tag HAVING COUNT(*) > 1
+           )`,
+        )
+        .get(),
+    ).toEqual({ count: 0 });
     db.close();
   });
 

@@ -105,6 +105,7 @@ describe("crawlSinceD1", () => {
           latest_version: "1.0",
           latest_revision: 0,
           latest_bottled: 0,
+          latest_bottle_tags: "[]",
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -171,6 +172,7 @@ describe("crawlSinceD1", () => {
           latest_version: "1.0",
           latest_revision: 0,
           latest_bottled: 0,
+          latest_bottle_tags: "[]",
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -209,6 +211,7 @@ describe("crawlSinceD1", () => {
           latest_version: "1.0",
           latest_revision: 0,
           latest_bottled: 1,
+          latest_bottle_tags: '["arm64_tahoe"]',
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -235,8 +238,20 @@ describe("crawlSinceD1", () => {
     expect(sql).toContain(
       `, 1, '1.0', 0, ${regained.at}, '${regained.sha}', 'foo: bottle restored')`,
     );
+    expect(sql).toContain(
+      `UPDATE bottle_intervals SET ended_at = ${lost.at}, ended_commit = '${lost.sha}'`,
+    );
+    expect(sql).toContain(
+      `AND tag = 'arm64_tahoe' AND ended_at IS NULL AND started_at <= ${lost.at}`,
+    );
+    expect(sql).toContain(`closed.ended_commit = '${lost.sha}'`);
+    expect(sql).toContain(
+      `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject) VALUES`,
+    );
+    expect(sql).toContain(`'arm64_tahoe', ${regained.at}, '${regained.sha}'`);
     expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
     expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
+    expect(sql).toContain(`latest_bottle_tags = '["arm64_tahoe"]'`);
     expect(statements(sql).at(-1)).toContain(`'${regained.sha}'`);
   });
 
@@ -255,6 +270,7 @@ describe("crawlSinceD1", () => {
           latest_version: null,
           latest_revision: 0,
           latest_bottled: 0,
+          latest_bottle_tags: "[]",
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -294,6 +310,7 @@ describe("crawlSinceD1", () => {
           latest_version: null,
           latest_revision: 0,
           latest_bottled: null,
+          latest_bottle_tags: null,
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -334,6 +351,7 @@ describe("crawlSinceD1", () => {
           latest_version: "1.0",
           latest_revision: 0,
           latest_bottled: 0,
+          latest_bottle_tags: "[]",
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,

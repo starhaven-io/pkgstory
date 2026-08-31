@@ -17,6 +17,7 @@ end`;
       revision: 2,
       versionSrc: "version-stanza",
       bottled: false,
+      bottleTags: [],
     });
   });
 
@@ -31,6 +32,7 @@ end`;
       revision: 0,
       versionSrc: "version-stanza",
       bottled: false,
+      bottleTags: [],
     });
   });
 
@@ -78,6 +80,7 @@ end`;
       revision: 0,
       versionSrc: "version-stanza",
       bottled: false,
+      bottleTags: [],
     });
   });
 
@@ -115,6 +118,21 @@ end`;
     expect(
       parseFormula("class X < Formula\n  resource do\n    bottle do\n    end\n  end\nend").bottled,
     ).toBe(false);
+  });
+
+  it("extracts each modern bottle platform and preserves legacy bottles", () => {
+    const modern = `class X < Formula
+  bottle do
+    sha256 cellar: :any_skip_relocation, arm64_sonoma: "aaa"
+    sha256 cellar: :any, sonoma: "bbb"
+    sha256 "ccc" => :ventura
+  end
+end`;
+    expect(parseFormula(modern).bottleTags).toEqual(["arm64_sonoma", "sonoma", "ventura"]);
+    expect(
+      parseFormula("class X < Formula\n  bottle 'https://example.com/x-bottle.tar.gz'\nend")
+        .bottleTags,
+    ).toEqual(["legacy"]);
   });
 });
 
@@ -214,6 +232,7 @@ describe("extractVersion", () => {
       revision: 0,
       versionSrc: "version-stanza",
       bottled: false,
+      bottleTags: [],
     });
   });
 
@@ -223,12 +242,14 @@ describe("extractVersion", () => {
       revision: 0,
       versionSrc: "subject",
       bottled: false,
+      bottleTags: [],
     });
     expect(extractVersion("cask", "app", "app 4.5", 'cask "app" do\nend')).toEqual({
       version: "4.5",
       revision: 0,
       versionSrc: "subject",
       bottled: false,
+      bottleTags: [],
     });
   });
 });

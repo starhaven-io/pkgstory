@@ -7,11 +7,18 @@ import {
   type HistoryTouch,
 } from "../src/crawl/incremental.ts";
 
-function touch(version: string | null, revision: number, at: number, bottled = false): DeltaTouch {
+function touch(
+  version: string | null,
+  revision: number,
+  at: number,
+  bottled = false,
+  bottleTags = bottled ? ["legacy"] : [],
+): DeltaTouch {
   return {
     version,
     revision,
     bottled,
+    bottleTags,
     at,
     sha: "f".repeat(40),
     subject: version ? `pkg ${version}` : "pkg: metadata",
@@ -40,16 +47,18 @@ function historyTouch(
 
 describe("foldPackage", () => {
   it("emits nothing for an empty window", () => {
-    expect(foldPackage("1.0", 0, false, false, [])).toEqual({
+    expect(foldPackage("1.0", 0, false, [], false, [])).toEqual({
       events: [],
       bottleEvents: [],
+      bottleTransitions: [],
       latest: null,
       bottled: null,
+      bottleTags: null,
     });
   });
 
   it("skips touches matching the baseline (bottle rebuilds, metadata commits)", () => {
-    const { events, latest, bottleEvents } = foldPackage("1.0", 0, false, false, [
+    const { events, latest, bottleEvents } = foldPackage("1.0", 0, false, [], false, [
       touch("1.0", 0, 10),
       touch("1.0", 0, 20),
     ]);
@@ -62,7 +71,7 @@ describe("foldPackage", () => {
     const t1 = touch("1.0", 1, 10); // revision bump off the 1.0/0 baseline
     const t2 = touch("1.1", 0, 20);
     const t3 = touch("1.1", 0, 30); // same as previous — dropped
-    const { events, latest } = foldPackage("1.0", 0, false, false, [t1, t2, t3]);
+    const { events, latest } = foldPackage("1.0", 0, false, [], false, [t1, t2, t3]);
     expect(events).toEqual([t1, t2]);
     expect(latest).toBe(t2);
   });
@@ -70,14 +79,14 @@ describe("foldPackage", () => {
   it("emits a revert as a change (latest tracks the downgrade)", () => {
     const up = touch("1.1", 0, 10);
     const back = touch("1.0", 0, 20);
-    const { events, latest } = foldPackage("1.0", 0, false, false, [up, back]);
+    const { events, latest } = foldPackage("1.0", 0, false, [], false, [up, back]);
     expect(events).toEqual([up, back]);
     expect(latest).toBe(back);
   });
 
   it("treats a null baseline as always-changed (new package)", () => {
     const first = touch("0.1", 0, 10);
-    expect(foldPackage(null, 0, null, true, [first]).events).toEqual([first]);
+    expect(foldPackage(null, 0, null, null, true, [first]).events).toEqual([first]);
   });
 
   it("emits bottle gains and losses but ignores bottle-preserving rebuilds", () => {
@@ -86,22 +95,24 @@ describe("foldPackage", () => {
     const lost = touch("1.1", 0, 30, false);
     const regained = touch("1.1", 0, 40, true);
 
-    const folded = foldPackage("1.0", 0, false, false, [gained, rebuild, lost, regained]);
+    const folded = foldPackage("1.0", 0, false, [], false, [gained, rebuild, lost, regained]);
     expect(folded.bottleEvents).toEqual([gained, lost, regained]);
     expect(folded.bottled).toBe(true);
   });
 
   it("records a new formula that starts bottled but not one that starts unbottled", () => {
     const bottled = touch("1.0", 0, 10, true);
-    expect(foldPackage(null, 0, null, true, [bottled]).bottleEvents).toEqual([bottled]);
+    expect(foldPackage(null, 0, null, null, true, [bottled]).bottleEvents).toEqual([bottled]);
     const versionless = touch(null, 0, 10, true);
-    expect(foldPackage(null, 0, null, true, [versionless]).bottleEvents).toEqual([versionless]);
-    expect(foldPackage(null, 0, null, true, [touch("1.0", 0, 10)]).bottleEvents).toEqual([]);
+    expect(foldPackage(null, 0, null, null, true, [versionless]).bottleEvents).toEqual([
+      versionless,
+    ]);
+    expect(foldPackage(null, 0, null, null, true, [touch("1.0", 0, 10)]).bottleEvents).toEqual([]);
   });
 
   it("tracks bottle transitions on versionless touches", () => {
     const gained = touch(null, 0, 10, true);
-    const folded = foldPackage(null, 0, false, false, [gained]);
+    const folded = foldPackage(null, 0, false, [], false, [gained]);
     expect(folded.events).toEqual([]);
     expect(folded.bottleEvents).toEqual([gained]);
     expect(folded.bottled).toBe(true);
@@ -109,9 +120,25 @@ describe("foldPackage", () => {
 
   it("does not invent an initial bottle event for an existing unknown baseline", () => {
     const bottled = touch(null, 0, 10, true);
-    const folded = foldPackage(null, 0, null, false, [bottled]);
+    const folded = foldPackage(null, 0, null, null, false, [bottled]);
     expect(folded.bottleEvents).toEqual([]);
     expect(folded.bottled).toBe(true);
+  });
+
+  it("derives independent availability transitions for each bottle tag", () => {
+    const sonoma = touch("1.0", 0, 10, true, ["sonoma"]);
+    const addArm = touch("1.0", 0, 20, true, ["arm64_sonoma", "sonoma"]);
+    const removeIntel = touch("1.1", 0, 30, true, ["arm64_sonoma"]);
+    const folded = foldPackage("1.0", 0, true, [], false, [sonoma, addArm, removeIntel]);
+
+    expect(
+      folded.bottleTransitions.map(({ tag, available, at }) => ({ tag, available, at })),
+    ).toEqual([
+      { tag: "sonoma", available: true, at: 10 },
+      { tag: "arm64_sonoma", available: true, at: 20 },
+      { tag: "sonoma", available: false, at: 30 },
+    ]);
+    expect(folded.bottleTags).toEqual(["arm64_sonoma"]);
   });
 });
 
@@ -127,7 +154,15 @@ describe("aggregateContributions", () => {
       historyTouch(shaB, 200, [alice]), // metadata-only commit
     ];
     const versionEvents = [
-      { version: "1.1", revision: 0, bottled: false, at: 100, sha: shaA, subject: "s" },
+      {
+        version: "1.1",
+        revision: 0,
+        bottled: false,
+        bottleTags: [],
+        at: 100,
+        sha: shaA,
+        subject: "s",
+      },
     ];
 
     const aggregates = aggregateContributions(history, versionEvents).sort((x, y) =>

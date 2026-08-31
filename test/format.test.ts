@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  bottleTagLabel,
   decodeRouteParam,
   displayVersion,
   isKnownSource,
@@ -19,8 +20,10 @@ const meta = (overrides: Partial<PackageMeta> = {}): PackageMeta => ({
   latestRevision: 0,
   latestAt: 1_700_000_000,
   latestBottled: null,
+  latestBottleTags: null,
   eventCount: 1,
   bottleEventCount: 0,
+  bottleIntervalCount: 0,
   firstIntroducedAt: 1_700_000_000,
   removedAt: null,
   removedCommit: null,
@@ -64,6 +67,17 @@ describe("site lifecycle formatting", () => {
     ).toBe("disabled");
     expect(statusOf(meta({ removedAt: 1 }), "2026-08-13")).toBe("r");
     expect(statusOf(meta(), "2026-08-13")).toBeNull();
+  });
+});
+
+describe("bottle platform formatting", () => {
+  it("labels Homebrew bottle tags by architecture and operating system", () => {
+    expect(bottleTagLabel("sonoma")).toBe("Intel Sonoma");
+    expect(bottleTagLabel("arm64_sonoma")).toBe("Apple Silicon Sonoma");
+    expect(bottleTagLabel("x86_64_linux")).toBe("Intel Linux");
+    expect(bottleTagLabel("arm64_linux")).toBe("ARM64 Linux");
+    expect(bottleTagLabel("all")).toBe("All platforms");
+    expect(bottleTagLabel("legacy")).toBe("Platform unspecified");
   });
 });
 

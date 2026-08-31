@@ -20,8 +20,10 @@ const meta: PackageMeta = {
   latestRevision: 2,
   latestAt: 1_600_000_000,
   latestBottled: true,
+  latestBottleTags: ["arm64_sonoma", "sonoma"],
   eventCount: 501,
   bottleEventCount: 3,
+  bottleIntervalCount: 4,
   firstIntroducedAt: 1_500_000_000,
   removedAt: null,
   removedCommit: null,
@@ -49,14 +51,15 @@ describe("package JSON route contract", () => {
       source: "homebrew-formula",
       name: "pkg",
       events: [event("2.0"), event("1.0")],
-      bottleEvents: [
+      bottleIntervals: [
         {
-          bottled: false,
-          version: "2.0",
-          revision: 0,
-          changedAt: 1_700_000_050,
-          commitSha: "b".repeat(40),
-          subject: "pkg: bottle lost",
+          tag: "sonoma",
+          startedAt: 1_600_000_050,
+          startedCommit: "b".repeat(40),
+          startedSubject: "pkg: bottle sonoma",
+          endedAt: 1_700_000_050,
+          endedCommit: "c".repeat(40),
+          endedSubject: "pkg: remove sonoma bottle",
         },
       ],
       meta,
@@ -64,7 +67,7 @@ describe("package JSON route contract", () => {
       page: 1,
       timelineLimit: 500,
       bottlePage: 1,
-      bottleHistoryLimit: 100,
+      bottleIntervalLimit: 100,
       today: "2026-07-24",
     });
 
@@ -82,15 +85,16 @@ describe("package JSON route contract", () => {
       eventCount: 501,
       bottle: {
         bottled: true,
-        eventCount: 3,
+        platforms: ["arm64_sonoma", "sonoma"],
+        intervalCount: 4,
         page: 1,
         totalPages: 1,
-        events: [
+        intervals: [
           {
-            bottled: false,
-            version: "2.0",
-            display: "2.0",
-            changedAt: 1_700_000_050,
+            tag: "sonoma",
+            platform: "Intel Sonoma",
+            from: { at: 1_600_000_050, commit: "b".repeat(40) },
+            until: { at: 1_700_000_050, commit: "c".repeat(40) },
           },
         ],
       },
@@ -106,13 +110,13 @@ describe("package JSON route contract", () => {
         source: "homebrew-cask",
         name: "missing",
         events: [],
-        bottleEvents: [],
+        bottleIntervals: [],
         meta: null,
         checkedAt: null,
         page: 2,
         timelineLimit: 500,
         bottlePage: 1,
-        bottleHistoryLimit: 100,
+        bottleIntervalLimit: 100,
       }),
     ).toBeNull();
   });
@@ -122,13 +126,13 @@ describe("package JSON route contract", () => {
       source: "homebrew-cask",
       name: "app",
       events: [event("3.0")],
-      bottleEvents: [],
+      bottleIntervals: [],
       meta: null,
       checkedAt: null,
       page: 1,
       timelineLimit: 500,
       bottlePage: 1,
-      bottleHistoryLimit: 100,
+      bottleIntervalLimit: 100,
     });
     if (payload === null) throw new Error("expected payload");
 
