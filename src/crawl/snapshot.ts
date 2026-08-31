@@ -44,8 +44,15 @@ export function buildSnapshots(
       LIMIT ?`,
   );
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO snapshots (package_id, commit_sha, committed_at, version, revision, version_src)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO snapshots
+       (package_id, commit_sha, committed_at, version, revision, version_src, bottled)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (package_id, commit_sha) DO UPDATE SET
+       committed_at = excluded.committed_at,
+       version = excluded.version,
+       revision = excluded.revision,
+       version_src = excluded.version_src,
+       bottled = excluded.bottled`,
   );
 
   let lastId = 0;
@@ -73,13 +80,21 @@ export function buildSnapshots(
       const blob = blobs.get(row.blob_sha);
       if (blob === undefined) continue;
 
-      const { version, revision, versionSrc } = extractVersion(
+      const { version, revision, versionSrc, bottled } = extractVersion(
         source.kind,
         row.name,
         row.subject,
         blob,
       );
-      insert.run(row.package_id, row.commit_sha, row.committed_at, version, revision, versionSrc);
+      insert.run(
+        row.package_id,
+        row.commit_sha,
+        row.committed_at,
+        version,
+        revision,
+        versionSrc,
+        bottled ? 1 : 0,
+      );
       written += 1;
 
       const seen = lifecycle.get(row.package_id);

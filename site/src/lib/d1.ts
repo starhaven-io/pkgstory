@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
-import type { ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
+import type { BottleEvent, ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
 
 export const TIMELINE_LIMIT = 500;
+export const BOTTLE_HISTORY_LIMIT = 100;
 
 // Minimal D1 surface (avoids a @cloudflare/workers-types dependency). Used by the
 // on-demand per-package pages, which read only one package's rows via the index.
@@ -42,6 +43,33 @@ export async function timeline(
   return results;
 }
 
+/** Formula bottle gains and losses, newest first. */
+export async function bottleHistory(
+  db: D1,
+  source: string,
+  name: string,
+  limit = BOTTLE_HISTORY_LIMIT,
+  offset = 0,
+): Promise<BottleEvent[]> {
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT be.bottled, be.version, be.revision, be.changed_at AS changedAt,
+                be.commit_sha AS commitSha, be.subject
+           FROM bottle_events be JOIN packages p ON p.id = be.package_id
+          WHERE p.source = ? AND p.name = ?
+          ORDER BY be.changed_at DESC, be.id DESC
+          LIMIT ? OFFSET ?`,
+      )
+      .bind(source, name, limit, offset)
+      .all<Omit<BottleEvent, 'bottled'> & { bottled: number }>();
+    return results.map((event) => ({ ...event, bottled: event.bottled !== 0 }));
+  } catch (error) {
+    if (/no such table: bottle_events/.test(String(error))) return [];
+    throw error;
+  }
+}
+
 /** Authors and co-authors of every commit touching one package's file. */
 export async function contributors(db: D1, source: string, name: string): Promise<ContributorSummary[]> {
   try {
@@ -74,20 +102,29 @@ export async function contributors(db: D1, source: string, name: string): Promis
 
 /** Per-package lifecycle metadata (removed / deprecated / disabled state). */
 export async function packageMeta(db: D1, source: string, name: string): Promise<PackageMeta | null> {
-  const row = await db
-    .prepare(
-      `SELECT latest_version AS latestVersion, latest_revision AS latestRevision,
-              latest_at AS latestAt, event_count AS eventCount,
+  type PackageMetaRow = Omit<PackageMeta, 'latestBottled'> & { latestBottled: number | null };
+  const select = (bottleColumns: string) =>
+    db
+      .prepare(
+        `SELECT latest_version AS latestVersion, latest_revision AS latestRevision,
+              latest_at AS latestAt, ${bottleColumns}, event_count AS eventCount,
               (SELECT MIN(introduced_at) FROM version_events ve WHERE ve.package_id = packages.id) AS firstIntroducedAt,
               removed_at AS removedAt, removed_commit AS removedCommit,
               renamed_to AS renamedTo, migrated_to AS migratedTo,
               deprecate_date AS deprecateDate, deprecate_reason AS deprecateReason,
               disable_date AS disableDate, disable_reason AS disableReason
          FROM packages WHERE source = ? AND name = ?`,
-    )
-    .bind(source, name)
-    .first<PackageMeta>();
-  return row;
+      )
+      .bind(source, name)
+      .first<PackageMetaRow>();
+  const normalize = (row: PackageMetaRow | null): PackageMeta | null =>
+    row ? { ...row, latestBottled: row.latestBottled == null ? null : row.latestBottled !== 0 } : null;
+  try {
+    return normalize(await select('latest_bottled AS latestBottled, bottle_event_count AS bottleEventCount'));
+  } catch (error) {
+    if (!/no such column: (?:latest_bottled|bottle_event_count)/.test(String(error))) throw error;
+    return normalize(await select('NULL AS latestBottled, 0 AS bottleEventCount'));
+  }
 }
 
 /** Most recent successful crawl across sources — the "last checked" display. */

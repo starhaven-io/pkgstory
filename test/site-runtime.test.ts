@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { catalogJson, home } from "../site/src/lib/cache.ts";
 import {
+  bottleHistory,
   contributors,
   type D1,
   type D1PreparedStatement,
@@ -76,6 +77,30 @@ describe("site D1 helpers", () => {
     expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 25, 50]);
   });
 
+  it("reads bottle gains and losses through the package index", async () => {
+    const rows = [
+      {
+        bottled: 0,
+        version: "2.0",
+        revision: 0,
+        changedAt: 1_700_000_000,
+        commitSha: "b".repeat(40),
+        subject: "foo 2.0",
+      },
+    ];
+    const { db, calls } = fakeDb(() => ({ all: rows }));
+    await expect(bottleHistory(db, "homebrew-formula", "foo", 20, 40)).resolves.toEqual([
+      { ...rows[0], bottled: false },
+    ]);
+    expect(calls[0]?.sql).toContain("ORDER BY be.changed_at DESC, be.id DESC");
+    expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 20, 40]);
+
+    const migrating = fakeDb(() => ({
+      error: new Error("D1_ERROR: no such table: bottle_events"),
+    }));
+    await expect(bottleHistory(migrating.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+  });
+
   it("normalizes contributors and tolerates only the expected migration window", async () => {
     const contributorRow = {
       displayName: "A Maintainer",
@@ -106,7 +131,9 @@ describe("site D1 helpers", () => {
       latestVersion: "1.0",
       latestRevision: 0,
       latestAt: 100,
+      latestBottled: 1,
       eventCount: 1,
+      bottleEventCount: 2,
       firstIntroducedAt: 100,
       removedAt: null,
       removedCommit: null,
@@ -131,7 +158,10 @@ describe("site D1 helpers", () => {
       return {};
     });
 
-    await expect(packageMeta(db, "homebrew-formula", "foo")).resolves.toEqual(meta);
+    await expect(packageMeta(db, "homebrew-formula", "foo")).resolves.toEqual({
+      ...meta,
+      latestBottled: true,
+    });
     await expect(lastChecked(db)).resolves.toBe(200);
     await expect(lastCheckedBySource(db)).resolves.toEqual(
       new Map([
@@ -144,6 +174,33 @@ describe("site D1 helpers", () => {
     const empty = fakeDb(() => ({})).db;
     await expect(packageMeta(empty, "homebrew-formula", "missing")).resolves.toBeNull();
     await expect(lastChecked(empty)).resolves.toBeNull();
+  });
+
+  it("keeps package metadata readable while bottle columns are migrating", async () => {
+    const legacy = {
+      latestVersion: "1.0",
+      latestRevision: 0,
+      latestAt: 100,
+      latestBottled: null,
+      eventCount: 1,
+      bottleEventCount: 0,
+      firstIntroducedAt: 100,
+      removedAt: null,
+      removedCommit: null,
+      renamedTo: null,
+      migratedTo: null,
+      deprecateDate: null,
+      deprecateReason: null,
+      disableDate: null,
+      disableReason: null,
+    };
+    const { db, calls } = fakeDb((sql) =>
+      sql.includes("latest_bottled")
+        ? { error: new Error("D1_ERROR: no such column: latest_bottled") }
+        : { first: legacy },
+    );
+    await expect(packageMeta(db, "homebrew-formula", "foo")).resolves.toEqual(legacy);
+    expect(calls).toHaveLength(2);
   });
 });
 

@@ -15,17 +15,26 @@ export interface SinceResult {
   head?: string;
 }
 
-export interface DeltaEvent {
-  version: string;
+export interface DeltaTouch {
+  version: string | null;
   revision: number;
+  bottled: boolean;
   at: number;
   sha: string;
   subject: string;
 }
 
+export interface DeltaEvent extends Omit<DeltaTouch, "version"> {
+  version: string;
+}
+
+function isVersionedTouch(touch: DeltaTouch): touch is DeltaEvent {
+  return touch.version !== null;
+}
+
 export interface PackageDelta {
   name: string;
-  touches: DeltaEvent[]; // time-ordered, only touches that parsed to a version
+  touches: DeltaTouch[]; // time-ordered live touches, including versionless blobs
   history: HistoryTouch[]; // one row per touching commit, including non-version changes
   // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
@@ -107,7 +116,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
 
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
-    const parsed: DeltaEvent[] = [];
+    const parsed: DeltaTouch[] = [];
     const historyBySha = new Map<string, HistoryTouch>();
     let latestLive: RawTouch | null = null;
     let lastDeletion: RawTouch | null = null;
@@ -122,8 +131,8 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       latestLive = t;
       const blob = blobs.get(t.blobSha);
       if (blob === undefined) continue;
-      const { version, revision } = extractVersion(source.kind, name, t.subject, blob);
-      if (version) parsed.push({ version, revision, at: t.at, sha: t.sha, subject: t.subject });
+      const { version, revision, bottled } = extractVersion(source.kind, name, t.subject, blob);
+      parsed.push({ version, revision, bottled, at: t.at, sha: t.sha, subject: t.subject });
     }
 
     const isPresent = present ? present.has(name) : true;
@@ -150,28 +159,50 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   return { head, commits: commits.length, packages };
 }
 
-/** Emit an event each time (version, revision) changes from the running baseline. */
+/** Emit version changes and formula bottle-state transitions from a running baseline. */
 export function foldPackage(
   baseVersion: string | null,
   baseRevision: number,
-  touches: DeltaEvent[],
-): { events: DeltaEvent[]; latest: DeltaEvent | null } {
+  baseBottled: boolean | null,
+  newPackage: boolean,
+  touches: DeltaTouch[],
+): {
+  events: DeltaEvent[];
+  bottleEvents: DeltaTouch[];
+  latest: DeltaEvent | null;
+  bottled: boolean | null;
+} {
   let lastVersion = baseVersion;
   let lastRevision = baseRevision;
+  let lastBottled = baseBottled;
   const events: DeltaEvent[] = [];
+  const bottleEvents: DeltaTouch[] = [];
   for (const t of touches) {
-    if (t.version === lastVersion && t.revision === lastRevision) continue;
-    events.push(t);
-    lastVersion = t.version;
-    lastRevision = t.revision;
+    if (isVersionedTouch(t) && (t.version !== lastVersion || t.revision !== lastRevision)) {
+      events.push(t);
+      lastVersion = t.version;
+      lastRevision = t.revision;
+    }
+    if (
+      (lastBottled === null && newPackage && t.bottled) ||
+      (lastBottled !== null && t.bottled !== lastBottled)
+    )
+      bottleEvents.push(t);
+    lastBottled = t.bottled;
   }
-  return { events, latest: events.at(-1) ?? null };
+  return {
+    events,
+    bottleEvents,
+    latest: events.at(-1) ?? null,
+    bottled: touches.length ? lastBottled : null,
+  };
 }
 
 interface PkgRow {
   id: number;
   latest_version: string | null;
   latest_revision: number;
+  latest_bottled: number | null;
 }
 
 export interface ContributionAggregate {
@@ -244,7 +275,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
 
   const upsertPkg = db.prepare("INSERT OR IGNORE INTO packages (source, name) VALUES (?, ?)");
   const getPkg = db.prepare(
-    "SELECT id, latest_version, latest_revision FROM packages WHERE source = ? AND name = ?",
+    "SELECT id, latest_version, latest_revision, latest_bottled FROM packages WHERE source = ? AND name = ?",
   );
   const insertEvent = db.prepare(
     `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject)
@@ -252,6 +283,11 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const insertVersionChange = db.prepare(
     "INSERT OR IGNORE INTO version_changes (package_id, commit_sha) VALUES (?, ?)",
+  );
+  const insertBottleEvent = db.prepare(
+    `INSERT OR IGNORE INTO bottle_events
+       (package_id, bottled, version, revision, changed_at, commit_sha, subject)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const updateLatest = db.prepare(
     `UPDATE packages
@@ -263,6 +299,12 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const setLifecycle = db.prepare(
     "UPDATE packages SET deprecate_date = ?, deprecate_reason = ?, disable_date = ?, disable_reason = ? WHERE id = ?",
+  );
+  const updateBottleState = db.prepare(
+    `UPDATE packages
+        SET latest_bottled = ?,
+            bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = ?)
+      WHERE id = ?`,
   );
   const setRemoved = db.prepare(
     "UPDATE packages SET removed_at = ?, removed_commit = ?, renamed_to = ?, migrated_to = ? WHERE id = ?",
@@ -281,7 +323,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   const changedPackageIds: number[] = [];
   db.exec("BEGIN");
   for (const { name, touches, history, lifecycle, removed } of delta.packages) {
-    upsertPkg.run(source.id, name);
+    const newPackage = Number(upsertPkg.run(source.id, name).changes) > 0;
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     changedPackageIds.push(pkg.id);
     // Newest-first, matching a full crawl's git-log order: L2 tie-breaks
@@ -299,27 +341,41 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       );
       contributors.linkAttributions(pkg.id, touch.sha, touch.at, touch.contributors);
     }
-    const { events: newEvents, latest } = foldPackage(
+    const folded = foldPackage(
       pkg.latest_version,
       pkg.latest_revision ?? 0,
+      pkg.latest_bottled == null ? null : pkg.latest_bottled !== 0,
+      newPackage,
       touches,
     );
-    for (const e of newEvents) {
+    for (const e of folded.events) {
       insertVersionChange.run(pkg.id, e.sha);
       events += Number(
         insertEvent.run(pkg.id, e.version, e.revision, e.at, e.sha, e.subject).changes,
       );
     }
-    if (latest)
-      updateLatest.run(
-        latest.version,
-        latest.revision,
+    for (const e of folded.bottleEvents) {
+      insertBottleEvent.run(
         pkg.id,
-        latest.version,
-        latest.revision,
+        e.bottled ? 1 : 0,
+        e.version,
+        e.revision,
+        e.at,
+        e.sha,
+        e.subject,
+      );
+    }
+    if (folded.latest)
+      updateLatest.run(
+        folded.latest.version,
+        folded.latest.revision,
+        pkg.id,
+        folded.latest.version,
+        folded.latest.revision,
         pkg.id,
         pkg.id,
       );
+    if (folded.bottled !== null) updateBottleState.run(folded.bottled ? 1 : 0, pkg.id, pkg.id);
     if (lifecycle)
       setLifecycle.run(
         lifecycle.deprecate?.date ?? null,
@@ -346,6 +402,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
 interface Baseline {
   version: string | null;
   revision: number;
+  bottled: boolean | null;
   deprecateDate: string | null;
   deprecateReason: string | null;
   disableDate: string | null;
@@ -395,11 +452,12 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, latest_bottled, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
         revision: Number(row.latest_revision ?? 0),
+        bottled: row.latest_bottled == null ? null : Number(row.latest_bottled) !== 0,
         deprecateDate: (row.deprecate_date as string | null) ?? null,
         deprecateReason: (row.deprecate_reason as string | null) ?? null,
         disableDate: (row.disable_date as string | null) ?? null,
@@ -416,7 +474,15 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   let events = 0;
   for (const { name, touches, history, lifecycle, removed } of delta.packages) {
     const base = baseline.get(name);
-    const folded = foldPackage(base?.version ?? null, base?.revision ?? 0, touches);
+    const folded = foldPackage(
+      base?.version ?? null,
+      base?.revision ?? 0,
+      base?.bottled ?? null,
+      base === undefined,
+      touches,
+    );
+    const bottleStateChanged =
+      folded.bottled !== null && folded.bottled !== (base?.bottled ?? null);
     const contributions = contributorSeeded ? aggregateContributions(history, folded.events) : [];
 
     const lifecycleChanged =
@@ -436,6 +502,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     if (
       contributions.length === 0 &&
       folded.events.length === 0 &&
+      folded.bottleEvents.length === 0 &&
+      !bottleStateChanged &&
       !lifecycleChanged &&
       !removedChanged
     )
@@ -453,9 +521,19 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       );
       events += 1;
     }
+    for (const e of folded.bottleEvents) {
+      stmts.push(
+        `INSERT OR IGNORE INTO bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES (${idSub}, ${e.bottled ? 1 : 0}, ${sqlLit(e.version)}, ${e.revision}, ${e.at}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
+      );
+    }
     if (folded.latest) {
       stmts.push(
         `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = (SELECT introduced_at FROM version_events ve WHERE ve.package_id = packages.id AND ve.version = ${sqlLit(folded.latest.version)} AND ve.revision = ${folded.latest.revision}), event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
+      );
+    }
+    if (folded.bottled !== null && (bottleStateChanged || folded.bottleEvents.length > 0)) {
+      stmts.push(
+        `UPDATE packages SET latest_bottled = ${folded.bottled ? 1 : 0}, bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = packages.id) WHERE ${where};`,
       );
     }
     if (lifecycleChanged && lifecycle) {
@@ -478,9 +556,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   }
   stmts.push(cursorSql);
   // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the
-  // batch is idempotent anyway (INSERT OR IGNORE events + recomputed latest/lifecycle/
-  // cursor), so a partial apply is safely re-derived next run. Cursor goes last so it
-  // only advances after the rows land. (Same constraint the export slice already follows.)
+  // writes are otherwise replayable (INSERT OR IGNORE events + recomputed latest/
+  // lifecycle). Cursor goes last so a partial apply is retried; see OPERATIONS.md for
+  // the one initial-bottle-history ambiguity if only a new package row lands.
   d1Apply(mode, `${stmts.join("\n")}\n`);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }

@@ -6,6 +6,7 @@ import { sqlLit as lit } from "./d1remote.ts";
 const SCHEMA = `DROP TABLE IF EXISTS contributor_seeds;
 DROP TABLE IF EXISTS package_contribution_slices;
 DROP TABLE IF EXISTS contributors;
+DROP TABLE IF EXISTS bottle_events;
 DROP TABLE IF EXISTS version_events;
 DROP TABLE IF EXISTS crawl_state;
 DROP TABLE IF EXISTS packages;
@@ -16,7 +17,9 @@ CREATE TABLE packages (
   latest_version  TEXT,
   latest_revision INTEGER NOT NULL DEFAULT 0,
   latest_at       INTEGER,
+  latest_bottled  INTEGER,
   event_count     INTEGER NOT NULL DEFAULT 0,
+  bottle_event_count INTEGER NOT NULL DEFAULT 0,
   removed_at       INTEGER,
   removed_commit   TEXT,
   renamed_to       TEXT,
@@ -36,6 +39,17 @@ CREATE TABLE version_events (
   commit_sha    TEXT,
   subject       TEXT,
   UNIQUE (package_id, version, revision)
+);
+CREATE TABLE bottle_events (
+  id         INTEGER PRIMARY KEY,
+  package_id INTEGER NOT NULL,
+  bottled    INTEGER NOT NULL,
+  version    TEXT,
+  revision   INTEGER NOT NULL DEFAULT 0,
+  changed_at INTEGER NOT NULL,
+  commit_sha TEXT,
+  subject    TEXT,
+  UNIQUE (package_id, commit_sha)
 );
 CREATE TABLE contributors (
   contributor_key TEXT PRIMARY KEY,
@@ -66,6 +80,7 @@ CREATE TABLE crawl_state (
 );
 CREATE INDEX idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX idx_events_time ON version_events (introduced_at DESC);
+CREATE INDEX idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
 CREATE INDEX idx_packages_name ON packages (name);
 CREATE INDEX idx_contribution_slices_package ON package_contribution_slices (package_id);
 `;
@@ -108,10 +123,10 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     db,
     write,
     "packages",
-    "id,source,name,latest_version,latest_revision,latest_at,event_count,removed_at,removed_commit,renamed_to,migrated_to,deprecate_date,deprecate_reason,disable_date,disable_reason",
-    "SELECT id, source, name, latest_version, latest_revision, latest_at, event_count, removed_at, removed_commit, renamed_to, migrated_to, deprecate_date, deprecate_reason, disable_date, disable_reason FROM packages",
+    "id,source,name,latest_version,latest_revision,latest_at,latest_bottled,event_count,bottle_event_count,removed_at,removed_commit,renamed_to,migrated_to,deprecate_date,deprecate_reason,disable_date,disable_reason",
+    "SELECT id, source, name, latest_version, latest_revision, latest_at, latest_bottled, event_count, bottle_event_count, removed_at, removed_commit, renamed_to, migrated_to, deprecate_date, deprecate_reason, disable_date, disable_reason FROM packages",
     (r) =>
-      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.event_count)},${lit(r.removed_at)},${lit(r.removed_commit)},${lit(r.renamed_to)},${lit(r.migrated_to)},${lit(r.deprecate_date)},${lit(r.deprecate_reason)},${lit(r.disable_date)},${lit(r.disable_reason)}`,
+      `${lit(r.id)},${lit(r.source)},${lit(r.name)},${lit(r.latest_version)},${lit(r.latest_revision)},${lit(r.latest_at)},${lit(r.latest_bottled)},${lit(r.event_count)},${lit(r.bottle_event_count)},${lit(r.removed_at)},${lit(r.removed_commit)},${lit(r.renamed_to)},${lit(r.migrated_to)},${lit(r.deprecate_date)},${lit(r.deprecate_reason)},${lit(r.disable_date)},${lit(r.disable_reason)}`,
   );
   dumpTable(
     db,
@@ -140,6 +155,15 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
        JOIN contributor_seeds cs ON cs.source = p.source`,
     (r) =>
       `${lit(r.package_id)},${lit(r.contributor_key)},${lit(r.window_start_sha)},${lit(r.window_end_sha)},${lit(r.touch_count)},${lit(r.version_count)},${lit(r.first_at)},${lit(r.last_at)}`,
+  );
+  dumpTable(
+    db,
+    write,
+    "bottle_events",
+    "package_id,bottled,version,revision,changed_at,commit_sha,subject",
+    "SELECT package_id, bottled, version, revision, changed_at, commit_sha, subject FROM bottle_events",
+    (r) =>
+      `${lit(r.package_id)},${lit(r.bottled)},${lit(r.version)},${lit(r.revision)},${lit(r.changed_at)},${lit(r.commit_sha)},${lit(r.subject)}`,
   );
   dumpTable(
     db,

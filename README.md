@@ -10,8 +10,9 @@
 
 **Every package has a version story.** pkgstory mines a package manager's git
 history into a browsable timeline — which version shipped, and when — for every
-formula and cask. When a package is deprecated, disabled, renamed, migrated, or
-dropped from the tap (like `terraform` after its BUSL relicense), it says so —
+formula and cask. For formulae, it also records when a bottle became available,
+was lost, or returned. When a package is deprecated, disabled, renamed, migrated,
+or dropped from the tap (like `terraform` after its BUSL relicense), it says so —
 with the date and Homebrew's own reason or target — instead of trailing off at a
 stale last version.
 
@@ -38,13 +39,15 @@ four-layer index, drawn so the expensive extraction happens exactly once:
   file relocations don't matter. Stores each commit's `blob_sha`, so nothing
   downstream re-walks history.
 - **L1 — snapshots.** The blob at each commit, parsed for `version`, `revision`,
-  and the package's current `deprecate!`/`disable!` lifecycle. Lean today; richer
-  fields (dependencies, bottles, patches) layer in later by re-reading the same
-  blobs — no re-crawl.
-- **L2 — version events and contributors.** Snapshots collapse into one row per
-  `(version, revision)` change, while commit authors and explicit co-authors
-  collapse into per-package contribution summaries. Automation is classified
-  separately, and raw author email addresses are never exported to the site.
+  formula bottle presence, and the package's current `deprecate!`/`disable!`
+  lifecycle. Richer fields (dependencies, patches) can layer in later by
+  re-reading the same blobs — no history re-walk.
+- **L2 — version events, bottle events, and contributors.** Snapshots collapse
+  into one row per `(version, revision)` change and one row per formula bottle
+  state transition. Bottle rebuilds that leave the state unchanged fold out.
+  Commit authors and explicit co-authors collapse into per-package contribution
+  summaries; automation is classified separately, and raw author email addresses
+  are never exported to the site.
 
 A `git ls-tree` pass over `HEAD` after each crawl reconciles which packages still
 exist in the tap. For absent packages, pkgstory consults the tap-root
@@ -64,10 +67,11 @@ cost:
   independent of how much traffic arrives.
 
 A GitHub Action re-crawls every 30 minutes: it derives the delta since the last
-commit it saw, writes only the new version events to D1, and republishes the KV
-blobs. A small Cloudflare Worker (`trigger/`) fires that schedule on a reliable
-cron — GitHub's own `schedule:` trigger drops most fires. Deploys ship code, not
-data, so the site stays current without a rebuild. Operational procedures
+commit it saw, writes only the new version and bottle events to D1, and
+republishes the KV blobs. A small
+Cloudflare Worker (`trigger/`) fires that schedule on a reliable cron — GitHub's
+own `schedule:` trigger drops most fires. Deploys ship code, not data, so the site
+stays current without a rebuild. Operational procedures
 (staleness triage, reseeding, and cache refreshes) live in
 [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
@@ -76,8 +80,9 @@ data, so the site stays current without a rebuild. Operational procedures
 The version-history data is CC-BY-4.0 and served per package alongside the HTML:
 
 - `/<source>/<name>/index.json` — status, current version, lifecycle metadata,
-  and the version timeline. Timelines longer than 500 events use the same
-  `?page=N` paging contract as the HTML page.
+  the version timeline, and formula bottle state/history. Version timelines
+  longer than 500 events use `?page=N`; bottle histories longer than 100 changes
+  use `?bottle-page=N`. The HTML page uses the same paging contracts.
 - `/<source>/<name>/badge.json` — a [Shields](https://shields.io) endpoint for
   the current packaged version:
 

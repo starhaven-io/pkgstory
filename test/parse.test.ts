@@ -16,6 +16,7 @@ end`;
       version: "1.2.3",
       revision: 2,
       versionSrc: "version-stanza",
+      bottled: false,
     });
   });
 
@@ -29,6 +30,7 @@ end`;
       version: "2.02",
       revision: 0,
       versionSrc: "version-stanza",
+      bottled: false,
     });
   });
 
@@ -75,6 +77,7 @@ end`;
       version: "1.88",
       revision: 0,
       versionSrc: "version-stanza",
+      bottled: false,
     });
   });
 
@@ -89,6 +92,29 @@ end`;
 
   it("returns null version when nothing is parseable", () => {
     expect(parseFormula("class X < Formula\nend").version).toBeNull();
+  });
+
+  it("recognizes artifact bottle blocks but not modifiers, comments, or nested calls", () => {
+    expect(
+      parseFormula('class X < Formula\n  bottle do\n    sha256 "abc" => :arm64_tahoe\n  end\nend')
+        .bottled,
+    ).toBe(true);
+    expect(
+      parseFormula("class X < Formula\n  bottle 'https://example.com/x-1.0-bottle.tar.gz'\nend")
+        .bottled,
+    ).toBe(true);
+    expect(
+      parseFormula('class X < Formula\n  bottle "https://example.com/x-1.0-bottle.tar.gz"\nend')
+        .bottled,
+    ).toBe(true);
+    expect(parseFormula("class X < Formula\n  bottle :unneeded\nend").bottled).toBe(false);
+    expect(
+      parseFormula('class X < Formula\n  bottle :disable,\n    "no bottles"\nend').bottled,
+    ).toBe(false);
+    expect(parseFormula("class X < Formula\n  # bottle do\nend").bottled).toBe(false);
+    expect(
+      parseFormula("class X < Formula\n  resource do\n    bottle do\n    end\n  end\nend").bottled,
+    ).toBe(false);
   });
 });
 
@@ -187,6 +213,7 @@ describe("extractVersion", () => {
       version: "2.5,123",
       revision: 0,
       versionSrc: "version-stanza",
+      bottled: false,
     });
   });
 
@@ -195,11 +222,13 @@ describe("extractVersion", () => {
       version: "1.2.3",
       revision: 0,
       versionSrc: "subject",
+      bottled: false,
     });
     expect(extractVersion("cask", "app", "app 4.5", 'cask "app" do\nend')).toEqual({
       version: "4.5",
       revision: 0,
       versionSrc: "subject",
+      bottled: false,
     });
   });
 });

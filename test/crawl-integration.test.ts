@@ -52,6 +52,15 @@ function packageNamed(delta: Delta, name: string): PackageDelta {
   return pkg;
 }
 
+function versionlessFormula(extra = ""): string {
+  return `class Foo < Formula
+  stable do
+    url "https://example.com/download"
+  end
+${extra}end
+`;
+}
+
 describe("buildCommitIndexAll", () => {
   it("indexes package files from the whole streamed history", async () => {
     const tap = new TapRepo();
@@ -114,10 +123,36 @@ describe("computeDelta (against a real git repo)", () => {
     const pkg = firstPackage(delta);
     expect(pkg.name).toBe("foo");
     expect(pkg.touches).toEqual([
-      { version: "1.1", revision: 0, at: bump.at, sha: bump.sha, subject: "foo 1.1" },
+      {
+        version: "1.1",
+        revision: 0,
+        bottled: false,
+        at: bump.at,
+        sha: bump.sha,
+        subject: "foo 1.1",
+      },
     ]);
     expect(pkg.removed).toBeNull();
     expect(pkg.lifecycle).toEqual({ deprecate: null, disable: null });
+  });
+
+  it("keeps versionless live touches for independent bottle-state derivation", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", versionlessFormula());
+    const cursor = tap.commit("foo: new formula");
+    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    const bottled = tap.commit("foo: add bottle");
+
+    expect(firstPackage(computeDelta(tap.source, cursor.sha)).touches).toEqual([
+      {
+        version: null,
+        revision: 0,
+        bottled: true,
+        at: bottled.at,
+        sha: bottled.sha,
+        subject: "foo: add bottle",
+      },
+    ]);
   });
 
   it("reports nothing when the cursor is at HEAD", () => {
@@ -322,6 +357,159 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
       .prepare("SELECT last_crawled_at FROM crawl_state WHERE source = ?")
       .get(tap.source.id) as { last_crawled_at: number };
     expect(state.last_crawled_at).toBe(now + 4);
+    db.close();
+  });
+
+  it("records bottle gains, losses, and regains without counting rebuilds", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+    const bottle = (digest: string) =>
+      `  bottle do\n    sha256 cellar: :any_skip_relocation, arm64_tahoe: "${digest}"\n  end\n`;
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle("aaa")));
+    const gained = tap.commit("foo: add bottle");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle("bbb")));
+    tap.commit("foo: rebuild bottle");
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    expect(
+      db
+        .prepare(
+          "SELECT bottled, version, changed_at, commit_sha FROM bottle_events ORDER BY changed_at",
+        )
+        .all(),
+    ).toEqual([{ bottled: 1, version: "1.0", changed_at: gained.at, commit_sha: gained.sha }]);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    const lost = tap.commit("foo 1.1");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1", bottle("ccc")));
+    const regained = tap.commit("foo: bottle 1.1");
+
+    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 1 });
+    expect(
+      db
+        .prepare(
+          "SELECT bottled, version, changed_at, commit_sha FROM bottle_events ORDER BY changed_at",
+        )
+        .all(),
+    ).toEqual([
+      { bottled: 1, version: "1.0", changed_at: gained.at, commit_sha: gained.sha },
+      { bottled: 0, version: "1.1", changed_at: lost.at, commit_sha: lost.sha },
+      { bottled: 1, version: "1.1", changed_at: regained.at, commit_sha: regained.sha },
+    ]);
+    expect(
+      db
+        .prepare("SELECT latest_bottled, bottle_event_count FROM packages WHERE name = 'foo'")
+        .get(),
+    ).toEqual({ latest_bottled: 1, bottle_event_count: 3 });
+
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM bottle_events WHERE package_id = 1").get(),
+    ).toEqual({ count: 3 });
+    db.close();
+  });
+
+  it("keeps full and incremental bottle history identical for versionless formulae", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+
+    tap.write("Formula/f/foo.rb", versionlessFormula());
+    tap.commit("foo: new formula");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    const gained = tap.commit("foo: add bottle");
+    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 0 });
+
+    const bottleState = () =>
+      db
+        .prepare(
+          `SELECT p.latest_version, p.latest_bottled, p.bottle_event_count,
+                  be.version, be.bottled, be.commit_sha
+             FROM packages p LEFT JOIN bottle_events be ON be.package_id = p.id
+            WHERE p.name = 'foo'`,
+        )
+        .all();
+    const expected = [
+      {
+        latest_version: null,
+        latest_bottled: 1,
+        bottle_event_count: 1,
+        version: null,
+        bottled: 1,
+        commit_sha: gained.sha,
+      },
+    ];
+    expect(bottleState()).toEqual(expected);
+
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+    expect(bottleState()).toEqual(expected);
+    db.close();
+  });
+
+  it("does not invent bottle history when migrating an existing unknown baseline", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const now = T0 + 999000;
+
+    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.commit("foo: existing bottled formula");
+    db.prepare("INSERT INTO packages (source, name) VALUES (?, 'foo')").run(tap.source.id);
+    setCrawlState(db, tap.source.id, headSha(tap.dir), now);
+
+    tap.write("Formula/f/foo.rb", versionlessFormula("  # metadata\n  bottle do\n  end\n"));
+    tap.commit("foo: metadata touch");
+    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 0 });
+
+    expect(
+      db
+        .prepare("SELECT latest_bottled, bottle_event_count FROM packages WHERE name = 'foo'")
+        .get(),
+    ).toEqual({ latest_bottled: 1, bottle_event_count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM bottle_events").get()).toEqual({ count: 0 });
+    db.close();
+  });
+
+  it("records a formula that is bottled in its first historical snapshot", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const bottle =
+      '  bottle do\n    sha256 cellar: :any_skip_relocation, arm64_tahoe: "aaa"\n  end\n';
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const introduced = tap.commit("foo 1.0");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+
+    expect(
+      db
+        .prepare(
+          `SELECT be.bottled, be.changed_at, be.commit_sha
+             FROM bottle_events be JOIN packages p ON p.id = be.package_id
+            WHERE p.name = 'foo'`,
+        )
+        .get(),
+    ).toEqual({ bottled: 1, changed_at: introduced.at, commit_sha: introduced.sha });
     db.close();
   });
 
