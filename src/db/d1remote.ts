@@ -97,6 +97,7 @@ export function d1Apply(mode: D1Mode, sql: string): void {
  */
 export function ensureD1Schema(mode: D1Mode): void {
   ensureD1PackageColumns(mode);
+  ensureD1BottleSchema(mode);
   ensureD1ContributorTables(mode);
 }
 
@@ -107,7 +108,38 @@ export function ensureD1PackageColumns(mode: D1Mode): void {
   const stmts: string[] = [];
   if (!existing.has("renamed_to")) stmts.push("ALTER TABLE packages ADD COLUMN renamed_to TEXT;");
   if (!existing.has("migrated_to")) stmts.push("ALTER TABLE packages ADD COLUMN migrated_to TEXT;");
+  if (!existing.has("latest_bottled"))
+    stmts.push("ALTER TABLE packages ADD COLUMN latest_bottled INTEGER;");
+  if (!existing.has("bottle_event_count"))
+    stmts.push("ALTER TABLE packages ADD COLUMN bottle_event_count INTEGER NOT NULL DEFAULT 0;");
   if (stmts.length) d1Apply(mode, `${stmts.join("\n")}\n`);
+}
+
+/** Add the bottle-transition read model to an already-seeded D1 database. */
+export function ensureD1BottleSchema(mode: D1Mode): void {
+  const present = d1Select(
+    mode,
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'bottle_events' LIMIT 1",
+  );
+  if (present.length) return;
+
+  d1Apply(
+    mode,
+    `CREATE TABLE IF NOT EXISTS bottle_events (
+  id INTEGER PRIMARY KEY,
+  package_id INTEGER NOT NULL,
+  bottled INTEGER NOT NULL,
+  version TEXT,
+  revision INTEGER NOT NULL DEFAULT 0,
+  changed_at INTEGER NOT NULL,
+  commit_sha TEXT,
+  subject TEXT,
+  UNIQUE (package_id, commit_sha)
+);
+CREATE INDEX IF NOT EXISTS idx_bottle_events_pkg_time
+  ON bottle_events (package_id, changed_at DESC);
+`,
+  );
 }
 
 /** Add the contributor read model to an already-seeded D1 database. */

@@ -9,6 +9,15 @@ export interface VersionEvent {
   subject: string;
 }
 
+export interface BottleEvent {
+  bottled: boolean;
+  version: string | null;
+  revision: number;
+  changedAt: number;
+  commitSha: string | null;
+  subject: string;
+}
+
 export interface ContributorSummary {
   displayName: string;
   githubLogin: string | null;
@@ -48,7 +57,9 @@ export interface PackageMeta {
   latestVersion: string | null;
   latestRevision: number;
   latestAt: number | null;
+  latestBottled: boolean | null;
   eventCount: number;
+  bottleEventCount: number;
   firstIntroducedAt: number | null;
   removedAt: number | null;
   removedCommit: string | null;

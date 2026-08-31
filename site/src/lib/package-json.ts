@@ -1,5 +1,6 @@
 import {
   displayVersion,
+  type BottleEvent,
   type KnownSource,
   lifecycleState,
   type PackageMeta,
@@ -22,10 +23,13 @@ interface PackageJsonInput {
   source: KnownSource;
   name: string;
   events: VersionEvent[];
+  bottleEvents: BottleEvent[];
   meta: PackageMeta | null;
   checkedAt: number | null;
   page: number;
   timelineLimit: number;
+  bottlePage: number;
+  bottleHistoryLimit: number;
   today?: string;
 }
 
@@ -33,10 +37,13 @@ export function packageJsonPayload({
   source,
   name,
   events,
+  bottleEvents,
   meta,
   checkedAt,
   page,
   timelineLimit,
+  bottlePage,
+  bottleHistoryLimit,
   today = todayISO(),
 }: PackageJsonInput) {
   const first = events[0];
@@ -57,6 +64,24 @@ export function packageJsonPayload({
       introducedAt: meta?.latestAt ?? null,
     },
     eventCount,
+    bottle:
+      source === 'homebrew-formula'
+        ? {
+            bottled: meta?.latestBottled ?? null,
+            eventCount: meta?.bottleEventCount ?? bottleEvents.length,
+            page: bottlePage,
+            totalPages: Math.max(1, Math.ceil((meta?.bottleEventCount ?? bottleEvents.length) / bottleHistoryLimit)),
+            events: bottleEvents.map((event) => ({
+              bottled: event.bottled,
+              version: event.version,
+              revision: event.revision,
+              display: event.version ? displayVersion(event.version, event.revision) : null,
+              changedAt: event.changedAt,
+              commitSha: event.commitSha,
+              subject: event.subject,
+            })),
+          }
+        : null,
     firstIntroducedAt: meta?.firstIntroducedAt ?? null,
     removed:
       meta?.removedAt != null

@@ -8,7 +8,16 @@ import Lifecycle from '../../../components/Lifecycle.astro';
 import Sparkline from '../../../components/Sparkline.astro';
 import StatusChip from '../../../components/StatusChip.astro';
 import Version from '../../../components/Version.astro';
-import { contributors, getDb, lastChecked, packageMeta, timeline, TIMELINE_LIMIT } from '../../../lib/d1.ts';
+import {
+  bottleHistory,
+  BOTTLE_HISTORY_LIMIT,
+  contributors,
+  getDb,
+  lastChecked,
+  packageMeta,
+  timeline,
+  TIMELINE_LIMIT,
+} from '../../../lib/d1.ts';
 import {
   decodeRouteParam,
   displayVersion,
@@ -32,13 +41,24 @@ const page = pageParam === null ? 1 : Number.parseInt(pageParam, 10);
 if (pageParam !== null && (!Number.isInteger(page) || page < 1 || String(page) !== pageParam)) {
   return Astro.rewrite('/404');
 }
+const bottlePageParam = Astro.url.searchParams.get('bottle-page');
+const bottlePage = bottlePageParam === null ? 1 : Number.parseInt(bottlePageParam, 10);
+if (
+  bottlePageParam !== null &&
+  (!Number.isInteger(bottlePage) || bottlePage < 1 || String(bottlePage) !== bottlePageParam)
+) {
+  return Astro.rewrite('/404');
+}
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta, packageContributors] = await Promise.all([
+const [events, meta, packageContributors, bottleEvents] = await Promise.all([
   timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
+  source === 'homebrew-formula'
+    ? bottleHistory(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
+    : Promise.resolve([]),
 ]);
 
 // Unknown package — or a page past the end of the timeline.
@@ -55,9 +75,23 @@ const latestRevision = meta?.latestVersion ? meta.latestRevision : latestEvent.r
 const latestShipped = displayVersion(latestVersion, latestRevision);
 const totalEvents = meta?.eventCount ?? events.length;
 const totalPages = Math.max(1, Math.ceil(totalEvents / TIMELINE_LIMIT));
+const totalBottleEvents = meta?.bottleEventCount ?? bottleEvents.length;
+const totalBottlePages = Math.max(1, Math.ceil(totalBottleEvents / BOTTLE_HISTORY_LIMIT));
+if (source !== 'homebrew-formula' && bottlePageParam !== null) return Astro.rewrite('/404');
+if (bottlePage > totalBottlePages) return Astro.rewrite('/404');
 const rangeStart = (page - 1) * TIMELINE_LIMIT + 1;
 const rangeEnd = (page - 1) * TIMELINE_LIMIT + events.length;
-const pageHref = (p: number) => (p <= 1 ? `/${source}/${encodedName}/` : `/${source}/${encodedName}/?page=${p}`);
+const bottleRangeStart = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + 1;
+const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottleEvents.length;
+const packageHref = (versionPage: number, bottleHistoryPage: number) => {
+  const params = new URLSearchParams();
+  if (versionPage > 1) params.set('page', String(versionPage));
+  if (bottleHistoryPage > 1) params.set('bottle-page', String(bottleHistoryPage));
+  const query = params.toString();
+  return `/${source}/${encodedName}/${query ? `?${query}` : ''}`;
+};
+const pageHref = (p: number) => packageHref(p, bottlePage);
+const bottlePageHref = (p: number) => packageHref(page, p);
 
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
@@ -134,6 +168,14 @@ const monthFmt = (t: number) =>
         <dt>Cadence</dt>
         <dd>{cadence}</dd>
       </div>
+      {
+        source === 'homebrew-formula' && (
+          <div class="fact">
+            <dt>Bottle</dt>
+            <dd>{meta?.latestBottled == null ? 'unknown' : meta.latestBottled ? 'bottled' : 'not bottled'}</dd>
+          </div>
+        )
+      }
     </dl>
   </section>
 
@@ -237,4 +279,64 @@ const monthFmt = (t: number) =>
       )
     }
   </section>
+
+  {
+    source === 'homebrew-formula' && totalBottleEvents > 0 && (
+      <section>
+        <div class="section-head">
+          <h2>Bottle history</h2>
+          <p>
+            {totalBottlePages > 1
+              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleEvents.toLocaleString()} bottle changes`
+              : `${totalBottleEvents.toLocaleString()} bottle changes`}
+          </p>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th>
+                <th>Version</th>
+                <th>Changed</th>
+                <th>Commit</th>
+                <th>Subject</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bottleEvents.map((event) => (
+                <tr>
+                  <td>{event.bottled ? 'Bottled' : 'Lost'}</td>
+                  <td>{event.version ? <Version version={event.version} revision={event.revision} /> : '—'}</td>
+                  <td class="date">{isoDate(event.changedAt)}</td>
+                  <td>
+                    {event.commitSha ? (
+                      <a class="commit-link" href={`https://github.com/${repo}/commit/${event.commitSha}`}>
+                        {event.commitSha.slice(0, 9)}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td class="subject">{event.subject}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {totalBottlePages > 1 && (
+          <nav class="pager" aria-label="Bottle history pages">
+            {bottlePage > 1 ? <a href={bottlePageHref(bottlePage - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+            <span class="pager-status">
+              Page {bottlePage} of {totalBottlePages.toLocaleString()}
+            </span>
+            {bottlePage < totalBottlePages ? (
+              <a href={bottlePageHref(bottlePage + 1)}>Older &rarr;</a>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </nav>
+        )}
+      </section>
+    )
+  }
 </Base>

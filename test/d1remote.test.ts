@@ -7,6 +7,7 @@ import {
   d1Apply,
   d1Select,
   d1SelectMany,
+  ensureD1BottleSchema,
   ensureD1ContributorTables,
   ensureD1PackageColumns,
   kvGet,
@@ -142,7 +143,7 @@ describe("ensure* schema probes", () => {
 
   it("adds only the missing package columns", () => {
     execFileSyncMock.mockReturnValueOnce(
-      '[{"results":[{"name":"id"},{"name":"renamed_to"}],"success":true}]',
+      '[{"results":[{"name":"id"},{"name":"renamed_to"},{"name":"latest_bottled"},{"name":"bottle_event_count"}],"success":true}]',
     );
     let applied = "";
     execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
@@ -156,7 +157,7 @@ describe("ensure* schema probes", () => {
 
   it("does nothing when the package columns already exist", () => {
     execFileSyncMock.mockReturnValueOnce(
-      '[{"results":[{"name":"renamed_to"},{"name":"migrated_to"}],"success":true}]',
+      '[{"results":[{"name":"renamed_to"},{"name":"migrated_to"},{"name":"latest_bottled"},{"name":"bottle_event_count"}],"success":true}]',
     );
     ensureD1PackageColumns("local");
     expect(execFileSyncMock).toHaveBeenCalledTimes(1); // probe only, no apply
@@ -179,6 +180,23 @@ describe("ensure* schema probes", () => {
     ensureD1ContributorTables("local");
     expect(applied).toContain("CREATE TABLE IF NOT EXISTS package_contribution_slices");
     expect(applied).toContain("CREATE TABLE IF NOT EXISTS contributor_seeds");
+  });
+
+  it("creates the bottle-event table only when it is missing", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"1":1}],"success":true}]');
+    ensureD1BottleSchema("local");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+
+    execFileSyncMock.mockClear();
+    execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+    ensureD1BottleSchema("local");
+    expect(applied).toContain("CREATE TABLE IF NOT EXISTS bottle_events");
+    expect(applied).toContain("idx_bottle_events_pkg_time");
   });
 });
 

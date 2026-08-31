@@ -19,7 +19,9 @@ function migrate(db: DatabaseSync): void {
     "ALTER TABLE packages ADD COLUMN latest_version TEXT",
     "ALTER TABLE packages ADD COLUMN latest_revision INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE packages ADD COLUMN latest_at INTEGER",
+    "ALTER TABLE packages ADD COLUMN latest_bottled INTEGER CHECK (latest_bottled IN (0, 1))",
     "ALTER TABLE packages ADD COLUMN event_count INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE packages ADD COLUMN bottle_event_count INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE packages ADD COLUMN removed_at INTEGER",
     "ALTER TABLE packages ADD COLUMN removed_commit TEXT",
     "ALTER TABLE packages ADD COLUMN renamed_to TEXT",
@@ -28,6 +30,7 @@ function migrate(db: DatabaseSync): void {
     "ALTER TABLE packages ADD COLUMN deprecate_reason TEXT",
     "ALTER TABLE packages ADD COLUMN disable_date TEXT",
     "ALTER TABLE packages ADD COLUMN disable_reason TEXT",
+    "ALTER TABLE snapshots ADD COLUMN bottled INTEGER NOT NULL DEFAULT 0",
   ]) {
     try {
       db.exec(stmt);
@@ -54,7 +57,9 @@ export function finalizeLatest(db: DatabaseSync, source: string): void {
     `UPDATE packages
         SET latest_version  = (SELECT version  FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
             latest_revision = COALESCE((SELECT revision FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1), 0),
-            event_count     = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id)
+            latest_bottled  = (SELECT bottled FROM snapshots s WHERE s.package_id = packages.id ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
+            event_count     = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id),
+            bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = packages.id)
       WHERE source = ?`,
   ).run(source);
   // latest_at is when the shipping version was first introduced, not when a

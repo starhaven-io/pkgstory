@@ -19,7 +19,9 @@ const meta: PackageMeta = {
   latestVersion: "1.0",
   latestRevision: 2,
   latestAt: 1_600_000_000,
+  latestBottled: true,
   eventCount: 501,
+  bottleEventCount: 3,
   firstIntroducedAt: 1_500_000_000,
   removedAt: null,
   removedCommit: null,
@@ -47,10 +49,22 @@ describe("package JSON route contract", () => {
       source: "homebrew-formula",
       name: "pkg",
       events: [event("2.0"), event("1.0")],
+      bottleEvents: [
+        {
+          bottled: false,
+          version: "2.0",
+          revision: 0,
+          changedAt: 1_700_000_050,
+          commitSha: "b".repeat(40),
+          subject: "pkg: bottle lost",
+        },
+      ],
       meta,
       checkedAt: 1_700_000_123,
       page: 1,
       timelineLimit: 500,
+      bottlePage: 1,
+      bottleHistoryLimit: 100,
       today: "2026-07-24",
     });
 
@@ -66,6 +80,20 @@ describe("package JSON route contract", () => {
       },
       checkedAt: 1_700_000_123,
       eventCount: 501,
+      bottle: {
+        bottled: true,
+        eventCount: 3,
+        page: 1,
+        totalPages: 1,
+        events: [
+          {
+            bottled: false,
+            version: "2.0",
+            display: "2.0",
+            changedAt: 1_700_000_050,
+          },
+        ],
+      },
       page: 1,
       totalPages: 2,
       license: "CC-BY-4.0",
@@ -78,10 +106,13 @@ describe("package JSON route contract", () => {
         source: "homebrew-cask",
         name: "missing",
         events: [],
+        bottleEvents: [],
         meta: null,
         checkedAt: null,
         page: 2,
         timelineLimit: 500,
+        bottlePage: 1,
+        bottleHistoryLimit: 100,
       }),
     ).toBeNull();
   });
@@ -91,10 +122,13 @@ describe("package JSON route contract", () => {
       source: "homebrew-cask",
       name: "app",
       events: [event("3.0")],
+      bottleEvents: [],
       meta: null,
       checkedAt: null,
       page: 1,
       timelineLimit: 500,
+      bottlePage: 1,
+      bottleHistoryLimit: 100,
     });
     if (payload === null) throw new Error("expected payload");
 

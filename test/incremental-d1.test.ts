@@ -45,6 +45,15 @@ function statements(sql: string): string[] {
     .filter(Boolean);
 }
 
+function versionlessFormula(extra = ""): string {
+  return `class Foo < Formula
+  stable do
+    url "https://example.com/download"
+  end
+${extra}end
+`;
+}
+
 describe("crawlSinceD1", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -95,6 +104,7 @@ describe("crawlSinceD1", () => {
           name: "foo",
           latest_version: "1.0",
           latest_revision: 0,
+          latest_bottled: 0,
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -160,6 +170,7 @@ describe("crawlSinceD1", () => {
           name: "foo",
           latest_version: "1.0",
           latest_revision: 0,
+          latest_bottled: 0,
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
@@ -179,6 +190,133 @@ describe("crawlSinceD1", () => {
     expect(all[0]).toContain(`'${head.sha}'`);
   });
 
+  it("ships bottle loss and regain transitions without version events", () => {
+    const tap = new TapRepo();
+    const bottle =
+      '  bottle do\n    sha256 cellar: :any_skip_relocation, arm64_tahoe: "aaa"\n  end\n';
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const cursor = tap.commit("foo: bottled");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const lost = tap.commit("foo: bottle lost");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const regained = tap.commit("foo: bottle restored");
+    scriptD1({
+      cursor: cursor.sha,
+      seeded: false,
+      baselines: [
+        {
+          name: "foo",
+          latest_version: "1.0",
+          latest_revision: 0,
+          latest_bottled: 1,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: null,
+          disable_reason: null,
+          removed_at: null,
+          removed_commit: null,
+          renamed_to: null,
+          migrated_to: null,
+        },
+      ],
+    });
+
+    expect(crawlSinceD1(tap.source, "local", 1751000000)).toEqual({
+      status: "ok",
+      events: 0,
+      commits: 2,
+      head: regained.sha,
+    });
+    const sql = appliedSql();
+    expect(sql).toContain(
+      `bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES`,
+    );
+    expect(sql).toContain(`, 0, '1.0', 0, ${lost.at}, '${lost.sha}', 'foo: bottle lost')`);
+    expect(sql).toContain(
+      `, 1, '1.0', 0, ${regained.at}, '${regained.sha}', 'foo: bottle restored')`,
+    );
+    expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
+    expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
+    expect(statements(sql).at(-1)).toContain(`'${regained.sha}'`);
+  });
+
+  it("ships a versionless bottle transition from a known baseline", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", versionlessFormula());
+    const cursor = tap.commit("foo: new formula");
+    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    const gained = tap.commit("foo: add bottle");
+    scriptD1({
+      cursor: cursor.sha,
+      seeded: false,
+      baselines: [
+        {
+          name: "foo",
+          latest_version: null,
+          latest_revision: 0,
+          latest_bottled: 0,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: null,
+          disable_reason: null,
+          removed_at: null,
+          removed_commit: null,
+          renamed_to: null,
+          migrated_to: null,
+        },
+      ],
+    });
+
+    expect(crawlSinceD1(tap.source, "local", 1751000000)).toEqual({
+      status: "ok",
+      events: 0,
+      commits: 1,
+      head: gained.sha,
+    });
+    const sql = appliedSql();
+    expect(sql).toContain(`, 1, NULL, 0, ${gained.at}, '${gained.sha}', 'foo: add bottle')`);
+    expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
+    expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
+  });
+
+  it("establishes an existing unknown bottle baseline without fabricating an event", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", versionlessFormula());
+    const cursor = tap.commit("foo: new formula");
+    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    const head = tap.commit("foo: metadata touch");
+    scriptD1({
+      cursor: cursor.sha,
+      seeded: false,
+      baselines: [
+        {
+          name: "foo",
+          latest_version: null,
+          latest_revision: 0,
+          latest_bottled: null,
+          deprecate_date: null,
+          deprecate_reason: null,
+          disable_date: null,
+          disable_reason: null,
+          removed_at: null,
+          removed_commit: null,
+          renamed_to: null,
+          migrated_to: null,
+        },
+      ],
+    });
+
+    expect(crawlSinceD1(tap.source, "local", 1751000000)).toMatchObject({
+      status: "ok",
+      events: 0,
+      head: head.sha,
+    });
+    const sql = appliedSql();
+    expect(sql).not.toContain("INSERT OR IGNORE INTO bottle_events");
+    expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
+    expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
+  });
+
   it("clears stale removal metadata when a package is restored", () => {
     const tap = new TapRepo();
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
@@ -195,6 +333,7 @@ describe("crawlSinceD1", () => {
           name: "foo",
           latest_version: "1.0",
           latest_revision: 0,
+          latest_bottled: 0,
           deprecate_date: null,
           deprecate_reason: null,
           disable_date: null,
