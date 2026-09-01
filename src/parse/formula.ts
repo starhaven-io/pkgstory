@@ -73,8 +73,10 @@ export function parseBottleTags(src: string): string[] {
   const end = rest.search(/^ {2}end\b/m);
   const body = end === -1 ? rest : rest.slice(0, end);
   const tags = new Set<string>();
+  let hasChecksum = false;
   for (const line of body.split("\n")) {
     if (!/^\s+(?:sha1|sha256)\b/.test(line)) continue;
+    hasChecksum = true;
     for (const match of line.matchAll(/\b([a-z0-9_]+):\s*["'][^"']+["']/gi)) {
       const tag = match[1]?.toLowerCase();
       if (tag && tag !== "cellar") tags.add(tag);
@@ -82,7 +84,7 @@ export function parseBottleTags(src: string): string[] {
     const legacy = line.match(/=>\s*:([a-z0-9_]+)\b/i)?.[1];
     if (legacy) tags.add(legacy.toLowerCase());
   }
-  return tags.size ? [...tags].sort() : ["legacy"];
+  return tags.size ? [...tags].sort() : hasChecksum ? ["legacy"] : [];
 }
 
 export function versionFromUrl(url: string): string | null {

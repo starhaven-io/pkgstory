@@ -262,7 +262,7 @@ describe("crawlSinceD1", () => {
     const tap = new TapRepo();
     tap.write("Formula/f/foo.rb", versionlessFormula());
     const cursor = tap.commit("foo: new formula");
-    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.write("Formula/f/foo.rb", versionlessFormula('  bottle do\n    sha1 "abc"\n  end\n'));
     const gained = tap.commit("foo: add bottle");
     scriptD1({
       cursor: cursor.sha,
@@ -302,7 +302,7 @@ describe("crawlSinceD1", () => {
     const tap = new TapRepo();
     tap.write("Formula/f/foo.rb", versionlessFormula());
     const cursor = tap.commit("foo: new formula");
-    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.write("Formula/f/foo.rb", versionlessFormula('  bottle do\n    sha1 "abc"\n  end\n'));
     const head = tap.commit("foo: metadata touch");
     scriptD1({
       cursor: cursor.sha,

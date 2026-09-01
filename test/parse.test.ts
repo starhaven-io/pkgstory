@@ -115,6 +115,7 @@ end`;
       parseFormula('class X < Formula\n  bottle :disable,\n    "no bottles"\nend').bottled,
     ).toBe(false);
     expect(parseFormula("class X < Formula\n  # bottle do\nend").bottled).toBe(false);
+    expect(parseFormula("class X < Formula\n  bottle do\n  end\nend").bottled).toBe(false);
     expect(
       parseFormula("class X < Formula\n  resource do\n    bottle do\n    end\n  end\nend").bottled,
     ).toBe(false);
@@ -132,6 +133,9 @@ end`;
     expect(
       parseFormula("class X < Formula\n  bottle 'https://example.com/x-bottle.tar.gz'\nend")
         .bottleTags,
+    ).toEqual(["legacy"]);
+    expect(
+      parseFormula('class X < Formula\n  bottle do\n    sha1 "abc"\n  end\nend').bottleTags,
     ).toEqual(["legacy"]);
   });
 });
