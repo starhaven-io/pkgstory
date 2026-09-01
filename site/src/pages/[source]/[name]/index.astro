@@ -237,7 +237,7 @@ const monthFmt = (t: number) =>
           </p>
         </div>
         <div class="table-scroll">
-          <table>
+          <table class="bottle-availability">
             <thead>
               <tr>
                 <th>Platform</th>
@@ -248,8 +248,8 @@ const monthFmt = (t: number) =>
               </tr>
             </thead>
             <tbody>
-              {bottleRows.map(({ interval, platform, platformRowSpan }) => (
-                <tr>
+              {bottleRows.map(({ interval, platform, platformRowSpan, striped }) => (
+                <tr class={striped ? 'bottle-platform-striped' : undefined}>
                   {platformRowSpan > 0 && (
                     <td class="bottle-platform" rowspan={platformRowSpan}>
                       {platform}

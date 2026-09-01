@@ -541,6 +541,18 @@ const ogDescription = description ?? tagline;
       td.bottle-platform {
         vertical-align: top;
       }
+      .bottle-availability td.date:first-child {
+        padding-left: 0.75rem;
+      }
+      .bottle-availability tbody tr:nth-child(even) {
+        background: transparent;
+      }
+      .bottle-availability tbody tr.bottle-platform-striped {
+        background: var(--row-zebra);
+      }
+      .bottle-availability tbody tr:hover {
+        background: var(--row-hover);
+      }
 
       /* Chips */
       .chip {
