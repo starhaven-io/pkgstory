@@ -35,9 +35,7 @@ export const GET: APIRoute = async ({ params, url }) => {
   const db = getDb();
   const [events, bottleRanges, meta, checkedBySource] = await Promise.all([
     timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
-    source === 'homebrew-formula'
-      ? bottleIntervals(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
-      : Promise.resolve([]),
+    source === 'homebrew-formula' ? bottleIntervals(db, source, name) : Promise.resolve([]),
     packageMeta(db, source, name),
     lastCheckedBySource(db),
   ]);

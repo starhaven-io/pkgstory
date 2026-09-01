@@ -57,9 +57,7 @@ const [events, meta, packageContributors, bottleRanges] = await Promise.all([
   timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
-  source === 'homebrew-formula'
-    ? bottleIntervals(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
-    : Promise.resolve([]),
+  source === 'homebrew-formula' ? bottleIntervals(db, source, name) : Promise.resolve([]),
 ]);
 
 // Unknown package — or a page past the end of the timeline.
@@ -76,14 +74,15 @@ const latestRevision = meta?.latestVersion ? meta.latestRevision : latestEvent.r
 const latestShipped = displayVersion(latestVersion, latestRevision);
 const totalEvents = meta?.eventCount ?? events.length;
 const totalPages = Math.max(1, Math.ceil(totalEvents / TIMELINE_LIMIT));
-const totalBottleIntervals = meta?.bottleIntervalCount ?? bottleRanges.length;
+const totalBottleIntervals = bottleRanges.length;
 const totalBottlePages = Math.max(1, Math.ceil(totalBottleIntervals / BOTTLE_HISTORY_LIMIT));
 if (source !== 'homebrew-formula' && bottlePageParam !== null) return Astro.rewrite('/404');
 if (bottlePage > totalBottlePages) return Astro.rewrite('/404');
 const rangeStart = (page - 1) * TIMELINE_LIMIT + 1;
 const rangeEnd = (page - 1) * TIMELINE_LIMIT + events.length;
 const bottleRangeStart = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + 1;
-const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottleRanges.length;
+const bottlePageRanges = bottleRanges.slice((bottlePage - 1) * BOTTLE_HISTORY_LIMIT, bottlePage * BOTTLE_HISTORY_LIMIT);
+const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottlePageRanges.length;
 const packageHref = (versionPage: number, bottleHistoryPage: number) => {
   const params = new URLSearchParams();
   if (versionPage > 1) params.set('page', String(versionPage));
@@ -231,8 +230,8 @@ const monthFmt = (t: number) =>
           <h2>Bottle availability</h2>
           <p>
             {totalBottlePages > 1
-              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleIntervals.toLocaleString()} platform intervals`
-              : `${totalBottleIntervals.toLocaleString()} platform intervals`}
+              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleIntervals.toLocaleString()} availability spans`
+              : `${totalBottleIntervals.toLocaleString()} availability spans`}
           </p>
         </div>
         <div class="table-scroll">
@@ -247,7 +246,7 @@ const monthFmt = (t: number) =>
               </tr>
             </thead>
             <tbody>
-              {bottleRanges.map((interval) => (
+              {bottlePageRanges.map((interval) => (
                 <tr>
                   <td>{bottleTagLabel(interval.tag)}</td>
                   <td class="date">{isoDate(interval.startedAt)}</td>

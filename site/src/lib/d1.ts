@@ -1,5 +1,12 @@
 import { env } from 'cloudflare:workers';
-import type { BottleEvent, BottleInterval, ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
+import {
+  type BottleEvent,
+  type BottleInterval,
+  coalesceBottleIntervals,
+  type ContributorSummary,
+  type PackageMeta,
+  type VersionEvent,
+} from './format.ts';
 
 export const TIMELINE_LIMIT = 500;
 export const BOTTLE_HISTORY_LIMIT = 100;
@@ -70,32 +77,37 @@ export async function bottleHistory(
   }
 }
 
-/** Per-platform bottle availability ranges, newest first. */
-export async function bottleIntervals(
-  db: D1,
-  source: string,
-  name: string,
-  limit = BOTTLE_HISTORY_LIMIT,
-  offset = 0,
-): Promise<BottleInterval[]> {
-  try {
-    const { results } = await db
+/** Per-platform support spans, with short same-release bottling gaps coalesced. */
+export async function bottleIntervals(db: D1, source: string, name: string): Promise<BottleInterval[]> {
+  const select = (versionColumns: string) =>
+    db
       .prepare(
         `SELECT bi.tag, bi.started_at AS startedAt, bi.started_commit AS startedCommit,
-                bi.started_subject AS startedSubject, bi.ended_at AS endedAt,
-                bi.ended_commit AS endedCommit, bi.ended_subject AS endedSubject
+                bi.started_subject AS startedSubject, ${versionColumns},
+                bi.ended_at AS endedAt, bi.ended_commit AS endedCommit,
+                bi.ended_subject AS endedSubject
            FROM bottle_intervals bi JOIN packages p ON p.id = bi.package_id
           WHERE p.source = ? AND p.name = ?
-          ORDER BY bi.started_at DESC, bi.id DESC
-          LIMIT ? OFFSET ?`,
+          ORDER BY bi.tag ASC, bi.started_at ASC, bi.id ASC`,
       )
-      .bind(source, name, limit, offset)
+      .bind(source, name)
       .all<BottleInterval>();
-    return results;
+  let results: BottleInterval[];
+  try {
+    ({ results } = await select(
+      'bi.started_version AS startedVersion, bi.started_revision AS startedRevision, bi.ended_version AS endedVersion, bi.ended_revision AS endedRevision',
+    ));
   } catch (error) {
     if (/no such table: bottle_intervals/.test(String(error))) return [];
-    throw error;
+    if (
+      !/no such column: (?:bi\.)?(?:started_version|started_revision|ended_version|ended_revision)/.test(String(error))
+    )
+      throw error;
+    ({ results } = await select(
+      'NULL AS startedVersion, 0 AS startedRevision, NULL AS endedVersion, NULL AS endedRevision',
+    ));
   }
+  return coalesceBottleIntervals(results);
 }
 
 /** Authors and co-authors of every commit touching one package's file. */

@@ -52,8 +52,9 @@ Caveats:
   of an incomplete seed.
 - After deploying per-platform bottle history to an existing D1 database, run a
   full crawl and remote reseed before relying on bottle intervals. The schema
-  migration can establish current tags on future touches, but it cannot infer
-  when an existing tag first appeared. The same ambiguity can occur if a
+  migration can establish current tags and boundary versions on future touches,
+  but it cannot infer when an existing tag first appeared or annotate older
+  intervals for same-release coalescing. The same ambiguity can occur if a
   non-transactional D1 apply stops after inserting a brand-new package row but
   before its initial interval. Already-applied transitions are safe to replay;
   retrying establishes the correct current state, while a full reseed restores

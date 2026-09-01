@@ -459,6 +459,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
       db
         .prepare(
           `SELECT tag, started_at, started_commit, ended_at, ended_commit
+                  , started_version, started_revision, ended_version, ended_revision
              FROM bottle_intervals ORDER BY tag`,
         )
         .all();
@@ -467,15 +468,23 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
         tag: "arm64_sonoma",
         started_at: firstBottled.at,
         started_commit: firstBottled.sha,
+        started_version: "1.0",
+        started_revision: 0,
         ended_at: formulaRemoved.at,
         ended_commit: formulaRemoved.sha,
+        ended_version: null,
+        ended_revision: 0,
       },
       {
         tag: "sonoma",
         started_at: firstBottled.at,
         started_commit: firstBottled.sha,
+        started_version: "1.0",
+        started_revision: 0,
         ended_at: intelRemoved.at,
         ended_commit: intelRemoved.sha,
+        ended_version: "1.0",
+        ended_revision: 0,
       },
     ];
     expect(intervals()).toEqual(expected);
@@ -518,6 +527,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
       db
         .prepare(
           `SELECT tag, started_at, started_commit, ended_at, ended_commit
+                  , started_version, started_revision, ended_version, ended_revision
              FROM bottle_intervals ORDER BY id`,
         )
         .all();
@@ -526,15 +536,23 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
         tag: "arm64_sonoma",
         started_at: cursor.at,
         started_commit: cursor.sha,
+        started_version: "1.0",
+        started_revision: 0,
         ended_at: lost.at,
         ended_commit: lost.sha,
+        ended_version: "1.1",
+        ended_revision: 0,
       },
       {
         tag: "arm64_sonoma",
         started_at: regained.at,
         started_commit: regained.sha,
+        started_version: "1.1",
+        started_revision: 0,
         ended_at: null,
         ended_commit: null,
+        ended_version: null,
+        ended_revision: null,
       },
     ];
 

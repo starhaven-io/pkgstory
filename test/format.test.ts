@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bottleTagLabel,
+  coalesceBottleIntervals,
   decodeRouteParam,
   displayVersion,
   isKnownSource,
@@ -78,6 +79,118 @@ describe("bottle platform formatting", () => {
     expect(bottleTagLabel("arm64_linux")).toBe("ARM64 Linux");
     expect(bottleTagLabel("all")).toBe("All platforms");
     expect(bottleTagLabel("legacy")).toBe("Platform unspecified");
+  });
+
+  it("coalesces staggered jobs from one release but preserves release changes", () => {
+    const shared = {
+      tag: "sonoma",
+      startedSubject: null,
+      startedRevision: 0,
+      endedSubject: null,
+      endedRevision: 0,
+    };
+    expect(
+      coalesceBottleIntervals([
+        {
+          ...shared,
+          startedAt: 30,
+          startedCommit: "c".repeat(40),
+          startedVersion: "2.0",
+          endedAt: null,
+          endedCommit: null,
+          endedVersion: null,
+          endedRevision: null,
+        },
+        {
+          ...shared,
+          startedAt: 20,
+          startedCommit: "b".repeat(40),
+          startedVersion: "1.0",
+          endedAt: 25,
+          endedCommit: "d".repeat(40),
+          endedVersion: "1.1",
+        },
+        {
+          ...shared,
+          startedAt: 10,
+          startedCommit: "a".repeat(40),
+          startedVersion: "0.9",
+          endedAt: 15,
+          endedCommit: "b".repeat(40),
+          endedVersion: "1.0",
+        },
+      ]),
+    ).toEqual([
+      {
+        ...shared,
+        startedAt: 30,
+        startedCommit: "c".repeat(40),
+        startedVersion: "2.0",
+        endedAt: null,
+        endedCommit: null,
+        endedVersion: null,
+        endedRevision: null,
+      },
+      {
+        ...shared,
+        startedAt: 10,
+        startedCommit: "a".repeat(40),
+        startedVersion: "0.9",
+        endedAt: 25,
+        endedCommit: "d".repeat(40),
+        endedVersion: "1.1",
+      },
+    ]);
+  });
+
+  it("does not hide same-release availability gaps longer than seven days", () => {
+    const day = 24 * 60 * 60;
+    const interval = (startedAt: number, endedAt: number | null) => ({
+      tag: "sequoia",
+      startedAt,
+      startedCommit: String(startedAt).repeat(40).slice(0, 40),
+      startedSubject: null,
+      startedVersion: "3.4.0",
+      startedRevision: 0,
+      endedAt,
+      endedCommit: endedAt == null ? null : String(endedAt).repeat(40).slice(0, 40),
+      endedSubject: null,
+      endedVersion: endedAt == null ? null : "3.4.0",
+      endedRevision: endedAt == null ? null : 0,
+    });
+    const spans = coalesceBottleIntervals([
+      interval(1, 2),
+      interval(2 + 7 * day, 3 + 7 * day),
+      interval(4 + 14 * day, null),
+    ]);
+
+    expect(spans).toHaveLength(2);
+    expect(spans[1]).toMatchObject({ startedAt: 1, endedAt: 3 + 7 * day });
+    expect(spans[0]).toMatchObject({ startedAt: 4 + 14 * day, endedAt: null });
+  });
+
+  it("does not coalesce intervals across formula revisions", () => {
+    const interval = (
+      startedAt: number,
+      startedRevision: number,
+      endedAt: number | null,
+      endedRevision: number | null,
+    ) => ({
+      tag: "sonoma",
+      startedAt,
+      startedCommit: String(startedAt).repeat(40).slice(0, 40),
+      startedSubject: null,
+      startedVersion: "1.0",
+      startedRevision,
+      endedAt,
+      endedCommit: endedAt == null ? null : String(endedAt).repeat(40).slice(0, 40),
+      endedSubject: null,
+      endedVersion: endedAt == null ? null : "1.0",
+      endedRevision,
+    });
+    expect(
+      coalesceBottleIntervals([interval(10, 0, 20, 0), interval(30, 1, null, null)]),
+    ).toHaveLength(2);
   });
 });
 

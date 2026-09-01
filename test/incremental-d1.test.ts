@@ -241,14 +241,17 @@ describe("crawlSinceD1", () => {
     expect(sql).toContain(
       `UPDATE bottle_intervals SET ended_at = ${lost.at}, ended_commit = '${lost.sha}'`,
     );
+    expect(sql).toContain("ended_version = '1.0', ended_revision = 0");
     expect(sql).toContain(
       `AND tag = 'arm64_tahoe' AND ended_at IS NULL AND started_at <= ${lost.at}`,
     );
     expect(sql).toContain(`closed.ended_commit = '${lost.sha}'`);
     expect(sql).toContain(
-      `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject) VALUES`,
+      `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject, started_version, started_revision) VALUES`,
     );
-    expect(sql).toContain(`'arm64_tahoe', ${regained.at}, '${regained.sha}'`);
+    expect(sql).toContain(
+      `'arm64_tahoe', ${regained.at}, '${regained.sha}', 'foo: bottle restored', '1.0', 0`,
+    );
     expect(sql).not.toContain("INSERT OR IGNORE INTO version_events");
     expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
     expect(sql).toContain(`latest_bottle_tags = '["arm64_tahoe"]'`);

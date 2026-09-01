@@ -344,12 +344,14 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const insertBottleInterval = db.prepare(
     `INSERT OR IGNORE INTO bottle_intervals
-       (package_id, tag, started_at, started_commit, started_subject)
-     VALUES (?, ?, ?, ?, ?)`,
+       (package_id, tag, started_at, started_commit, started_subject,
+        started_version, started_revision)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const closeBottleInterval = db.prepare(
     `UPDATE bottle_intervals
-        SET ended_at = ?, ended_commit = ?, ended_subject = ?
+        SET ended_at = ?, ended_commit = ?, ended_subject = ?,
+            ended_version = ?, ended_revision = ?
       WHERE package_id = ? AND tag = ? AND ended_at IS NULL
         AND started_at <= ?
         AND NOT EXISTS (
@@ -450,12 +452,16 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
           transition.at,
           transition.sha,
           transition.subject,
+          transition.version,
+          transition.revision,
         );
       } else {
         closeBottleInterval.run(
           transition.at,
           transition.sha,
           transition.subject,
+          transition.version,
+          transition.revision,
           pkg.id,
           transition.tag,
           transition.at,
@@ -640,8 +646,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     for (const transition of folded.bottleTransitions) {
       stmts.push(
         transition.available
-          ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${transition.at}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)});`
-          : `UPDATE bottle_intervals SET ended_at = ${transition.at}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${transition.at} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
+          ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject, started_version, started_revision) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${transition.at}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)}, ${sqlLit(transition.version)}, ${transition.revision});`
+          : `UPDATE bottle_intervals SET ended_at = ${transition.at}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)}, ended_version = ${sqlLit(transition.version)}, ended_revision = ${transition.revision} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${transition.at} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
       );
     }
     if (folded.latest) {
