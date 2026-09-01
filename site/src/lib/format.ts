@@ -32,6 +32,12 @@ export interface BottleInterval {
   endedRevision: number | null;
 }
 
+export interface BottleAvailabilityRow {
+  interval: BottleInterval;
+  platform: string;
+  platformRowSpan: number;
+}
+
 export interface ContributorSummary {
   displayName: string;
   githubLogin: string | null;
@@ -267,6 +273,10 @@ function canonicalBottleOsTag(tag: string): string {
   return BOTTLE_OS_ALIASES.get(releaseTag) ?? releaseTag;
 }
 
+function bottleRangeBaseTag(tag: string): string {
+  return tag.endsWith(BOTTLE_RANGE_SUFFIX) ? tag.slice(0, -BOTTLE_RANGE_SUFFIX.length) : tag;
+}
+
 function bottleOperatingSystemLabel(tag: string): string {
   const orLater = tag.endsWith(BOTTLE_RANGE_SUFFIX);
   const suffix = orLater ? ' or later' : '';
@@ -306,11 +316,31 @@ function compareBottlePlatforms(a: BottleInterval, b: BottleInterval): number {
   return b.startedAt - a.startedAt || a.tag.localeCompare(b.tag);
 }
 
+export function bottleAvailabilityRows(intervals: BottleInterval[]): BottleAvailabilityRow[] {
+  const rows: BottleAvailabilityRow[] = [];
+  for (let index = 0; index < intervals.length;) {
+    const platform = bottleTagLabel(intervals[index]!.tag);
+    let end = index + 1;
+    while (end < intervals.length && bottleTagLabel(intervals[end]!.tag) === platform) end += 1;
+    for (let row = index; row < end; row += 1) {
+      rows.push({
+        interval: intervals[row]!,
+        platform,
+        platformRowSpan: row === index ? end - index : 0,
+      });
+    }
+    index = end;
+  }
+  return rows;
+}
+
 const MAX_BOTTLE_JOB_GAP_SECONDS = 7 * 24 * 60 * 60;
 
 /** Fold staggered bottle jobs for one formula release into a support span. */
 export function coalesceBottleIntervals(intervals: BottleInterval[]): BottleInterval[] {
-  const ordered = [...intervals].sort((a, b) => a.tag.localeCompare(b.tag) || a.startedAt - b.startedAt);
+  const ordered = intervals
+    .map((interval) => ({ ...interval, tag: bottleRangeBaseTag(interval.tag) }))
+    .sort((a, b) => a.tag.localeCompare(b.tag) || a.startedAt - b.startedAt);
   const spans: BottleInterval[] = [];
   for (const interval of ordered) {
     const previous = spans.at(-1);
