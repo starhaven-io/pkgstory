@@ -229,6 +229,48 @@ describe("bottle platform formatting", () => {
       coalesceBottleIntervals([interval(10, 0, 20, 0), interval(30, 1, null, null)]),
     ).toHaveLength(2);
   });
+
+  it("sorts platform spans by OS release with the oldest at the bottom", () => {
+    const interval = (tag: string, startedAt: number) => ({
+      tag,
+      startedAt,
+      startedCommit: String(startedAt).repeat(40).slice(0, 40),
+      startedSubject: null,
+      startedVersion: "1.0",
+      startedRevision: 0,
+      endedAt: null,
+      endedCommit: null,
+      endedSubject: null,
+      endedVersion: null,
+      endedRevision: null,
+    });
+
+    expect(
+      coalesceBottleIntervals([
+        interval("cheetah", 90),
+        interval("sonoma", 10),
+        interval("legacy", 80),
+        interval("arm64_ventura", 60),
+        interval("arm64_sonoma", 20),
+        interval("x86_64_linux", 40),
+        interval("ventura", 70),
+        interval("arm64_linux", 50),
+        interval("sierra_or_later", 100),
+        interval("all", 30),
+      ]).map(({ tag }) => tag),
+    ).toEqual([
+      "all",
+      "arm64_linux",
+      "x86_64_linux",
+      "legacy",
+      "arm64_sonoma",
+      "sonoma",
+      "arm64_ventura",
+      "ventura",
+      "sierra_or_later",
+      "cheetah",
+    ]);
+  });
 });
 
 describe("site display helpers", () => {
