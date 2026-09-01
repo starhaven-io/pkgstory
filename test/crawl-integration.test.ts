@@ -142,7 +142,7 @@ describe("computeDelta (against a real git repo)", () => {
     const tap = new TapRepo();
     tap.write("Formula/f/foo.rb", versionlessFormula());
     const cursor = tap.commit("foo: new formula");
-    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.write("Formula/f/foo.rb", versionlessFormula('  bottle do\n    sha1 "abc"\n  end\n'));
     const bottled = tap.commit("foo: add bottle");
 
     expect(firstPackage(computeDelta(tap.source, cursor.sha)).touches).toEqual([
@@ -504,6 +504,42 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
+  it("does not create legacy intervals for empty bottle blocks", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const bottle = '  bottle do\n    sha1 "aaa" => :yosemite\n  end\n';
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const firstBottled = tap.commit("foo: bottle 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", "  revision 1\n\n  bottle do\n  end\n"));
+    const emptied = tap.commit("foo: empty bottle block", T0 + 5000);
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", `  revision 1\n\n${bottle}`));
+    const rebottled = tap.commit("foo: bottle 1.0_1", T0 + 5000);
+
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+
+    expect(
+      db
+        .prepare(
+          `SELECT tag, started_commit, ended_commit
+             FROM bottle_intervals ORDER BY started_at, id`,
+        )
+        .all(),
+    ).toEqual([
+      { tag: "yosemite", started_commit: firstBottled.sha, ended_commit: emptied.sha },
+      { tag: "yosemite", started_commit: rebottled.sha, ended_commit: null },
+    ]);
+    expect(
+      db
+        .prepare("SELECT latest_bottled, latest_bottle_tags FROM packages WHERE name = 'foo'")
+        .get(),
+    ).toEqual({ latest_bottled: 1, latest_bottle_tags: '["yosemite"]' });
+    db.close();
+  });
+
   it("keeps bottle intervals unchanged when an incremental window is replayed", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
@@ -594,7 +630,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     finalizeLatest(db, tap.source.id);
     setCrawlState(db, tap.source.id, headSha(tap.dir), now);
 
-    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.write("Formula/f/foo.rb", versionlessFormula('  bottle do\n    sha1 "abc"\n  end\n'));
     const gained = tap.commit("foo: add bottle");
     expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 0 });
 
@@ -631,12 +667,15 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     const db = openDb(":memory:");
     const now = T0 + 999000;
 
-    tap.write("Formula/f/foo.rb", versionlessFormula("  bottle do\n  end\n"));
+    tap.write("Formula/f/foo.rb", versionlessFormula('  bottle do\n    sha1 "abc"\n  end\n'));
     tap.commit("foo: existing bottled formula");
     db.prepare("INSERT INTO packages (source, name) VALUES (?, 'foo')").run(tap.source.id);
     setCrawlState(db, tap.source.id, headSha(tap.dir), now);
 
-    tap.write("Formula/f/foo.rb", versionlessFormula("  # metadata\n  bottle do\n  end\n"));
+    tap.write(
+      "Formula/f/foo.rb",
+      versionlessFormula('  # metadata\n  bottle do\n    sha1 "abc"\n  end\n'),
+    );
     tap.commit("foo: metadata touch");
     expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 0 });
 
