@@ -256,14 +256,22 @@ const MACOS_VERSIONS = new Map([
   ['tahoe', '26'],
   ['golden_gate', '27'],
 ]);
+const BOTTLE_OS_RELEASE_ORDER = new Map(
+  [...MAC_OS_X_VERSIONS.keys(), ...OS_X_VERSIONS.keys(), ...MACOS_VERSIONS.keys()].map((tag, index) => [tag, index]),
+);
+const BOTTLE_RANGE_SUFFIX = '_or_later';
+
+function canonicalBottleOsTag(tag: string): string {
+  const osTag = tag.startsWith('arm64_') ? tag.slice(6) : tag.startsWith('x86_64_') ? tag.slice(7) : tag;
+  const releaseTag = osTag.endsWith(BOTTLE_RANGE_SUFFIX) ? osTag.slice(0, -BOTTLE_RANGE_SUFFIX.length) : osTag;
+  return BOTTLE_OS_ALIASES.get(releaseTag) ?? releaseTag;
+}
 
 function bottleOperatingSystemLabel(tag: string): string {
-  const rangeSuffix = '_or_later';
-  const orLater = tag.endsWith(rangeSuffix);
-  const releaseTag = orLater ? tag.slice(0, -rangeSuffix.length) : tag;
+  const orLater = tag.endsWith(BOTTLE_RANGE_SUFFIX);
   const suffix = orLater ? ' or later' : '';
-  if (releaseTag === 'linux') return `Linux${suffix}`;
-  const canonicalTag = BOTTLE_OS_ALIASES.get(releaseTag) ?? releaseTag;
+  const canonicalTag = canonicalBottleOsTag(tag);
+  if (canonicalTag === 'linux') return `Linux${suffix}`;
   const macOsXVersion = MAC_OS_X_VERSIONS.get(canonicalTag);
   if (macOsXVersion) return `Mac OS X ${macOsXVersion}${suffix}`;
   const name = bottleOsName(canonicalTag);
@@ -280,6 +288,22 @@ export function bottleTagLabel(tag: string): string {
   const x86_64 = tag.startsWith('x86_64_');
   const osTag = arm64 ? tag.slice(6) : x86_64 ? tag.slice(7) : tag;
   return `${bottleOperatingSystemLabel(osTag)} (${arm64 ? 'arm64' : 'x86_64'})`;
+}
+
+function bottlePlatformOrder(tag: string): number {
+  const osTag = canonicalBottleOsTag(tag);
+  if (osTag === 'all') return 10_003;
+  if (osTag === 'linux') return 10_002;
+  if (osTag === 'legacy') return 10_001;
+  return BOTTLE_OS_RELEASE_ORDER.get(osTag) ?? 10_000;
+}
+
+function compareBottlePlatforms(a: BottleInterval, b: BottleInterval): number {
+  const releaseOrder = bottlePlatformOrder(b.tag) - bottlePlatformOrder(a.tag);
+  if (releaseOrder) return releaseOrder;
+  const labelOrder = bottleTagLabel(a.tag).localeCompare(bottleTagLabel(b.tag));
+  if (labelOrder) return labelOrder;
+  return b.startedAt - a.startedAt || a.tag.localeCompare(b.tag);
 }
 
 const MAX_BOTTLE_JOB_GAP_SECONDS = 7 * 24 * 60 * 60;
@@ -312,7 +336,7 @@ export function coalesceBottleIntervals(intervals: BottleInterval[]): BottleInte
       endedRevision: interval.endedRevision,
     };
   }
-  return spans.sort((a, b) => b.startedAt - a.startedAt || a.tag.localeCompare(b.tag));
+  return spans.sort(compareBottlePlatforms);
 }
 
 export function decodeRouteParam(value: string): string {
