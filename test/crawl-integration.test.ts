@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
 import { buildCommitIndex, buildCommitIndexAll } from "../src/crawl/commit-index.ts";
 import { buildPackageContributors } from "../src/crawl/contributors.ts";
@@ -696,6 +697,86 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     };
     expect(row.latest_version).toBe("1.2"); // the child commit, despite the timestamp tie
     db.close();
+  });
+
+  it("orders backdated commits by topology and records their committer dates", async () => {
+    const tap = new TapRepo();
+    const incremental = openDb(":memory:");
+    const now = T0 + 999000;
+    const bottle = '  bottle do\n    sha256 cellar: :any, sonoma: "aaa"\n  end\n';
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const introduced = tap.commit("foo 1.0");
+    buildCommitIndex(incremental, tap.source, ["foo"]);
+    buildSnapshots(incremental, tap.source);
+    buildEvents(incremental, tap.source);
+    finalizeLatest(incremental, tap.source.id);
+    setCrawlState(incremental, tap.source.id, introduced.sha, now);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+    const bottled = tap.commit("foo: bottle Sonoma");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1", bottle));
+    const backdated = tap.commitWithAuthorDate("foo 1.1", T0 - 86400);
+    expect(backdated.at).toBeGreaterThan(bottled.at);
+
+    expect(crawlSince(incremental, tap.source, now + 1)).toMatchObject({
+      status: "ok",
+      events: 1,
+    });
+
+    const state = (db: DatabaseSync) => ({
+      package: db
+        .prepare(
+          "SELECT latest_version, latest_at, latest_bottle_tags, event_count, bottle_interval_count FROM packages WHERE name = 'foo'",
+        )
+        .get(),
+      versions: db
+        .prepare(
+          "SELECT version, introduced_at, commit_sha FROM version_events ORDER BY introduced_at",
+        )
+        .all(),
+      bottles: db
+        .prepare(
+          "SELECT tag, started_at, started_commit, ended_at, ended_commit FROM bottle_intervals ORDER BY id",
+        )
+        .all(),
+    });
+    const expected = {
+      package: {
+        latest_version: "1.1",
+        latest_at: backdated.at,
+        latest_bottle_tags: '["sonoma"]',
+        event_count: 2,
+        bottle_interval_count: 1,
+      },
+      versions: [
+        { version: "1.0", introduced_at: introduced.at, commit_sha: introduced.sha },
+        { version: "1.1", introduced_at: backdated.at, commit_sha: backdated.sha },
+      ],
+      bottles: [
+        {
+          tag: "sonoma",
+          started_at: bottled.at,
+          started_commit: bottled.sha,
+          ended_at: null,
+          ended_commit: null,
+        },
+      ],
+    };
+    expect(state(incremental)).toEqual(expected);
+
+    const full = openDb(":memory:");
+    await buildCommitIndexAll(full, tap.source);
+    buildSnapshots(full, tap.source);
+    buildEvents(full, tap.source);
+    finalizeLatest(full, tap.source.id);
+    expect(state(full)).toEqual(expected);
+
+    expect(
+      full.prepare("SELECT committed_at FROM commit_index WHERE commit_sha = ?").get(backdated.sha),
+    ).toEqual({ committed_at: backdated.at });
+    incremental.close();
+    full.close();
   });
 
   it("reports a downgraded version with its original introduction time", () => {

@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS commit_index (
   commit_sha   TEXT NOT NULL,
   blob_sha     TEXT NOT NULL,
   committed_at INTEGER NOT NULL,
+  -- Total order from git's topological walk. State derivation follows this rather
+  -- than timestamps, which may be backdated or otherwise non-monotonic.
+  history_order INTEGER NOT NULL DEFAULT 0,
   author       TEXT,
   subject      TEXT,
   status       TEXT,
@@ -169,7 +172,5 @@ CREATE INDEX IF NOT EXISTS idx_events_time ON version_events (introduced_at DESC
 CREATE INDEX IF NOT EXISTS idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time ON bottle_intervals (package_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_open ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
--- Reconcile-removals reads each absent package's latest commit (the deletion).
-CREATE INDEX IF NOT EXISTS idx_commit_pkg_time ON commit_index (package_id, committed_at DESC);
 -- finalizeLatest reads each package's newest snapshot (the shipping version).
 CREATE INDEX IF NOT EXISTS idx_snapshots_pkg_time ON snapshots (package_id, committed_at DESC);

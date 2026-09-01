@@ -29,18 +29,16 @@ export function reconcileRemovals(db: DatabaseSync, source: Source): number {
   }
   db.exec("COMMIT");
 
-  // id ASC on the timestamp tie: rows go in newest-first, so the smallest id of
-  // a tied set is the newest commit — the deletion.
   const removed = Number(
     db
       .prepare(
         `UPDATE packages
             SET removed_at = (SELECT committed_at FROM commit_index ci
                                WHERE ci.package_id = packages.id
-                               ORDER BY committed_at DESC, id ASC LIMIT 1),
+                               ORDER BY history_order DESC LIMIT 1),
                 removed_commit = (SELECT commit_sha FROM commit_index ci
                                    WHERE ci.package_id = packages.id
-                                   ORDER BY committed_at DESC, id ASC LIMIT 1)
+                                   ORDER BY history_order DESC LIMIT 1)
           WHERE source = ? AND removed_at IS NULL
             AND name NOT IN (SELECT name FROM _present)`,
       )
