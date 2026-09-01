@@ -11,6 +11,7 @@ interface CommitRow {
   commit_sha: string;
   blob_sha: string;
   committed_at: number;
+  history_order: number;
   subject: string;
   status: string;
 }
@@ -37,7 +38,8 @@ export function buildSnapshots(
   ).c;
 
   const select = db.prepare(
-    `SELECT ci.id, ci.package_id, p.name, ci.commit_sha, ci.blob_sha, ci.committed_at, ci.subject, ci.status
+    `SELECT ci.id, ci.package_id, p.name, ci.commit_sha, ci.blob_sha, ci.committed_at,
+            ci.history_order, ci.subject, ci.status
        FROM commit_index ci JOIN packages p ON p.id = ci.package_id
       WHERE p.source = ? AND ci.id > ?
       ORDER BY ci.id
@@ -60,9 +62,9 @@ export function buildSnapshots(
   let processed = 0;
   let written = 0;
   // Latest live blob per package wins → its deprecate!/disable! state is the current
-  // one. Tracked across chunks (id order isn't time order) and flushed to packages
-  // at the end; lives only on packages, never the per-snapshot rows.
-  const lifecycle = new Map<number, { at: number; info: Lifecycle }>();
+  // one. Tracked by Git history order across chunks and flushed to packages at the
+  // end; lives only on packages, never the per-snapshot rows.
+  const lifecycle = new Map<number, { historyOrder: number; info: Lifecycle }>();
 
   for (;;) {
     const rows = select.all(source.id, lastId, CHUNK) as unknown as CommitRow[];
@@ -105,8 +107,11 @@ export function buildSnapshots(
       written += 1;
 
       const seen = lifecycle.get(row.package_id);
-      if (!seen || row.committed_at > seen.at) {
-        lifecycle.set(row.package_id, { at: row.committed_at, info: parseLifecycle(blob) });
+      if (!seen || row.history_order > seen.historyOrder) {
+        lifecycle.set(row.package_id, {
+          historyOrder: row.history_order,
+          info: parseLifecycle(blob),
+        });
       }
     }
     db.exec("COMMIT");

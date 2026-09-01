@@ -19,13 +19,19 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
   const commits = logRaw(source.repoDir, pathspecs);
 
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO commit_index
-       (package_id, commit_sha, blob_sha, committed_at, author, subject, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO commit_index
+       (package_id, commit_sha, blob_sha, committed_at, history_order, author, subject, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (package_id, commit_sha) DO UPDATE SET
+       committed_at = excluded.committed_at,
+       history_order = excluded.history_order,
+       author = excluded.author,
+       subject = excluded.subject`,
   );
   const pkgIds = new Map<string, number>();
   const contributors = contributorWriter(db);
   let rows = 0;
+  let historyOrder = 0;
 
   db.exec("BEGIN");
   clearContributorLinks(db, source, wanted.size ? names : undefined);
@@ -45,6 +51,7 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
         commit.sha,
         file.blobSha,
         commit.committedAt,
+        historyOrder,
         commit.author.name,
         commit.subject,
         file.status,
@@ -52,6 +59,7 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
       contributors.link(pid, commit);
       rows += Number(r.changes);
     }
+    historyOrder -= 1;
   }
   db.exec("COMMIT");
   return rows;
@@ -67,14 +75,20 @@ export async function buildCommitIndexAll(
   onProgress?: (commits: number, rows: number, packages: number) => void,
 ): Promise<{ commits: number; rows: number; packages: number }> {
   const insert = db.prepare(
-    `INSERT OR IGNORE INTO commit_index
-       (package_id, commit_sha, blob_sha, committed_at, author, subject, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO commit_index
+       (package_id, commit_sha, blob_sha, committed_at, history_order, author, subject, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (package_id, commit_sha) DO UPDATE SET
+       committed_at = excluded.committed_at,
+       history_order = excluded.history_order,
+       author = excluded.author,
+       subject = excluded.subject`,
   );
   const pkgIds = new Map<string, number>();
   const contributors = contributorWriter(db);
   let commits = 0;
   let rows = 0;
+  let historyOrder = 0;
 
   db.exec("BEGIN");
   clearContributorLinks(db, source);
@@ -94,6 +108,7 @@ export async function buildCommitIndexAll(
           commit.sha,
           file.blobSha,
           commit.committedAt,
+          historyOrder,
           commit.author.name,
           commit.subject,
           file.status,
@@ -101,6 +116,7 @@ export async function buildCommitIndexAll(
       );
       contributors.link(pid, commit);
     }
+    historyOrder -= 1;
     if (commits % 25000 === 0) {
       db.exec("COMMIT");
       onProgress?.(commits, rows, pkgIds.size);

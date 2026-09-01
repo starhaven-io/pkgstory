@@ -34,6 +34,7 @@ function migrate(db: DatabaseSync): void {
     "ALTER TABLE packages ADD COLUMN disable_reason TEXT",
     "ALTER TABLE snapshots ADD COLUMN bottled INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE snapshots ADD COLUMN bottle_tags TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE commit_index ADD COLUMN history_order INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE bottle_intervals ADD COLUMN started_version TEXT",
     "ALTER TABLE bottle_intervals ADD COLUMN started_revision INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE bottle_intervals ADD COLUMN ended_version TEXT",
@@ -46,6 +47,9 @@ function migrate(db: DatabaseSync): void {
       if (!String(e).includes("duplicate column name")) throw e;
     }
   }
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_commit_pkg_order ON commit_index (package_id, history_order DESC)",
+  );
 }
 
 export function upsertPackage(db: DatabaseSync, source: string, name: string): number {
@@ -62,10 +66,10 @@ export function finalizeLatest(db: DatabaseSync, source: string): void {
   // version must come from the newest snapshot rather than the newest event.
   db.prepare(
     `UPDATE packages
-        SET latest_version  = (SELECT version  FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
-            latest_revision = COALESCE((SELECT revision FROM snapshots s WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY s.committed_at DESC, s.id ASC LIMIT 1), 0),
-            latest_bottled  = (SELECT bottled FROM snapshots s WHERE s.package_id = packages.id ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
-            latest_bottle_tags = (SELECT bottle_tags FROM snapshots s WHERE s.package_id = packages.id ORDER BY s.committed_at DESC, s.id ASC LIMIT 1),
+        SET latest_version  = (SELECT s.version FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1),
+            latest_revision = COALESCE((SELECT s.revision FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1), 0),
+            latest_bottled  = (SELECT s.bottled FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id ORDER BY ci.history_order DESC LIMIT 1),
+            latest_bottle_tags = (SELECT s.bottle_tags FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id ORDER BY ci.history_order DESC LIMIT 1),
             event_count     = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id),
             bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = packages.id),
             bottle_interval_count = (SELECT COUNT(*) FROM bottle_intervals bi WHERE bi.package_id = packages.id)

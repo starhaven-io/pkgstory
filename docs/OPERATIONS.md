@@ -50,6 +50,9 @@ Caveats:
   complete contributor history, and `contributor_seeds` intentionally lands
   last so a partial import cannot enable incremental contributor writes on top
   of an incomplete seed.
+- Changes to history ordering or commit timestamp semantics require a new full
+  crawl and remote reseed. Existing D1 event and interval rows are precomputed;
+  an incremental crawl cannot rewrite their historical boundaries.
 - After deploying per-platform bottle history to an existing D1 database, run a
   full crawl and remote reseed before relying on bottle intervals. The schema
   migration can establish current tags and boundary versions on future touches,

@@ -40,7 +40,7 @@ function isVersionedTouch(touch: DeltaTouch): touch is DeltaEvent {
 
 export interface PackageDelta {
   name: string;
-  touches: DeltaTouch[]; // time-ordered package states; deletions carry an empty tag set
+  touches: DeltaTouch[]; // topology-ordered package states; deletions carry an empty tag set
   history: HistoryTouch[]; // one row per touching commit, including non-version changes
   // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
@@ -74,7 +74,7 @@ export interface Delta {
 type RawTouch = HistoryTouch;
 
 /**
- * Parse `git log <lastSha>..HEAD` into per-package, time-ordered version touches plus
+ * Parse `git log <lastSha>..HEAD` into per-package, topology-ordered version touches plus
  * each package's current lifecycle and removal state. Store-agnostic — both the
  * local-SQLite and D1 paths build on this.
  */
@@ -392,8 +392,11 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const insertCommit = db.prepare(
     `INSERT OR IGNORE INTO commit_index
-       (package_id, commit_sha, blob_sha, committed_at, author, subject, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (package_id, commit_sha, blob_sha, committed_at, history_order, author, subject, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const latestHistoryOrder = db.prepare(
+    "SELECT COALESCE(MAX(history_order), -1) AS value FROM commit_index WHERE package_id = ?",
   );
   const contributors = contributorWriter(db);
 
@@ -404,15 +407,15 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     const newPackage = Number(upsertPkg.run(source.id, name).changes) > 0;
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     changedPackageIds.push(pkg.id);
-    // Newest-first, matching a full crawl's git-log order: L2 tie-breaks
-    // same-second commits on "larger commit_index id = older commit".
-    for (const touch of history.toReversed()) {
+    const baseHistoryOrder = (latestHistoryOrder.get(pkg.id) as unknown as { value: number }).value;
+    for (const [offset, touch] of history.entries()) {
       const author = touch.contributors.find((contributor) => contributor.role === "author");
       insertCommit.run(
         pkg.id,
         touch.sha,
         touch.blobSha,
         touch.at,
+        baseHistoryOrder + offset + 1,
         author?.displayName ?? null,
         touch.subject,
         touch.status,

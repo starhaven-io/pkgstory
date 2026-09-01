@@ -71,15 +71,35 @@ export class TapRepo {
   }
 
   /** Stage everything and commit at the next (or a pinned) timestamp. */
-  commit(message: string, at?: number, author?: string): { sha: string; at: number } {
+  commit(
+    message: string,
+    at?: number,
+    author?: string,
+    authorAt?: number,
+  ): { sha: string; at: number } {
     this.tick += 1;
     if (at !== undefined) this.pinned = at;
     this.git("add", "-A");
-    this.git("commit", "-q", "-m", message, ...(author ? ["--author", author] : []));
+    this.git(
+      "commit",
+      "-q",
+      "-m",
+      message,
+      ...(author ? ["--author", author] : []),
+      ...(authorAt === undefined ? [] : ["--date", `${authorAt} +0000`]),
+    );
     const sha = this.git("rev-parse", "HEAD");
     const time = this.pinned ?? this.at();
     this.pinned = undefined;
     return { sha, at: time };
+  }
+
+  commitWithAuthorDate(
+    message: string,
+    authorAt: number,
+    at?: number,
+  ): { sha: string; at: number } {
+    return this.commit(message, at, undefined, authorAt);
   }
 
   private pinned: number | undefined;

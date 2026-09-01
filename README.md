@@ -36,8 +36,10 @@ four-layer index, drawn so the expensive extraction happens exactly once:
 
 - **L0 — commit index.** One streaming pass over git history records every
   commit that touched a package file, keyed by basename so Homebrew's historical
-  file relocations don't matter. Stores each commit's `blob_sha`, so nothing
-  downstream re-walks history.
+  file relocations don't matter. It stores each commit's `blob_sha`, committer
+  timestamp, and topological position, so downstream derivation follows Git
+  history rather than potentially backdated author timestamps and never needs to
+  re-walk history.
 - **L1 — snapshots.** The blob at each commit, parsed for `version`, `revision`,
   exact formula bottle tags, and the package's current `deprecate!`/`disable!`
   lifecycle. Richer fields (dependencies, patches) can layer in later by

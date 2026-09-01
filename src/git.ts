@@ -28,7 +28,7 @@ export interface RawCommit {
 const COMMIT = "\x1ecommit\x1e";
 const FIELD = "\0";
 const IDENTITY = "\x1d";
-const FORMAT = `${COMMIT}%H%x00%at%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
+const FORMAT = `${COMMIT}%H%x00%ct%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
 
 function parseIdentity(value: string): GitIdentity | null {
   const match = value.trim().match(/^(.*?)\s*<([^<>]+)>$/);
@@ -61,6 +61,7 @@ export function logRaw(repoDir: string, pathspecs: string[]): RawCommit[] {
     "-C",
     repoDir,
     "log",
+    "--topo-order",
     "--raw",
     "--no-renames",
     "--no-abbrev", // full 40-char blob shas — `--raw` abbreviates by default
@@ -227,6 +228,7 @@ export function logSince(repoDir: string, sinceSha: string): RawCommit[] {
       "-C",
       repoDir,
       "log",
+      "--topo-order",
       "--raw",
       "--no-renames",
       "--no-abbrev",
@@ -255,6 +257,7 @@ export async function streamLog(
       "-C",
       repoDir,
       "log",
+      "--topo-order",
       "--raw",
       "--no-renames",
       "--no-abbrev",
