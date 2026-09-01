@@ -188,8 +188,11 @@ describe("ensure* schema probes", () => {
     execFileSyncMock.mockReturnValueOnce(
       '[{"results":[{"name":"bottle_events"},{"name":"bottle_intervals"}],"success":true}]',
     );
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"started_version"},{"name":"started_revision"},{"name":"ended_version"},{"name":"ended_revision"}],"success":true}]',
+    );
     ensureD1BottleSchema("local");
-    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
 
     execFileSyncMock.mockClear();
     execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
@@ -203,6 +206,45 @@ describe("ensure* schema probes", () => {
     expect(applied).toContain("CREATE TABLE IF NOT EXISTS bottle_intervals");
     expect(applied).toContain("idx_bottle_events_pkg_time");
     expect(applied).toContain("idx_bottle_intervals_pkg_time");
+  });
+
+  it("adds bottle interval boundary-version columns to an existing table", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"bottle_events"},{"name":"bottle_intervals"}],"success":true}]',
+    );
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"id"},{"name":"started_version"}],"success":true}]',
+    );
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+
+    ensureD1BottleSchema("local");
+    expect(applied).toBe(
+      "ALTER TABLE bottle_intervals ADD COLUMN started_revision INTEGER NOT NULL DEFAULT 0;\nALTER TABLE bottle_intervals ADD COLUMN ended_version TEXT;\nALTER TABLE bottle_intervals ADD COLUMN ended_revision INTEGER;\n",
+    );
+  });
+
+  it("migrates an existing interval table while creating a missing event table", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"bottle_intervals"}],"success":true}]',
+    );
+    const applied: string[] = [];
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied.push(readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8"));
+      return "";
+    }) as never);
+    execFileSyncMock.mockReturnValueOnce('[{"results":[{"name":"id"}],"success":true}]');
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied.push(readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8"));
+      return "";
+    }) as never);
+
+    ensureD1BottleSchema("local");
+    expect(applied[0]).toContain("CREATE TABLE IF NOT EXISTS bottle_events");
+    expect(applied[1]).toContain("ALTER TABLE bottle_intervals ADD COLUMN started_version TEXT");
   });
 });
 

@@ -57,9 +57,13 @@ describe("package JSON route contract", () => {
           startedAt: 1_600_000_050,
           startedCommit: "b".repeat(40),
           startedSubject: "pkg: bottle sonoma",
+          startedVersion: "1.0",
+          startedRevision: 2,
           endedAt: 1_700_000_050,
           endedCommit: "c".repeat(40),
           endedSubject: "pkg: remove sonoma bottle",
+          endedVersion: "2.0",
+          endedRevision: 0,
         },
       ],
       meta,
@@ -86,7 +90,7 @@ describe("package JSON route contract", () => {
       bottle: {
         bottled: true,
         platforms: ["arm64_sonoma", "sonoma"],
-        intervalCount: 4,
+        intervalCount: 1,
         page: 1,
         totalPages: 1,
         intervals: [

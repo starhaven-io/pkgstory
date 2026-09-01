@@ -45,7 +45,10 @@ four-layer index, drawn so the expensive extraction happens exactly once:
 - **L2 — version events, bottle intervals, and contributors.** Snapshots collapse
   into one row per `(version, revision)` change and one availability interval per
   formula bottle platform. Each interval records the commits that added and
-  removed that platform; bottle rebuilds that leave its tags unchanged fold out.
+  removed that platform plus the formula version at each boundary. The site
+  coalesces staggered architecture jobs from the same formula release when the
+  gap is at most seven days, while retaining the exact commit-level intervals
+  in D1.
   Commit authors and explicit co-authors collapse into per-package contribution
   summaries; automation is classified separately, and raw author email addresses
   are never exported to the site.
@@ -81,8 +84,8 @@ stays current without a rebuild. Operational procedures
 The version-history data is CC-BY-4.0 and served per package alongside the HTML:
 
 - `/<source>/<name>/index.json` — status, current version, lifecycle metadata,
-  the version timeline, and formula bottle platform intervals. Version timelines
-  longer than 500 events use `?page=N`; bottle histories longer than 100 intervals
+  the version timeline, and formula bottle platform spans. Version timelines
+  longer than 500 events use `?page=N`; bottle histories longer than 100 spans
   use `?bottle-page=N`. The HTML page uses the same paging contracts.
 - `/<source>/<name>/badge.json` — a [Shields](https://shields.io) endpoint for
   the current packaged version:

@@ -35,12 +35,14 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
   );
   const insertBottleInterval = db.prepare(
     `INSERT OR IGNORE INTO bottle_intervals
-       (package_id, tag, started_at, started_commit, started_subject)
-     VALUES (?, ?, ?, ?, ?)`,
+       (package_id, tag, started_at, started_commit, started_subject,
+        started_version, started_revision)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const closeBottleInterval = db.prepare(
     `UPDATE bottle_intervals
-        SET ended_at = ?, ended_commit = ?, ended_subject = ?
+        SET ended_at = ?, ended_commit = ?, ended_subject = ?,
+            ended_version = ?, ended_revision = ?
       WHERE package_id = ? AND tag = ? AND ended_at IS NULL
         AND started_at <= ?
         AND NOT EXISTS (
@@ -80,7 +82,15 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
       const tags = new Set<string>(JSON.parse(row.bottle_tags) as string[]);
       for (const tag of tags) {
         if (!lastTags.has(tag))
-          insertBottleInterval.run(pkg.id, tag, row.committed_at, row.commit_sha, row.subject);
+          insertBottleInterval.run(
+            pkg.id,
+            tag,
+            row.committed_at,
+            row.commit_sha,
+            row.subject,
+            row.version,
+            row.revision,
+          );
       }
       for (const tag of lastTags) {
         if (!tags.has(tag))
@@ -88,6 +98,8 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
             row.committed_at,
             row.commit_sha,
             row.subject,
+            row.version,
+            row.revision,
             pkg.id,
             tag,
             row.committed_at,

@@ -53,6 +53,11 @@ export function packageJsonPayload({
   const latestVersion = meta?.latestVersion ?? first.version;
   const latestRevision = meta?.latestVersion != null ? meta.latestRevision : first.revision;
   const eventCount = meta?.eventCount ?? events.length;
+  const bottleIntervalCount = bottleIntervals.length;
+  const pagedBottleIntervals = bottleIntervals.slice(
+    (bottlePage - 1) * bottleIntervalLimit,
+    bottlePage * bottleIntervalLimit,
+  );
 
   return {
     source,
@@ -70,13 +75,10 @@ export function packageJsonPayload({
         ? {
             bottled: meta?.latestBottleTags == null ? (meta?.latestBottled ?? null) : meta.latestBottleTags.length > 0,
             platforms: meta?.latestBottleTags ?? null,
-            intervalCount: meta?.bottleIntervalCount ?? bottleIntervals.length,
+            intervalCount: bottleIntervalCount,
             page: bottlePage,
-            totalPages: Math.max(
-              1,
-              Math.ceil((meta?.bottleIntervalCount ?? bottleIntervals.length) / bottleIntervalLimit),
-            ),
-            intervals: bottleIntervals.map((interval) => ({
+            totalPages: Math.max(1, Math.ceil(bottleIntervalCount / bottleIntervalLimit)),
+            intervals: pagedBottleIntervals.map((interval) => ({
               tag: interval.tag,
               platform: bottleTagLabel(interval.tag),
               from: {

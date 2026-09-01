@@ -127,11 +127,10 @@ export function ensureD1BottleSchema(mode: D1Mode): void {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('bottle_events', 'bottle_intervals')",
     ).map((row) => String(row.name)),
   );
-  if (tables.has("bottle_events") && tables.has("bottle_intervals")) return;
-
-  d1Apply(
-    mode,
-    `CREATE TABLE IF NOT EXISTS bottle_events (
+  if (!tables.has("bottle_events") || !tables.has("bottle_intervals")) {
+    d1Apply(
+      mode,
+      `CREATE TABLE IF NOT EXISTS bottle_events (
   id INTEGER PRIMARY KEY,
   package_id INTEGER NOT NULL,
   bottled INTEGER NOT NULL,
@@ -151,9 +150,13 @@ CREATE TABLE IF NOT EXISTS bottle_intervals (
   started_at INTEGER NOT NULL,
   started_commit TEXT NOT NULL,
   started_subject TEXT,
+  started_version TEXT,
+  started_revision INTEGER NOT NULL DEFAULT 0,
   ended_at INTEGER,
   ended_commit TEXT,
   ended_subject TEXT,
+  ended_version TEXT,
+  ended_revision INTEGER,
   UNIQUE (package_id, tag, started_commit)
 );
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time
@@ -161,7 +164,25 @@ CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_open
   ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
 `,
+    );
+    if (!tables.has("bottle_intervals")) return;
+  }
+
+  const columns = new Set(
+    d1Select(mode, "PRAGMA table_info(bottle_intervals)").map((row) => String(row.name)),
   );
+  const stmts: string[] = [];
+  if (!columns.has("started_version"))
+    stmts.push("ALTER TABLE bottle_intervals ADD COLUMN started_version TEXT;");
+  if (!columns.has("started_revision"))
+    stmts.push(
+      "ALTER TABLE bottle_intervals ADD COLUMN started_revision INTEGER NOT NULL DEFAULT 0;",
+    );
+  if (!columns.has("ended_version"))
+    stmts.push("ALTER TABLE bottle_intervals ADD COLUMN ended_version TEXT;");
+  if (!columns.has("ended_revision"))
+    stmts.push("ALTER TABLE bottle_intervals ADD COLUMN ended_revision INTEGER;");
+  if (stmts.length) d1Apply(mode, `${stmts.join("\n")}\n`);
 }
 
 /** Add the contributor read model to an already-seeded D1 database. */

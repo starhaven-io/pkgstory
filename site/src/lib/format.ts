@@ -23,9 +23,13 @@ export interface BottleInterval {
   startedAt: number;
   startedCommit: string;
   startedSubject: string | null;
+  startedVersion: string | null;
+  startedRevision: number;
   endedAt: number | null;
   endedCommit: string | null;
   endedSubject: string | null;
+  endedVersion: string | null;
+  endedRevision: number | null;
 }
 
 export interface ContributorSummary {
@@ -226,6 +230,39 @@ export function bottleTagLabel(tag: string): string {
   if (tag === 'arm64_linux') return 'ARM64 Linux';
   if (tag.startsWith('arm64_')) return `Apple Silicon ${bottleOsName(tag.slice(6))}`;
   return `Intel ${bottleOsName(tag)}`;
+}
+
+const MAX_BOTTLE_JOB_GAP_SECONDS = 7 * 24 * 60 * 60;
+
+/** Fold staggered bottle jobs for one formula release into a support span. */
+export function coalesceBottleIntervals(intervals: BottleInterval[]): BottleInterval[] {
+  const ordered = [...intervals].sort((a, b) => a.tag.localeCompare(b.tag) || a.startedAt - b.startedAt);
+  const spans: BottleInterval[] = [];
+  for (const interval of ordered) {
+    const previous = spans.at(-1);
+    const sameRelease =
+      previous?.tag === interval.tag &&
+      previous.endedAt !== null &&
+      previous.endedAt <= interval.startedAt &&
+      interval.startedAt - previous.endedAt <= MAX_BOTTLE_JOB_GAP_SECONDS &&
+      previous.endedVersion !== null &&
+      interval.startedVersion !== null &&
+      previous.endedVersion === interval.startedVersion &&
+      previous.endedRevision === interval.startedRevision;
+    if (!sameRelease || !previous) {
+      spans.push({ ...interval });
+      continue;
+    }
+    spans[spans.length - 1] = {
+      ...previous,
+      endedAt: interval.endedAt,
+      endedCommit: interval.endedCommit,
+      endedSubject: interval.endedSubject,
+      endedVersion: interval.endedVersion,
+      endedRevision: interval.endedRevision,
+    };
+  }
+  return spans.sort((a, b) => b.startedAt - a.startedAt || a.tag.localeCompare(b.tag));
 }
 
 export function decodeRouteParam(value: string): string {

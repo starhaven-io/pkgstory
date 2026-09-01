@@ -109,17 +109,45 @@ describe("site D1 helpers", () => {
         startedAt: 100,
         startedCommit: "a".repeat(40),
         startedSubject: "foo: bottle sonoma",
+        startedVersion: "1.0",
+        startedRevision: 0,
         endedAt: 200,
         endedCommit: "b".repeat(40),
         endedSubject: "foo: remove sonoma bottle",
+        endedVersion: "1.1",
+        endedRevision: 0,
       },
     ];
     const { db, calls } = fakeDb(() => ({ all: intervals }));
-    await expect(bottleIntervals(db, "homebrew-formula", "foo", 20, 40)).resolves.toEqual(
-      intervals,
-    );
-    expect(calls[0]?.sql).toContain("ORDER BY bi.started_at DESC, bi.id DESC");
-    expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 20, 40]);
+    await expect(bottleIntervals(db, "homebrew-formula", "foo")).resolves.toEqual(intervals);
+    expect(calls[0]?.sql).toContain("ORDER BY bi.tag ASC, bi.started_at ASC, bi.id ASC");
+    expect(calls[0]?.values).toEqual(["homebrew-formula", "foo"]);
+
+    const oldColumns = fakeDb((sql) => {
+      if (sql.includes("bi.started_version"))
+        return { error: new Error("D1_ERROR: no such column: bi.started_version") };
+      return {
+        all: [
+          {
+            ...intervals[0],
+            startedVersion: null,
+            startedRevision: 0,
+            endedVersion: null,
+            endedRevision: null,
+          },
+        ],
+      };
+    });
+    await expect(bottleIntervals(oldColumns.db, "homebrew-formula", "foo")).resolves.toEqual([
+      {
+        ...intervals[0],
+        startedVersion: null,
+        startedRevision: 0,
+        endedVersion: null,
+        endedRevision: null,
+      },
+    ]);
+    expect(oldColumns.calls).toHaveLength(2);
 
     const migrating = fakeDb(() => ({
       error: new Error("D1_ERROR: no such table: bottle_intervals"),

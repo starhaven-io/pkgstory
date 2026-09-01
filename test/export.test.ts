@@ -24,9 +24,11 @@ describe("exportSlice round-trip", () => {
       VALUES (1, 1, '1.1', 0, 1700000150, '${"d".repeat(40)}', 'foo: bottle 1.1');
       INSERT INTO bottle_intervals
         (package_id, tag, started_at, started_commit, started_subject,
-         ended_at, ended_commit, ended_subject)
+         started_version, started_revision, ended_at, ended_commit, ended_subject,
+         ended_version, ended_revision)
       VALUES (1, 'sonoma', 1700000150, '${"d".repeat(40)}', 'foo: bottle Sonoma',
-              1700000250, '${"e".repeat(40)}', 'foo: remove Sonoma');
+              '1.1', 0, 1700000250, '${"e".repeat(40)}', 'foo: remove Sonoma',
+              '1.2', 1);
       INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at)
       VALUES ('github:alice', 'Alice', 'alice', 0, 1700000100);
       INSERT INTO package_contributors (package_id, contributor_key, touch_count, version_count, first_at, last_at)
@@ -92,15 +94,19 @@ describe("exportSlice round-trip", () => {
     expect(
       exported
         .prepare(
-          "SELECT tag, started_at, started_commit, ended_at, ended_commit FROM bottle_intervals WHERE package_id = 1",
+          "SELECT tag, started_at, started_commit, started_version, started_revision, ended_at, ended_commit, ended_version, ended_revision FROM bottle_intervals WHERE package_id = 1",
         )
         .get(),
     ).toEqual({
       tag: "sonoma",
       started_at: 1700000150,
       started_commit: "d".repeat(40),
+      started_version: "1.1",
+      started_revision: 0,
       ended_at: 1700000250,
       ended_commit: "e".repeat(40),
+      ended_version: "1.2",
+      ended_revision: 1,
     });
     exported.close();
   });

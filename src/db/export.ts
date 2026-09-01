@@ -61,9 +61,13 @@ CREATE TABLE bottle_intervals (
   started_at INTEGER NOT NULL,
   started_commit TEXT NOT NULL,
   started_subject TEXT,
+  started_version TEXT,
+  started_revision INTEGER NOT NULL DEFAULT 0,
   ended_at INTEGER,
   ended_commit TEXT,
   ended_subject TEXT,
+  ended_version TEXT,
+  ended_revision INTEGER,
   UNIQUE (package_id, tag, started_commit)
 );
 CREATE TABLE contributors (
@@ -177,10 +181,10 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     db,
     write,
     "bottle_intervals",
-    "package_id,tag,started_at,started_commit,started_subject,ended_at,ended_commit,ended_subject",
-    "SELECT package_id, tag, started_at, started_commit, started_subject, ended_at, ended_commit, ended_subject FROM bottle_intervals",
+    "package_id,tag,started_at,started_commit,started_subject,started_version,started_revision,ended_at,ended_commit,ended_subject,ended_version,ended_revision",
+    "SELECT package_id, tag, started_at, started_commit, started_subject, started_version, started_revision, ended_at, ended_commit, ended_subject, ended_version, ended_revision FROM bottle_intervals",
     (r) =>
-      `${lit(r.package_id)},${lit(r.tag)},${lit(r.started_at)},${lit(r.started_commit)},${lit(r.started_subject)},${lit(r.ended_at)},${lit(r.ended_commit)},${lit(r.ended_subject)}`,
+      `${lit(r.package_id)},${lit(r.tag)},${lit(r.started_at)},${lit(r.started_commit)},${lit(r.started_subject)},${lit(r.started_version)},${lit(r.started_revision)},${lit(r.ended_at)},${lit(r.ended_commit)},${lit(r.ended_subject)},${lit(r.ended_version)},${lit(r.ended_revision)}`,
   );
   dumpTable(
     db,

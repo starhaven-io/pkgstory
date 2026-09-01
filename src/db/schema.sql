@@ -128,9 +128,13 @@ CREATE TABLE IF NOT EXISTS bottle_intervals (
   started_at      INTEGER NOT NULL,
   started_commit  TEXT NOT NULL,
   started_subject TEXT,
+  started_version TEXT,
+  started_revision INTEGER NOT NULL DEFAULT 0,
   ended_at        INTEGER,
   ended_commit    TEXT,
   ended_subject   TEXT,
+  ended_version   TEXT,
+  ended_revision  INTEGER,
   UNIQUE (package_id, tag, started_commit)
 );
 

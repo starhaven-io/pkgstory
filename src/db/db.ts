@@ -34,6 +34,10 @@ function migrate(db: DatabaseSync): void {
     "ALTER TABLE packages ADD COLUMN disable_reason TEXT",
     "ALTER TABLE snapshots ADD COLUMN bottled INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE snapshots ADD COLUMN bottle_tags TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE bottle_intervals ADD COLUMN started_version TEXT",
+    "ALTER TABLE bottle_intervals ADD COLUMN started_revision INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE bottle_intervals ADD COLUMN ended_version TEXT",
+    "ALTER TABLE bottle_intervals ADD COLUMN ended_revision INTEGER",
   ]) {
     try {
       db.exec(stmt);
