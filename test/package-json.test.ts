@@ -96,7 +96,7 @@ describe("package JSON route contract", () => {
         intervals: [
           {
             tag: "sonoma",
-            platform: "Intel Sonoma",
+            platform: "macOS Sonoma 14 (x86_64)",
             from: { at: 1_600_000_050, commit: "b".repeat(40) },
             until: { at: 1_700_000_050, commit: "c".repeat(40) },
           },

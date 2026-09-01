@@ -73,12 +73,47 @@ describe("site lifecycle formatting", () => {
 
 describe("bottle platform formatting", () => {
   it("labels Homebrew bottle tags by architecture and operating system", () => {
-    expect(bottleTagLabel("sonoma")).toBe("Intel Sonoma");
-    expect(bottleTagLabel("arm64_sonoma")).toBe("Apple Silicon Sonoma");
-    expect(bottleTagLabel("x86_64_linux")).toBe("Intel Linux");
-    expect(bottleTagLabel("arm64_linux")).toBe("ARM64 Linux");
+    expect(bottleTagLabel("sonoma")).toBe("macOS Sonoma 14 (x86_64)");
+    expect(bottleTagLabel("arm64_sonoma")).toBe("macOS Sonoma 14 (arm64)");
+    expect(bottleTagLabel("x86_64_linux")).toBe("Linux (x86_64)");
+    expect(bottleTagLabel("arm64_linux")).toBe("Linux (arm64)");
     expect(bottleTagLabel("all")).toBe("All platforms");
     expect(bottleTagLabel("legacy")).toBe("Platform unspecified");
+  });
+
+  it.each([
+    ["tahoe", "macOS Tahoe 26 (x86_64)"],
+    ["sequoia", "macOS Sequoia 15 (x86_64)"],
+    ["sonoma", "macOS Sonoma 14 (x86_64)"],
+    ["ventura", "macOS Ventura 13 (x86_64)"],
+    ["monterey", "macOS Monterey 12 (x86_64)"],
+    ["big_sur", "macOS Big Sur 11 (x86_64)"],
+    ["catalina", "macOS Catalina 10.15 (x86_64)"],
+    ["mojave", "macOS Mojave 10.14 (x86_64)"],
+    ["high_sierra", "macOS High Sierra 10.13 (x86_64)"],
+    ["sierra", "macOS Sierra 10.12 (x86_64)"],
+    ["el_capitan", "OS X El Capitan 10.11 (x86_64)"],
+    ["el_capitan_or_later", "OS X El Capitan 10.11 or later (x86_64)"],
+    ["yosemite", "OS X Yosemite 10.10 (x86_64)"],
+    ["mavericks", "OS X Mavericks 10.9 (x86_64)"],
+    ["mountain_lion", "OS X Mountain Lion 10.8 (x86_64)"],
+    ["mountainlion", "OS X Mountain Lion 10.8 (x86_64)"],
+    ["lion", "Mac OS X 10.7 (x86_64)"],
+    ["snow_leopard", "Mac OS X 10.6 (x86_64)"],
+    ["snowleopard", "Mac OS X 10.6 (x86_64)"],
+    ["leopard", "Mac OS X 10.5 (x86_64)"],
+    ["tiger", "Mac OS X 10.4 (x86_64)"],
+    ["panther", "Mac OS X 10.3 (x86_64)"],
+    ["jaguar", "Mac OS X 10.2 (x86_64)"],
+    ["puma", "Mac OS X 10.1 (x86_64)"],
+    ["cheetah", "Mac OS X 10.0 (x86_64)"],
+  ])("uses Apple's naming for Intel release %s", (tag, label) => {
+    expect(bottleTagLabel(tag)).toBe(label);
+  });
+
+  it("labels Apple silicon releases from Big Sur through Golden Gate", () => {
+    expect(bottleTagLabel("arm64_big_sur")).toBe("macOS Big Sur 11 (arm64)");
+    expect(bottleTagLabel("arm64_golden_gate")).toBe("macOS Golden Gate 27 (arm64)");
   });
 
   it("coalesces staggered jobs from one release but preserves release changes", () => {
