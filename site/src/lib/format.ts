@@ -223,13 +223,60 @@ function bottleOsName(tag: string): string {
     .join(' ');
 }
 
+const MAC_OS_X_VERSIONS = new Map([
+  ['cheetah', '10.0'],
+  ['puma', '10.1'],
+  ['jaguar', '10.2'],
+  ['panther', '10.3'],
+  ['tiger', '10.4'],
+  ['leopard', '10.5'],
+  ['snow_leopard', '10.6'],
+  ['lion', '10.7'],
+]);
+const BOTTLE_OS_ALIASES = new Map([
+  ['mountainlion', 'mountain_lion'],
+  ['snowleopard', 'snow_leopard'],
+]);
+const OS_X_VERSIONS = new Map([
+  ['mountain_lion', '10.8'],
+  ['mavericks', '10.9'],
+  ['yosemite', '10.10'],
+  ['el_capitan', '10.11'],
+]);
+const MACOS_VERSIONS = new Map([
+  ['sierra', '10.12'],
+  ['high_sierra', '10.13'],
+  ['mojave', '10.14'],
+  ['catalina', '10.15'],
+  ['big_sur', '11'],
+  ['monterey', '12'],
+  ['ventura', '13'],
+  ['sonoma', '14'],
+  ['sequoia', '15'],
+  ['tahoe', '26'],
+  ['golden_gate', '27'],
+]);
+
+function bottleOperatingSystemLabel(tag: string): string {
+  if (tag === 'linux') return 'Linux';
+  if (tag === 'el_capitan_or_later') return 'OS X El Capitan 10.11 or later';
+  const canonicalTag = BOTTLE_OS_ALIASES.get(tag) ?? tag;
+  const macOsXVersion = MAC_OS_X_VERSIONS.get(canonicalTag);
+  if (macOsXVersion) return `Mac OS X ${macOsXVersion}`;
+  const name = bottleOsName(canonicalTag);
+  const osXVersion = OS_X_VERSIONS.get(canonicalTag);
+  if (osXVersion) return `OS X ${name} ${osXVersion}`;
+  const macosVersion = MACOS_VERSIONS.get(canonicalTag);
+  return `macOS ${name}${macosVersion ? ` ${macosVersion}` : ''}`;
+}
+
 export function bottleTagLabel(tag: string): string {
   if (tag === 'legacy') return 'Platform unspecified';
   if (tag === 'all') return 'All platforms';
-  if (tag === 'x86_64_linux') return 'Intel Linux';
-  if (tag === 'arm64_linux') return 'ARM64 Linux';
-  if (tag.startsWith('arm64_')) return `Apple Silicon ${bottleOsName(tag.slice(6))}`;
-  return `Intel ${bottleOsName(tag)}`;
+  const arm64 = tag.startsWith('arm64_');
+  const x86_64 = tag.startsWith('x86_64_');
+  const osTag = arm64 ? tag.slice(6) : x86_64 ? tag.slice(7) : tag;
+  return `${bottleOperatingSystemLabel(osTag)} (${arm64 ? 'arm64' : 'x86_64'})`;
 }
 
 const MAX_BOTTLE_JOB_GAP_SECONDS = 7 * 24 * 60 * 60;

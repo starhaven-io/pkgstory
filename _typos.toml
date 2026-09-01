@@ -4,3 +4,6 @@ extend-exclude = ["node_modules/", "dist/", "site/node_modules/", "site/dist/", 
 [default.extend-words]
 # Real Homebrew formula token used as a version-parsing example (CLENS_0_7_0).
 CLENS = "CLENS"
+# macOS Big Sur release name and Homebrew bottle tag.
+sur = "sur"
+Sur = "Sur"
