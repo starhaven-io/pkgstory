@@ -19,6 +19,7 @@ import {
   TIMELINE_LIMIT,
 } from '../../../lib/d1.ts';
 import {
+  bottleAvailabilityRows,
   decodeRouteParam,
   bottleTagLabel,
   displayVersion,
@@ -82,6 +83,7 @@ const rangeStart = (page - 1) * TIMELINE_LIMIT + 1;
 const rangeEnd = (page - 1) * TIMELINE_LIMIT + events.length;
 const bottleRangeStart = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + 1;
 const bottlePageRanges = bottleRanges.slice((bottlePage - 1) * BOTTLE_HISTORY_LIMIT, bottlePage * BOTTLE_HISTORY_LIMIT);
+const bottleRows = bottleAvailabilityRows(bottlePageRanges);
 const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottlePageRanges.length;
 const packageHref = (versionPage: number, bottleHistoryPage: number) => {
   const params = new URLSearchParams();
@@ -246,9 +248,13 @@ const monthFmt = (t: number) =>
               </tr>
             </thead>
             <tbody>
-              {bottlePageRanges.map((interval) => (
+              {bottleRows.map(({ interval, platform, platformRowSpan }) => (
                 <tr>
-                  <td>{bottleTagLabel(interval.tag)}</td>
+                  {platformRowSpan > 0 && (
+                    <td class="bottle-platform" rowspan={platformRowSpan}>
+                      {platform}
+                    </td>
+                  )}
                   <td class="date">{isoDate(interval.startedAt)}</td>
                   <td class="date">{interval.endedAt == null ? 'present' : isoDate(interval.endedAt)}</td>
                   <td>

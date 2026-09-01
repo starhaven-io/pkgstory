@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  bottleAvailabilityRows,
   bottleTagLabel,
   coalesceBottleIntervals,
   decodeRouteParam,
@@ -230,6 +231,49 @@ describe("bottle platform formatting", () => {
     ).toHaveLength(2);
   });
 
+  it("folds or-later transitions into their base platform span", () => {
+    const interval = (tag: string, startedAt: number, endedAt: number | null) => ({
+      tag,
+      startedAt,
+      startedCommit: String(startedAt).repeat(40).slice(0, 40),
+      startedSubject: null,
+      startedVersion: "1.0",
+      startedRevision: 0,
+      endedAt,
+      endedCommit: endedAt == null ? null : String(endedAt).repeat(40).slice(0, 40),
+      endedSubject: null,
+      endedVersion: endedAt == null ? null : "1.0",
+      endedRevision: endedAt == null ? null : 0,
+    });
+
+    expect(
+      coalesceBottleIntervals([
+        interval("sierra", 10, 20),
+        interval("sierra_or_later", 20, 30),
+        interval("sierra", 30, null),
+      ]),
+    ).toEqual([interval("sierra", 10, null)]);
+  });
+
+  it("folds an or-later span onto its base OS however long it ran", () => {
+    const day = 24 * 60 * 60;
+    const interval = {
+      tag: "el_capitan_or_later",
+      startedAt: 10,
+      startedCommit: "a".repeat(40),
+      startedSubject: null,
+      startedVersion: "1.0",
+      startedRevision: 0,
+      endedAt: 10 + 400 * day,
+      endedCommit: "b".repeat(40),
+      endedSubject: null,
+      endedVersion: "1.0",
+      endedRevision: 0,
+    };
+
+    expect(coalesceBottleIntervals([interval])).toEqual([{ ...interval, tag: "el_capitan" }]);
+  });
+
   it("sorts platform spans by OS release with the oldest at the bottom", () => {
     const interval = (tag: string, startedAt: number) => ({
       tag,
@@ -267,8 +311,37 @@ describe("bottle platform formatting", () => {
       "sonoma",
       "arm64_ventura",
       "ventura",
-      "sierra_or_later",
+      "sierra",
       "cheetah",
+    ]);
+  });
+
+  it("groups repeated platform spans under one table label", () => {
+    const interval = (tag: string, startedAt: number) => ({
+      tag,
+      startedAt,
+      startedCommit: String(startedAt).repeat(40).slice(0, 40),
+      startedSubject: null,
+      startedVersion: "1.0",
+      startedRevision: 0,
+      endedAt: startedAt + 1,
+      endedCommit: String(startedAt + 1)
+        .repeat(40)
+        .slice(0, 40),
+      endedSubject: null,
+      endedVersion: "1.0",
+      endedRevision: 0,
+    });
+    const rows = bottleAvailabilityRows([
+      interval("high_sierra", 30),
+      interval("high_sierra", 10),
+      interval("sierra", 5),
+    ]);
+
+    expect(rows.map(({ platform, platformRowSpan }) => ({ platform, platformRowSpan }))).toEqual([
+      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 2 },
+      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 0 },
+      { platform: "macOS Sierra 10.12 (x86_64)", platformRowSpan: 1 },
     ]);
   });
 });
