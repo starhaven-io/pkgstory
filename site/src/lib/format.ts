@@ -258,16 +258,19 @@ const MACOS_VERSIONS = new Map([
 ]);
 
 function bottleOperatingSystemLabel(tag: string): string {
-  if (tag === 'linux') return 'Linux';
-  if (tag === 'el_capitan_or_later') return 'OS X El Capitan 10.11 or later';
-  const canonicalTag = BOTTLE_OS_ALIASES.get(tag) ?? tag;
+  const rangeSuffix = '_or_later';
+  const orLater = tag.endsWith(rangeSuffix);
+  const releaseTag = orLater ? tag.slice(0, -rangeSuffix.length) : tag;
+  const suffix = orLater ? ' or later' : '';
+  if (releaseTag === 'linux') return `Linux${suffix}`;
+  const canonicalTag = BOTTLE_OS_ALIASES.get(releaseTag) ?? releaseTag;
   const macOsXVersion = MAC_OS_X_VERSIONS.get(canonicalTag);
-  if (macOsXVersion) return `Mac OS X ${macOsXVersion}`;
+  if (macOsXVersion) return `Mac OS X ${macOsXVersion}${suffix}`;
   const name = bottleOsName(canonicalTag);
   const osXVersion = OS_X_VERSIONS.get(canonicalTag);
-  if (osXVersion) return `OS X ${name} ${osXVersion}`;
+  if (osXVersion) return `OS X ${name} ${osXVersion}${suffix}`;
   const macosVersion = MACOS_VERSIONS.get(canonicalTag);
-  return `macOS ${name}${macosVersion ? ` ${macosVersion}` : ''}`;
+  return `macOS ${name}${macosVersion ? ` ${macosVersion}` : ''}${suffix}`;
 }
 
 export function bottleTagLabel(tag: string): string {
