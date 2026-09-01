@@ -36,6 +36,7 @@ export interface BottleAvailabilityRow {
   interval: BottleInterval;
   platform: string;
   platformRowSpan: number;
+  striped: boolean;
 }
 
 export interface ContributorSummary {
@@ -318,6 +319,7 @@ function compareBottlePlatforms(a: BottleInterval, b: BottleInterval): number {
 
 export function bottleAvailabilityRows(intervals: BottleInterval[]): BottleAvailabilityRow[] {
   const rows: BottleAvailabilityRow[] = [];
+  let group = 0;
   for (let index = 0; index < intervals.length;) {
     const platform = bottleTagLabel(intervals[index]!.tag);
     let end = index + 1;
@@ -327,8 +329,10 @@ export function bottleAvailabilityRows(intervals: BottleInterval[]): BottleAvail
         interval: intervals[row]!,
         platform,
         platformRowSpan: row === index ? end - index : 0,
+        striped: group % 2 === 1,
       });
     }
+    group += 1;
     index = end;
   }
   return rows;

@@ -338,10 +338,16 @@ describe("bottle platform formatting", () => {
       interval("sierra", 5),
     ]);
 
-    expect(rows.map(({ platform, platformRowSpan }) => ({ platform, platformRowSpan }))).toEqual([
-      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 2 },
-      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 0 },
-      { platform: "macOS Sierra 10.12 (x86_64)", platformRowSpan: 1 },
+    expect(
+      rows.map(({ platform, platformRowSpan, striped }) => ({
+        platform,
+        platformRowSpan,
+        striped,
+      })),
+    ).toEqual([
+      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 2, striped: false },
+      { platform: "macOS High Sierra 10.13 (x86_64)", platformRowSpan: 0, striped: false },
+      { platform: "macOS Sierra 10.12 (x86_64)", platformRowSpan: 1, striped: true },
     ]);
   });
 });
