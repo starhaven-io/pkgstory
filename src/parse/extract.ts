@@ -8,6 +8,7 @@ export interface Extracted {
   revision: number;
   versionSrc: string;
   bottled: boolean;
+  bottleTags: string[];
 }
 
 /** Version + revision for a package blob, with a commit-subject fallback. */
@@ -21,6 +22,7 @@ export function extractVersion(
   let versionSrc: string;
   let revision = 0;
   let bottled = false;
+  let bottleTags: string[] = [];
 
   if (kind === "formula") {
     const parsed = parseFormula(blob);
@@ -28,6 +30,7 @@ export function extractVersion(
     revision = parsed.revision;
     versionSrc = parsed.versionSrc;
     bottled = parsed.bottled;
+    bottleTags = parsed.bottleTags;
   } else {
     version = parseCask(blob).version;
     versionSrc = version ? "version-stanza" : "none";
@@ -41,5 +44,5 @@ export function extractVersion(
     }
   }
 
-  return { version, revision, versionSrc, bottled };
+  return { version, revision, versionSrc, bottled, bottleTags };
 }

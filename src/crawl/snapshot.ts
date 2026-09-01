@@ -45,14 +45,15 @@ export function buildSnapshots(
   );
   const insert = db.prepare(
     `INSERT INTO snapshots
-       (package_id, commit_sha, committed_at, version, revision, version_src, bottled)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+       (package_id, commit_sha, committed_at, version, revision, version_src, bottled, bottle_tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (package_id, commit_sha) DO UPDATE SET
        committed_at = excluded.committed_at,
        version = excluded.version,
        revision = excluded.revision,
        version_src = excluded.version_src,
-       bottled = excluded.bottled`,
+       bottled = excluded.bottled,
+       bottle_tags = excluded.bottle_tags`,
   );
 
   let lastId = 0;
@@ -76,11 +77,16 @@ export function buildSnapshots(
     );
 
     db.exec("BEGIN");
-    for (const row of live) {
+    for (const row of rows) {
+      if (row.status === "D" || /^0+$/.test(row.blob_sha)) {
+        insert.run(row.package_id, row.commit_sha, row.committed_at, null, 0, "none", 0, "[]");
+        written += 1;
+        continue;
+      }
       const blob = blobs.get(row.blob_sha);
       if (blob === undefined) continue;
 
-      const { version, revision, versionSrc, bottled } = extractVersion(
+      const { version, revision, versionSrc, bottled, bottleTags } = extractVersion(
         source.kind,
         row.name,
         row.subject,
@@ -94,6 +100,7 @@ export function buildSnapshots(
         revision,
         versionSrc,
         bottled ? 1 : 0,
+        JSON.stringify(bottleTags),
       );
       written += 1;
 

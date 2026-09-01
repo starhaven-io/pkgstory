@@ -18,6 +18,16 @@ export interface BottleEvent {
   subject: string;
 }
 
+export interface BottleInterval {
+  tag: string;
+  startedAt: number;
+  startedCommit: string;
+  startedSubject: string | null;
+  endedAt: number | null;
+  endedCommit: string | null;
+  endedSubject: string | null;
+}
+
 export interface ContributorSummary {
   displayName: string;
   githubLogin: string | null;
@@ -58,8 +68,10 @@ export interface PackageMeta {
   latestRevision: number;
   latestAt: number | null;
   latestBottled: boolean | null;
+  latestBottleTags: string[] | null;
   eventCount: number;
   bottleEventCount: number;
+  bottleIntervalCount: number;
   firstIntroducedAt: number | null;
   removedAt: number | null;
   removedCommit: string | null;
@@ -198,6 +210,22 @@ export function sourceLabel(source: string): string {
 
 export function displayVersion(version: string, revision: number): string {
   return revision ? `${version}_${revision}` : version;
+}
+
+function bottleOsName(tag: string): string {
+  return tag
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+export function bottleTagLabel(tag: string): string {
+  if (tag === 'legacy') return 'Platform unspecified';
+  if (tag === 'all') return 'All platforms';
+  if (tag === 'x86_64_linux') return 'Intel Linux';
+  if (tag === 'arm64_linux') return 'ARM64 Linux';
+  if (tag.startsWith('arm64_')) return `Apple Silicon ${bottleOsName(tag.slice(6))}`;
+  return `Intel ${bottleOsName(tag)}`;
 }
 
 export function decodeRouteParam(value: string): string {

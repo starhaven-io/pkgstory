@@ -9,9 +9,12 @@ describe("exportSlice round-trip", () => {
     const source = openDb(":memory:");
     source.exec(`
       INSERT INTO packages
-        (id, source, name, latest_version, latest_revision, latest_at, latest_bottled, event_count, bottle_event_count)
-      VALUES (1, 'homebrew-formula', 'foo', '1.1', 0, 1700000100, 1, 2, 1),
-             (2, 'homebrew-cask', 'bar-app', '2.0', 1, 1700000200, NULL, 1, 0);
+        (id, source, name, latest_version, latest_revision, latest_at, latest_bottled,
+         latest_bottle_tags, event_count, bottle_event_count, bottle_interval_count)
+      VALUES (1, 'homebrew-formula', 'foo', '1.1', 0, 1700000100, 1,
+              '["sonoma"]', 2, 1, 1),
+             (2, 'homebrew-cask', 'bar-app', '2.0', 1, 1700000200, NULL,
+              NULL, 1, 0, 0);
       INSERT INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject)
       VALUES (1, '1.0', 0, 1700000000, '${"a".repeat(40)}', 'foo 1.0'),
              (1, '1.1', 0, 1700000100, '${"b".repeat(40)}', 'foo 1.1 with ''quotes'''),
@@ -19,6 +22,11 @@ describe("exportSlice round-trip", () => {
       INSERT INTO bottle_events
         (package_id, bottled, version, revision, changed_at, commit_sha, subject)
       VALUES (1, 1, '1.1', 0, 1700000150, '${"d".repeat(40)}', 'foo: bottle 1.1');
+      INSERT INTO bottle_intervals
+        (package_id, tag, started_at, started_commit, started_subject,
+         ended_at, ended_commit, ended_subject)
+      VALUES (1, 'sonoma', 1700000150, '${"d".repeat(40)}', 'foo: bottle Sonoma',
+              1700000250, '${"e".repeat(40)}', 'foo: remove Sonoma');
       INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at)
       VALUES ('github:alice', 'Alice', 'alice', 0, 1700000100);
       INSERT INTO package_contributors (package_id, contributor_key, touch_count, version_count, first_at, last_at)
@@ -50,6 +58,7 @@ describe("exportSlice round-trip", () => {
     expect(count("packages")).toBe(2);
     expect(count("version_events")).toBe(3);
     expect(count("bottle_events")).toBe(1);
+    expect(count("bottle_intervals")).toBe(1);
     expect(count("contributors")).toBe(1);
     expect(count("package_contribution_slices")).toBe(1);
     expect(count("crawl_state")).toBe(1);
@@ -79,6 +88,19 @@ describe("exportSlice round-trip", () => {
       version: "1.1",
       changed_at: 1700000150,
       subject: "foo: bottle 1.1",
+    });
+    expect(
+      exported
+        .prepare(
+          "SELECT tag, started_at, started_commit, ended_at, ended_commit FROM bottle_intervals WHERE package_id = 1",
+        )
+        .get(),
+    ).toEqual({
+      tag: "sonoma",
+      started_at: 1700000150,
+      started_commit: "d".repeat(40),
+      ended_at: 1700000250,
+      ended_commit: "e".repeat(40),
     });
     exported.close();
   });

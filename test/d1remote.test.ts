@@ -152,12 +152,14 @@ describe("ensure* schema probes", () => {
     }) as never);
 
     ensureD1PackageColumns("local");
-    expect(applied).toBe("ALTER TABLE packages ADD COLUMN migrated_to TEXT;\n");
+    expect(applied).toBe(
+      "ALTER TABLE packages ADD COLUMN migrated_to TEXT;\nALTER TABLE packages ADD COLUMN latest_bottle_tags TEXT;\nALTER TABLE packages ADD COLUMN bottle_interval_count INTEGER NOT NULL DEFAULT 0;\n",
+    );
   });
 
   it("does nothing when the package columns already exist", () => {
     execFileSyncMock.mockReturnValueOnce(
-      '[{"results":[{"name":"renamed_to"},{"name":"migrated_to"},{"name":"latest_bottled"},{"name":"bottle_event_count"}],"success":true}]',
+      '[{"results":[{"name":"renamed_to"},{"name":"migrated_to"},{"name":"latest_bottled"},{"name":"bottle_event_count"},{"name":"latest_bottle_tags"},{"name":"bottle_interval_count"}],"success":true}]',
     );
     ensureD1PackageColumns("local");
     expect(execFileSyncMock).toHaveBeenCalledTimes(1); // probe only, no apply
@@ -182,8 +184,10 @@ describe("ensure* schema probes", () => {
     expect(applied).toContain("CREATE TABLE IF NOT EXISTS contributor_seeds");
   });
 
-  it("creates the bottle-event table only when it is missing", () => {
-    execFileSyncMock.mockReturnValueOnce('[{"results":[{"1":1}],"success":true}]');
+  it("creates the bottle tables only when either is missing", () => {
+    execFileSyncMock.mockReturnValueOnce(
+      '[{"results":[{"name":"bottle_events"},{"name":"bottle_intervals"}],"success":true}]',
+    );
     ensureD1BottleSchema("local");
     expect(execFileSyncMock).toHaveBeenCalledTimes(1);
 
@@ -196,7 +200,9 @@ describe("ensure* schema probes", () => {
     }) as never);
     ensureD1BottleSchema("local");
     expect(applied).toContain("CREATE TABLE IF NOT EXISTS bottle_events");
+    expect(applied).toContain("CREATE TABLE IF NOT EXISTS bottle_intervals");
     expect(applied).toContain("idx_bottle_events_pkg_time");
+    expect(applied).toContain("idx_bottle_intervals_pkg_time");
   });
 });
 

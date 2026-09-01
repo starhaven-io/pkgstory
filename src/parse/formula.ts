@@ -5,6 +5,7 @@ export interface ParsedFormula {
   revision: number;
   versionSrc: VersionSource;
   bottled: boolean;
+  bottleTags: string[];
 }
 
 // Anchored to 2-space (top-level) indentation: Homebrew style guarantees it, and it
@@ -15,7 +16,8 @@ const OLD_VERSION_STANZA = /^\s*@version\s*=\s*(["'])(.*?)\1/m;
 const REVISION = /^ {2}revision\s+(\d+)/m;
 // A bottle block records an actual built artifact. Historical `bottle :unneeded`
 // and `bottle :disable` modifiers do not, so deliberately exclude them.
-const BOTTLE_BLOCK = /^ {2}bottle\s+(?:do\s*(?:#.*)?$|["'])/m;
+const BOTTLE_BLOCK = /^ {2}bottle\s+do\s*(?:#.*)?$/m;
+const LEGACY_BOTTLE = /^ {2}bottle\s+["']/m;
 // Modern formula URLs are top-level only; nested resource URLs are dependency
 // archives, not package versions. The old @url form lived inside initialize.
 const URL_LINES = [/^ {2}url\s+(["'])(.*?)\1/m, /^\s*@url\s*=\s*(["'])(.*?)\1/m];
@@ -35,30 +37,52 @@ const PACKAGING_LABEL = /[-_.](?:src|source|bin|single|osx|macos|darwin|linux)$/
 export function parseFormula(src: string): ParsedFormula {
   const revMatch = src.match(REVISION);
   const revision = revMatch?.[1] ? Number(revMatch[1]) : 0;
-  const bottled = BOTTLE_BLOCK.test(src);
+  const bottleTags = parseBottleTags(src);
+  const bottled = bottleTags.length > 0;
 
   const stanza = src.match(VERSION_STANZA);
-  if (stanza?.[2]) return { version: stanza[2], revision, versionSrc: "version-stanza", bottled };
+  if (stanza?.[2])
+    return { version: stanza[2], revision, versionSrc: "version-stanza", bottled, bottleTags };
 
   const oldStanza = src.match(OLD_VERSION_STANZA);
   if (oldStanza?.[2])
-    return { version: oldStanza[2], revision, versionSrc: "version-stanza", bottled };
+    return { version: oldStanza[2], revision, versionSrc: "version-stanza", bottled, bottleTags };
 
   const tag = src.match(TAG_OPT);
   if (tag?.[1]) {
     const v = cleanVersion(tag[1]);
-    if (v) return { version: v, revision, versionSrc: "url", bottled };
+    if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
   }
 
   for (const re of URL_LINES) {
     const url = src.match(re);
     if (url?.[2]) {
       const v = versionFromUrl(url[2]);
-      if (v) return { version: v, revision, versionSrc: "url", bottled };
+      if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
     }
   }
 
-  return { version: null, revision, versionSrc: "none", bottled };
+  return { version: null, revision, versionSrc: "none", bottled, bottleTags };
+}
+
+export function parseBottleTags(src: string): string[] {
+  const start = src.match(BOTTLE_BLOCK);
+  if (!start || start.index === undefined) return LEGACY_BOTTLE.test(src) ? ["legacy"] : [];
+
+  const rest = src.slice(start.index + start[0].length);
+  const end = rest.search(/^ {2}end\b/m);
+  const body = end === -1 ? rest : rest.slice(0, end);
+  const tags = new Set<string>();
+  for (const line of body.split("\n")) {
+    if (!/^\s+(?:sha1|sha256)\b/.test(line)) continue;
+    for (const match of line.matchAll(/\b([a-z0-9_]+):\s*["'][^"']+["']/gi)) {
+      const tag = match[1]?.toLowerCase();
+      if (tag && tag !== "cellar") tags.add(tag);
+    }
+    const legacy = line.match(/=>\s*:([a-z0-9_]+)\b/i)?.[1];
+    if (legacy) tags.add(legacy.toLowerCase());
+  }
+  return tags.size ? [...tags].sort() : ["legacy"];
 }
 
 export function versionFromUrl(url: string): string | null {

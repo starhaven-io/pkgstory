@@ -5,15 +5,15 @@ interface SnapRow {
   version: string | null;
   revision: number;
   bottled: number;
+  bottle_tags: string;
   committed_at: number;
   commit_sha: string;
   subject: string;
 }
 
 /**
- * L2 — collapse snapshots into the version timeline. Walking oldest→newest, a row
- * is emitted only when (version, revision) changes, so bottle rebuilds and metadata
- * commits drop out and `introduced_at` is the first appearance of each version.
+ * L2 — collapse snapshots into the version timeline and per-platform bottle
+ * intervals. Walking oldest→newest drops bottle rebuilds and metadata commits.
  */
 export function buildEvents(db: DatabaseSync, source: Source): number {
   const pkgs = db.prepare("SELECT id FROM packages WHERE source = ?").all(source.id) as {
@@ -33,10 +33,27 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
        (package_id, bottled, version, revision, changed_at, commit_sha, subject)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
+  const insertBottleInterval = db.prepare(
+    `INSERT OR IGNORE INTO bottle_intervals
+       (package_id, tag, started_at, started_commit, started_subject)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const closeBottleInterval = db.prepare(
+    `UPDATE bottle_intervals
+        SET ended_at = ?, ended_commit = ?, ended_subject = ?
+      WHERE package_id = ? AND tag = ? AND ended_at IS NULL
+        AND started_at <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM bottle_intervals closed
+           WHERE closed.package_id = bottle_intervals.package_id
+             AND closed.tag = bottle_intervals.tag
+             AND closed.ended_commit = ?
+        )`,
+  );
   // id DESC on the timestamp tie: rows were inserted in git-log order (newest
   // first), so within one second a *larger* id is the *older* commit.
   const snaps = db.prepare(
-    `SELECT s.version, s.revision, s.bottled, s.committed_at, s.commit_sha, ci.subject
+    `SELECT s.version, s.revision, s.bottled, s.bottle_tags, s.committed_at, s.commit_sha, ci.subject
        FROM snapshots s JOIN commit_index ci
          ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha
       WHERE s.package_id = ?
@@ -49,12 +66,35 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
     `DELETE FROM bottle_events
       WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
   ).run(source.id);
+  db.prepare(
+    `DELETE FROM bottle_intervals
+      WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
+  ).run(source.id);
   for (const pkg of pkgs) {
     const rows = snaps.all(pkg.id) as unknown as SnapRow[];
     let lastKey: string | null = null;
     let lastBottled: boolean | null = null;
+    let lastTags = new Set<string>();
     for (const row of rows) {
       const bottled = row.bottled !== 0;
+      const tags = new Set<string>(JSON.parse(row.bottle_tags) as string[]);
+      for (const tag of tags) {
+        if (!lastTags.has(tag))
+          insertBottleInterval.run(pkg.id, tag, row.committed_at, row.commit_sha, row.subject);
+      }
+      for (const tag of lastTags) {
+        if (!tags.has(tag))
+          closeBottleInterval.run(
+            row.committed_at,
+            row.commit_sha,
+            row.subject,
+            pkg.id,
+            tag,
+            row.committed_at,
+            row.commit_sha,
+          );
+      }
+      lastTags = tags;
       if ((lastBottled === null && bottled) || (lastBottled !== null && bottled !== lastBottled)) {
         insertBottle.run(
           pkg.id,

@@ -9,7 +9,7 @@ import Sparkline from '../../../components/Sparkline.astro';
 import StatusChip from '../../../components/StatusChip.astro';
 import Version from '../../../components/Version.astro';
 import {
-  bottleHistory,
+  bottleIntervals,
   BOTTLE_HISTORY_LIMIT,
   contributors,
   getDb,
@@ -20,6 +20,7 @@ import {
 } from '../../../lib/d1.ts';
 import {
   decodeRouteParam,
+  bottleTagLabel,
   displayVersion,
   isoDate,
   isKnownSource,
@@ -52,12 +53,12 @@ if (
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta, packageContributors, bottleEvents] = await Promise.all([
+const [events, meta, packageContributors, bottleRanges] = await Promise.all([
   timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
   source === 'homebrew-formula'
-    ? bottleHistory(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
+    ? bottleIntervals(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
     : Promise.resolve([]),
 ]);
 
@@ -75,14 +76,14 @@ const latestRevision = meta?.latestVersion ? meta.latestRevision : latestEvent.r
 const latestShipped = displayVersion(latestVersion, latestRevision);
 const totalEvents = meta?.eventCount ?? events.length;
 const totalPages = Math.max(1, Math.ceil(totalEvents / TIMELINE_LIMIT));
-const totalBottleEvents = meta?.bottleEventCount ?? bottleEvents.length;
-const totalBottlePages = Math.max(1, Math.ceil(totalBottleEvents / BOTTLE_HISTORY_LIMIT));
+const totalBottleIntervals = meta?.bottleIntervalCount ?? bottleRanges.length;
+const totalBottlePages = Math.max(1, Math.ceil(totalBottleIntervals / BOTTLE_HISTORY_LIMIT));
 if (source !== 'homebrew-formula' && bottlePageParam !== null) return Astro.rewrite('/404');
 if (bottlePage > totalBottlePages) return Astro.rewrite('/404');
 const rangeStart = (page - 1) * TIMELINE_LIMIT + 1;
 const rangeEnd = (page - 1) * TIMELINE_LIMIT + events.length;
 const bottleRangeStart = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + 1;
-const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottleEvents.length;
+const bottleRangeEnd = (bottlePage - 1) * BOTTLE_HISTORY_LIMIT + bottleRanges.length;
 const packageHref = (versionPage: number, bottleHistoryPage: number) => {
   const params = new URLSearchParams();
   if (versionPage > 1) params.set('page', String(versionPage));
@@ -171,8 +172,12 @@ const monthFmt = (t: number) =>
       {
         source === 'homebrew-formula' && (
           <div class="fact">
-            <dt>Bottle</dt>
-            <dd>{meta?.latestBottled == null ? 'unknown' : meta.latestBottled ? 'bottled' : 'not bottled'}</dd>
+            <dt>Bottles</dt>
+            <dd title={meta?.latestBottleTags?.map(bottleTagLabel).join(', ')}>
+              {meta?.latestBottleTags == null
+                ? 'unknown'
+                : `${meta.latestBottleTags.length.toLocaleString()} platform${meta.latestBottleTags.length === 1 ? '' : 's'}`}
+            </dd>
           </div>
         )
       }
@@ -216,6 +221,78 @@ const monthFmt = (t: number) =>
           title={`${name} update history`}
         />
       </div>
+    )
+  }
+
+  {
+    source === 'homebrew-formula' && totalBottleIntervals > 0 && (
+      <section>
+        <div class="section-head">
+          <h2>Bottle availability</h2>
+          <p>
+            {totalBottlePages > 1
+              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleIntervals.toLocaleString()} platform intervals`
+              : `${totalBottleIntervals.toLocaleString()} platform intervals`}
+          </p>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Platform</th>
+                <th>From</th>
+                <th>Until</th>
+                <th>First bottled commit</th>
+                <th>Removal commit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {bottleRanges.map((interval) => (
+                <tr>
+                  <td>{bottleTagLabel(interval.tag)}</td>
+                  <td class="date">{isoDate(interval.startedAt)}</td>
+                  <td class="date">{interval.endedAt == null ? 'present' : isoDate(interval.endedAt)}</td>
+                  <td>
+                    <a
+                      class="commit-link"
+                      href={`https://github.com/${repo}/commit/${interval.startedCommit}`}
+                      title={interval.startedSubject ?? undefined}
+                    >
+                      {interval.startedCommit.slice(0, 9)}
+                    </a>
+                  </td>
+                  <td>
+                    {interval.endedCommit ? (
+                      <a
+                        class="commit-link"
+                        href={`https://github.com/${repo}/commit/${interval.endedCommit}`}
+                        title={interval.endedSubject ?? undefined}
+                      >
+                        {interval.endedCommit.slice(0, 9)}
+                      </a>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {totalBottlePages > 1 && (
+          <nav class="pager" aria-label="Bottle availability pages">
+            {bottlePage > 1 ? <a href={bottlePageHref(bottlePage - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+            <span class="pager-status">
+              Page {bottlePage} of {totalBottlePages.toLocaleString()}
+            </span>
+            {bottlePage < totalBottlePages ? (
+              <a href={bottlePageHref(bottlePage + 1)}>Older &rarr;</a>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </nav>
+        )}
+      </section>
     )
   }
 
@@ -279,64 +356,4 @@ const monthFmt = (t: number) =>
       )
     }
   </section>
-
-  {
-    source === 'homebrew-formula' && totalBottleEvents > 0 && (
-      <section>
-        <div class="section-head">
-          <h2>Bottle history</h2>
-          <p>
-            {totalBottlePages > 1
-              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleEvents.toLocaleString()} bottle changes`
-              : `${totalBottleEvents.toLocaleString()} bottle changes`}
-          </p>
-        </div>
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>State</th>
-                <th>Version</th>
-                <th>Changed</th>
-                <th>Commit</th>
-                <th>Subject</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bottleEvents.map((event) => (
-                <tr>
-                  <td>{event.bottled ? 'Bottled' : 'Lost'}</td>
-                  <td>{event.version ? <Version version={event.version} revision={event.revision} /> : '—'}</td>
-                  <td class="date">{isoDate(event.changedAt)}</td>
-                  <td>
-                    {event.commitSha ? (
-                      <a class="commit-link" href={`https://github.com/${repo}/commit/${event.commitSha}`}>
-                        {event.commitSha.slice(0, 9)}
-                      </a>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td class="subject">{event.subject}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {totalBottlePages > 1 && (
-          <nav class="pager" aria-label="Bottle history pages">
-            {bottlePage > 1 ? <a href={bottlePageHref(bottlePage - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
-            <span class="pager-status">
-              Page {bottlePage} of {totalBottlePages.toLocaleString()}
-            </span>
-            {bottlePage < totalBottlePages ? (
-              <a href={bottlePageHref(bottlePage + 1)}>Older &rarr;</a>
-            ) : (
-              <span aria-hidden="true" />
-            )}
-          </nav>
-        )}
-      </section>
-    )
-  }
 </Base>

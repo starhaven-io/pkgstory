@@ -1,6 +1,7 @@
 import {
+  bottleTagLabel,
   displayVersion,
-  type BottleEvent,
+  type BottleInterval,
   type KnownSource,
   lifecycleState,
   type PackageMeta,
@@ -23,13 +24,13 @@ interface PackageJsonInput {
   source: KnownSource;
   name: string;
   events: VersionEvent[];
-  bottleEvents: BottleEvent[];
+  bottleIntervals: BottleInterval[];
   meta: PackageMeta | null;
   checkedAt: number | null;
   page: number;
   timelineLimit: number;
   bottlePage: number;
-  bottleHistoryLimit: number;
+  bottleIntervalLimit: number;
   today?: string;
 }
 
@@ -37,13 +38,13 @@ export function packageJsonPayload({
   source,
   name,
   events,
-  bottleEvents,
+  bottleIntervals,
   meta,
   checkedAt,
   page,
   timelineLimit,
   bottlePage,
-  bottleHistoryLimit,
+  bottleIntervalLimit,
   today = todayISO(),
 }: PackageJsonInput) {
   const first = events[0];
@@ -67,18 +68,30 @@ export function packageJsonPayload({
     bottle:
       source === 'homebrew-formula'
         ? {
-            bottled: meta?.latestBottled ?? null,
-            eventCount: meta?.bottleEventCount ?? bottleEvents.length,
+            bottled: meta?.latestBottleTags == null ? (meta?.latestBottled ?? null) : meta.latestBottleTags.length > 0,
+            platforms: meta?.latestBottleTags ?? null,
+            intervalCount: meta?.bottleIntervalCount ?? bottleIntervals.length,
             page: bottlePage,
-            totalPages: Math.max(1, Math.ceil((meta?.bottleEventCount ?? bottleEvents.length) / bottleHistoryLimit)),
-            events: bottleEvents.map((event) => ({
-              bottled: event.bottled,
-              version: event.version,
-              revision: event.revision,
-              display: event.version ? displayVersion(event.version, event.revision) : null,
-              changedAt: event.changedAt,
-              commitSha: event.commitSha,
-              subject: event.subject,
+            totalPages: Math.max(
+              1,
+              Math.ceil((meta?.bottleIntervalCount ?? bottleIntervals.length) / bottleIntervalLimit),
+            ),
+            intervals: bottleIntervals.map((interval) => ({
+              tag: interval.tag,
+              platform: bottleTagLabel(interval.tag),
+              from: {
+                at: interval.startedAt,
+                commit: interval.startedCommit,
+                subject: interval.startedSubject,
+              },
+              until:
+                interval.endedAt == null
+                  ? null
+                  : {
+                      at: interval.endedAt,
+                      commit: interval.endedCommit,
+                      subject: interval.endedSubject,
+                    },
             })),
           }
         : null,

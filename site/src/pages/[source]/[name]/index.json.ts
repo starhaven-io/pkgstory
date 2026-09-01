@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import {
-  bottleHistory,
+  bottleIntervals,
   BOTTLE_HISTORY_LIMIT,
   getDb,
   lastCheckedBySource,
@@ -33,10 +33,10 @@ export const GET: APIRoute = async ({ params, url }) => {
     return packageJsonNotFound();
 
   const db = getDb();
-  const [events, bottleEvents, meta, checkedBySource] = await Promise.all([
+  const [events, bottleRanges, meta, checkedBySource] = await Promise.all([
     timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
     source === 'homebrew-formula'
-      ? bottleHistory(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
+      ? bottleIntervals(db, source, name, BOTTLE_HISTORY_LIMIT, (bottlePage - 1) * BOTTLE_HISTORY_LIMIT)
       : Promise.resolve([]),
     packageMeta(db, source, name),
     lastCheckedBySource(db),
@@ -45,13 +45,13 @@ export const GET: APIRoute = async ({ params, url }) => {
     source,
     name,
     events,
-    bottleEvents,
+    bottleIntervals: bottleRanges,
     meta,
     checkedAt: checkedBySource.get(source) ?? null,
     page,
     timelineLimit: TIMELINE_LIMIT,
     bottlePage,
-    bottleHistoryLimit: BOTTLE_HISTORY_LIMIT,
+    bottleIntervalLimit: BOTTLE_HISTORY_LIMIT,
   });
   if (payload === null) return packageJsonNotFound();
   if (payload.bottle && bottlePage > payload.bottle.totalPages) return packageJsonNotFound();

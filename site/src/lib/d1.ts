@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import type { BottleEvent, ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
+import type { BottleEvent, BottleInterval, ContributorSummary, PackageMeta, VersionEvent } from './format.ts';
 
 export const TIMELINE_LIMIT = 500;
 export const BOTTLE_HISTORY_LIMIT = 100;
@@ -70,6 +70,34 @@ export async function bottleHistory(
   }
 }
 
+/** Per-platform bottle availability ranges, newest first. */
+export async function bottleIntervals(
+  db: D1,
+  source: string,
+  name: string,
+  limit = BOTTLE_HISTORY_LIMIT,
+  offset = 0,
+): Promise<BottleInterval[]> {
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT bi.tag, bi.started_at AS startedAt, bi.started_commit AS startedCommit,
+                bi.started_subject AS startedSubject, bi.ended_at AS endedAt,
+                bi.ended_commit AS endedCommit, bi.ended_subject AS endedSubject
+           FROM bottle_intervals bi JOIN packages p ON p.id = bi.package_id
+          WHERE p.source = ? AND p.name = ?
+          ORDER BY bi.started_at DESC, bi.id DESC
+          LIMIT ? OFFSET ?`,
+      )
+      .bind(source, name, limit, offset)
+      .all<BottleInterval>();
+    return results;
+  } catch (error) {
+    if (/no such table: bottle_intervals/.test(String(error))) return [];
+    throw error;
+  }
+}
+
 /** Authors and co-authors of every commit touching one package's file. */
 export async function contributors(db: D1, source: string, name: string): Promise<ContributorSummary[]> {
   try {
@@ -102,7 +130,10 @@ export async function contributors(db: D1, source: string, name: string): Promis
 
 /** Per-package lifecycle metadata (removed / deprecated / disabled state). */
 export async function packageMeta(db: D1, source: string, name: string): Promise<PackageMeta | null> {
-  type PackageMetaRow = Omit<PackageMeta, 'latestBottled'> & { latestBottled: number | null };
+  type PackageMetaRow = Omit<PackageMeta, 'latestBottled' | 'latestBottleTags'> & {
+    latestBottled: number | null;
+    latestBottleTags: string | null;
+  };
   const select = (bottleColumns: string) =>
     db
       .prepare(
@@ -118,12 +149,40 @@ export async function packageMeta(db: D1, source: string, name: string): Promise
       .bind(source, name)
       .first<PackageMetaRow>();
   const normalize = (row: PackageMetaRow | null): PackageMeta | null =>
-    row ? { ...row, latestBottled: row.latestBottled == null ? null : row.latestBottled !== 0 } : null;
+    row
+      ? {
+          ...row,
+          latestBottled: row.latestBottled == null ? null : row.latestBottled !== 0,
+          latestBottleTags: row.latestBottleTags == null ? null : JSON.parse(row.latestBottleTags),
+        }
+      : null;
   try {
-    return normalize(await select('latest_bottled AS latestBottled, bottle_event_count AS bottleEventCount'));
+    return normalize(
+      await select(
+        'latest_bottled AS latestBottled, bottle_event_count AS bottleEventCount, latest_bottle_tags AS latestBottleTags, bottle_interval_count AS bottleIntervalCount',
+      ),
+    );
+  } catch (error) {
+    if (/no such column: (?:latest_bottled|bottle_event_count)/.test(String(error))) {
+      return normalize(
+        await select(
+          'NULL AS latestBottled, 0 AS bottleEventCount, NULL AS latestBottleTags, 0 AS bottleIntervalCount',
+        ),
+      );
+    }
+    if (!/no such column: (?:latest_bottle_tags|bottle_interval_count)/.test(String(error))) throw error;
+  }
+  try {
+    return normalize(
+      await select(
+        'latest_bottled AS latestBottled, bottle_event_count AS bottleEventCount, NULL AS latestBottleTags, 0 AS bottleIntervalCount',
+      ),
+    );
   } catch (error) {
     if (!/no such column: (?:latest_bottled|bottle_event_count)/.test(String(error))) throw error;
-    return normalize(await select('NULL AS latestBottled, 0 AS bottleEventCount'));
+    return normalize(
+      await select('NULL AS latestBottled, 0 AS bottleEventCount, NULL AS latestBottleTags, 0 AS bottleIntervalCount'),
+    );
   }
 }
 

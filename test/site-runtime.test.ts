@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { catalogJson, home } from "../site/src/lib/cache.ts";
 import {
   bottleHistory,
+  bottleIntervals,
   contributors,
   type D1,
   type D1PreparedStatement,
@@ -101,6 +102,31 @@ describe("site D1 helpers", () => {
     await expect(bottleHistory(migrating.db, "homebrew-formula", "foo")).resolves.toEqual([]);
   });
 
+  it("reads per-platform bottle intervals through the package index", async () => {
+    const intervals = [
+      {
+        tag: "sonoma",
+        startedAt: 100,
+        startedCommit: "a".repeat(40),
+        startedSubject: "foo: bottle sonoma",
+        endedAt: 200,
+        endedCommit: "b".repeat(40),
+        endedSubject: "foo: remove sonoma bottle",
+      },
+    ];
+    const { db, calls } = fakeDb(() => ({ all: intervals }));
+    await expect(bottleIntervals(db, "homebrew-formula", "foo", 20, 40)).resolves.toEqual(
+      intervals,
+    );
+    expect(calls[0]?.sql).toContain("ORDER BY bi.started_at DESC, bi.id DESC");
+    expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 20, 40]);
+
+    const migrating = fakeDb(() => ({
+      error: new Error("D1_ERROR: no such table: bottle_intervals"),
+    }));
+    await expect(bottleIntervals(migrating.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+  });
+
   it("normalizes contributors and tolerates only the expected migration window", async () => {
     const contributorRow = {
       displayName: "A Maintainer",
@@ -132,8 +158,10 @@ describe("site D1 helpers", () => {
       latestRevision: 0,
       latestAt: 100,
       latestBottled: 1,
+      latestBottleTags: '["arm64_sonoma","sonoma"]',
       eventCount: 1,
       bottleEventCount: 2,
+      bottleIntervalCount: 3,
       firstIntroducedAt: 100,
       removedAt: null,
       removedCommit: null,
@@ -161,6 +189,7 @@ describe("site D1 helpers", () => {
     await expect(packageMeta(db, "homebrew-formula", "foo")).resolves.toEqual({
       ...meta,
       latestBottled: true,
+      latestBottleTags: ["arm64_sonoma", "sonoma"],
     });
     await expect(lastChecked(db)).resolves.toBe(200);
     await expect(lastCheckedBySource(db)).resolves.toEqual(
@@ -182,8 +211,10 @@ describe("site D1 helpers", () => {
       latestRevision: 0,
       latestAt: 100,
       latestBottled: null,
+      latestBottleTags: null,
       eventCount: 1,
       bottleEventCount: 0,
+      bottleIntervalCount: 0,
       firstIntroducedAt: 100,
       removedAt: null,
       removedCommit: null,

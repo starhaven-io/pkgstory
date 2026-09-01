@@ -19,6 +19,7 @@ export interface DeltaTouch {
   version: string | null;
   revision: number;
   bottled: boolean;
+  bottleTags: string[];
   at: number;
   sha: string;
   subject: string;
@@ -28,13 +29,18 @@ export interface DeltaEvent extends Omit<DeltaTouch, "version"> {
   version: string;
 }
 
+export interface BottleTransition extends DeltaTouch {
+  tag: string;
+  available: boolean;
+}
+
 function isVersionedTouch(touch: DeltaTouch): touch is DeltaEvent {
   return touch.version !== null;
 }
 
 export interface PackageDelta {
   name: string;
-  touches: DeltaTouch[]; // time-ordered live touches, including versionless blobs
+  touches: DeltaTouch[]; // time-ordered package states; deletions carry an empty tag set
   history: HistoryTouch[]; // one row per touching commit, including non-version changes
   // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
@@ -116,7 +122,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
 
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
-    const parsed: DeltaTouch[] = [];
+    const parsed = new Map<string, DeltaTouch>();
     const historyBySha = new Map<string, HistoryTouch>();
     let latestLive: RawTouch | null = null;
     let lastDeletion: RawTouch | null = null;
@@ -126,13 +132,36 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       // touches are oldest-first, so these settle on the last of each kind.
       if (t.deleted) {
         lastDeletion = t;
+        if (!parsed.has(t.sha))
+          parsed.set(t.sha, {
+            version: null,
+            revision: 0,
+            bottled: false,
+            bottleTags: [],
+            at: t.at,
+            sha: t.sha,
+            subject: t.subject,
+          });
         continue;
       }
       latestLive = t;
       const blob = blobs.get(t.blobSha);
       if (blob === undefined) continue;
-      const { version, revision, bottled } = extractVersion(source.kind, name, t.subject, blob);
-      parsed.push({ version, revision, bottled, at: t.at, sha: t.sha, subject: t.subject });
+      const { version, revision, bottled, bottleTags } = extractVersion(
+        source.kind,
+        name,
+        t.subject,
+        blob,
+      );
+      parsed.set(t.sha, {
+        version,
+        revision,
+        bottled,
+        bottleTags,
+        at: t.at,
+        sha: t.sha,
+        subject: t.subject,
+      });
     }
 
     const isPresent = present ? present.has(name) : true;
@@ -150,7 +179,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
 
     packages.push({
       name,
-      touches: parsed,
+      touches: [...parsed.values()],
       history: [...historyBySha.values()],
       lifecycle,
       removed,
@@ -159,24 +188,29 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   return { head, commits: commits.length, packages };
 }
 
-/** Emit version changes and formula bottle-state transitions from a running baseline. */
+/** Emit version changes plus formula-wide and per-tag bottle transitions. */
 export function foldPackage(
   baseVersion: string | null,
   baseRevision: number,
   baseBottled: boolean | null,
+  baseBottleTags: string[] | null,
   newPackage: boolean,
   touches: DeltaTouch[],
 ): {
   events: DeltaEvent[];
   bottleEvents: DeltaTouch[];
+  bottleTransitions: BottleTransition[];
   latest: DeltaEvent | null;
   bottled: boolean | null;
+  bottleTags: string[] | null;
 } {
   let lastVersion = baseVersion;
   let lastRevision = baseRevision;
   let lastBottled = baseBottled;
+  let lastTags = baseBottleTags === null ? null : new Set(baseBottleTags);
   const events: DeltaEvent[] = [];
   const bottleEvents: DeltaTouch[] = [];
+  const bottleTransitions: BottleTransition[] = [];
   for (const t of touches) {
     if (isVersionedTouch(t) && (t.version !== lastVersion || t.revision !== lastRevision)) {
       events.push(t);
@@ -189,12 +223,30 @@ export function foldPackage(
     )
       bottleEvents.push(t);
     lastBottled = t.bottled;
+
+    const tags = new Set(t.bottleTags);
+    if (lastTags === null) {
+      if (!newPackage) {
+        lastTags = tags;
+        continue;
+      }
+      lastTags = new Set();
+    }
+    for (const tag of tags) {
+      if (!lastTags.has(tag)) bottleTransitions.push({ ...t, tag, available: true });
+    }
+    for (const tag of lastTags) {
+      if (!tags.has(tag)) bottleTransitions.push({ ...t, tag, available: false });
+    }
+    lastTags = tags;
   }
   return {
     events,
     bottleEvents,
+    bottleTransitions,
     latest: events.at(-1) ?? null,
     bottled: touches.length ? lastBottled : null,
+    bottleTags: touches.length && lastTags !== null ? [...lastTags].sort() : null,
   };
 }
 
@@ -203,6 +255,7 @@ interface PkgRow {
   latest_version: string | null;
   latest_revision: number;
   latest_bottled: number | null;
+  latest_bottle_tags: string | null;
 }
 
 export interface ContributionAggregate {
@@ -275,7 +328,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
 
   const upsertPkg = db.prepare("INSERT OR IGNORE INTO packages (source, name) VALUES (?, ?)");
   const getPkg = db.prepare(
-    "SELECT id, latest_version, latest_revision, latest_bottled FROM packages WHERE source = ? AND name = ?",
+    "SELECT id, latest_version, latest_revision, latest_bottled, latest_bottle_tags FROM packages WHERE source = ? AND name = ?",
   );
   const insertEvent = db.prepare(
     `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject)
@@ -288,6 +341,23 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     `INSERT OR IGNORE INTO bottle_events
        (package_id, bottled, version, revision, changed_at, commit_sha, subject)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertBottleInterval = db.prepare(
+    `INSERT OR IGNORE INTO bottle_intervals
+       (package_id, tag, started_at, started_commit, started_subject)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  const closeBottleInterval = db.prepare(
+    `UPDATE bottle_intervals
+        SET ended_at = ?, ended_commit = ?, ended_subject = ?
+      WHERE package_id = ? AND tag = ? AND ended_at IS NULL
+        AND started_at <= ?
+        AND NOT EXISTS (
+          SELECT 1 FROM bottle_intervals closed
+           WHERE closed.package_id = bottle_intervals.package_id
+             AND closed.tag = bottle_intervals.tag
+             AND closed.ended_commit = ?
+        )`,
   );
   const updateLatest = db.prepare(
     `UPDATE packages
@@ -304,6 +374,12 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     `UPDATE packages
         SET latest_bottled = ?,
             bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = ?)
+      WHERE id = ?`,
+  );
+  const updateBottleTags = db.prepare(
+    `UPDATE packages
+        SET latest_bottle_tags = ?,
+            bottle_interval_count = (SELECT COUNT(*) FROM bottle_intervals bi WHERE bi.package_id = ?)
       WHERE id = ?`,
   );
   const setRemoved = db.prepare(
@@ -345,6 +421,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       pkg.latest_version,
       pkg.latest_revision ?? 0,
       pkg.latest_bottled == null ? null : pkg.latest_bottled !== 0,
+      pkg.latest_bottle_tags == null ? null : (JSON.parse(pkg.latest_bottle_tags) as string[]),
       newPackage,
       touches,
     );
@@ -365,6 +442,27 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         e.subject,
       );
     }
+    for (const transition of folded.bottleTransitions) {
+      if (transition.available) {
+        insertBottleInterval.run(
+          pkg.id,
+          transition.tag,
+          transition.at,
+          transition.sha,
+          transition.subject,
+        );
+      } else {
+        closeBottleInterval.run(
+          transition.at,
+          transition.sha,
+          transition.subject,
+          pkg.id,
+          transition.tag,
+          transition.at,
+          transition.sha,
+        );
+      }
+    }
     if (folded.latest)
       updateLatest.run(
         folded.latest.version,
@@ -376,6 +474,8 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         pkg.id,
       );
     if (folded.bottled !== null) updateBottleState.run(folded.bottled ? 1 : 0, pkg.id, pkg.id);
+    if (folded.bottleTags !== null)
+      updateBottleTags.run(JSON.stringify(folded.bottleTags), pkg.id, pkg.id);
     if (lifecycle)
       setLifecycle.run(
         lifecycle.deprecate?.date ?? null,
@@ -403,6 +503,7 @@ interface Baseline {
   version: string | null;
   revision: number;
   bottled: boolean | null;
+  bottleTags: string[] | null;
   deprecateDate: string | null;
   deprecateReason: string | null;
   disableDate: string | null;
@@ -452,12 +553,16 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision, latest_bottled, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, latest_bottled, latest_bottle_tags, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
         revision: Number(row.latest_revision ?? 0),
         bottled: row.latest_bottled == null ? null : Number(row.latest_bottled) !== 0,
+        bottleTags:
+          row.latest_bottle_tags == null
+            ? null
+            : (JSON.parse(String(row.latest_bottle_tags)) as string[]),
         deprecateDate: (row.deprecate_date as string | null) ?? null,
         deprecateReason: (row.deprecate_reason as string | null) ?? null,
         disableDate: (row.disable_date as string | null) ?? null,
@@ -478,11 +583,15 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       base?.version ?? null,
       base?.revision ?? 0,
       base?.bottled ?? null,
+      base?.bottleTags ?? null,
       base === undefined,
       touches,
     );
     const bottleStateChanged =
       folded.bottled !== null && folded.bottled !== (base?.bottled ?? null);
+    const bottleTagsChanged =
+      folded.bottleTags !== null &&
+      JSON.stringify(folded.bottleTags) !== JSON.stringify(base?.bottleTags ?? null);
     const contributions = contributorSeeded ? aggregateContributions(history, folded.events) : [];
 
     const lifecycleChanged =
@@ -503,7 +612,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       contributions.length === 0 &&
       folded.events.length === 0 &&
       folded.bottleEvents.length === 0 &&
+      folded.bottleTransitions.length === 0 &&
       !bottleStateChanged &&
+      !bottleTagsChanged &&
       !lifecycleChanged &&
       !removedChanged
     )
@@ -526,6 +637,13 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         `INSERT OR IGNORE INTO bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES (${idSub}, ${e.bottled ? 1 : 0}, ${sqlLit(e.version)}, ${e.revision}, ${e.at}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
       );
     }
+    for (const transition of folded.bottleTransitions) {
+      stmts.push(
+        transition.available
+          ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${transition.at}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)});`
+          : `UPDATE bottle_intervals SET ended_at = ${transition.at}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${transition.at} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
+      );
+    }
     if (folded.latest) {
       stmts.push(
         `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = (SELECT introduced_at FROM version_events ve WHERE ve.package_id = packages.id AND ve.version = ${sqlLit(folded.latest.version)} AND ve.revision = ${folded.latest.revision}), event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
@@ -534,6 +652,11 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     if (folded.bottled !== null && (bottleStateChanged || folded.bottleEvents.length > 0)) {
       stmts.push(
         `UPDATE packages SET latest_bottled = ${folded.bottled ? 1 : 0}, bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = packages.id) WHERE ${where};`,
+      );
+    }
+    if (folded.bottleTags !== null && (bottleTagsChanged || folded.bottleTransitions.length > 0)) {
+      stmts.push(
+        `UPDATE packages SET latest_bottle_tags = ${sqlLit(JSON.stringify(folded.bottleTags))}, bottle_interval_count = (SELECT COUNT(*) FROM bottle_intervals bi WHERE bi.package_id = packages.id) WHERE ${where};`,
       );
     }
     if (lifecycleChanged && lifecycle) {
@@ -558,7 +681,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the
   // writes are otherwise replayable (INSERT OR IGNORE events + recomputed latest/
   // lifecycle). Cursor goes last so a partial apply is retried; see OPERATIONS.md for
-  // the one initial-bottle-history ambiguity if only a new package row lands.
+  // the one initial-platform-interval ambiguity if only a new package row lands.
   d1Apply(mode, `${stmts.join("\n")}\n`);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }
