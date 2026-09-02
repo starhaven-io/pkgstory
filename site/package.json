@@ -20,7 +20,7 @@
   "dependencies": {
     "@astrojs/cloudflare": "^14.2.5",
     "@astrojs/rss": "^4.0.19",
-    "astro": "^7.2.7"
+    "astro": "^7.2.8"
   },
   "devDependencies": {
     "prettier": "^3.9.6",
