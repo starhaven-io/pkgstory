@@ -1,8 +1,8 @@
 # crawl-trigger
 
 A Cloudflare Worker whose only job is a reliable cron. It fires every 30 minutes
-and triggers the [`Crawl`](../.github/workflows/crawl.yml) GitHub Action by sending
-a `repository_dispatch` event as the **starhaven-bot** GitHub App.
+and triggers the [`Crawl`](../.github/workflows/crawl.yml) GitHub Action through
+its `workflow_dispatch` endpoint as the **starhaven-bot** GitHub App.
 
 ## Why
 
@@ -17,15 +17,17 @@ only as a fallback for when this Worker is down.
 
 Each tick the Worker signs a short-lived JWT with the App's private key, looks up
 the App's installation on `pkgstory`, and mints a single-repo installation token
-scoped to just `contents: write` (~1h TTL). `repository_dispatch` needs only
-`contents: write`, which starhaven-bot already has — no App permission changes. The
+scoped to just `actions: write` (~1h TTL). The workflow-dispatch endpoint does not
+need repository-content write access. The
 App ID (`3331849`) is non-secret and lives in `wrangler.jsonc`; only the private key
 is a secret.
 
 ## One-time setup
 
-1. Make sure **starhaven-bot** is installed on the `pkgstory` repo (it is if the App
-   shows `contents: write` for it — that's all `repository_dispatch` requires).
+1. Make sure **starhaven-bot** is installed on `pkgstory`, grant it **Actions:
+   Read and write**, and accept the updated permissions on the org installation.
+   Leave its other permissions alone: the fleet sync in `dot_github` opens PRs as
+   starhaven-bot and needs them.
 2. Get the App's private key (`.pem`) from its settings — *Generate a private key* if
    you don't have it saved. GitHub issues it in PKCS#1; WebCrypto needs PKCS#8, so
    convert it once:
@@ -47,13 +49,13 @@ is a secret.
 
 After that, pushes touching `trigger/**` redeploy the code automatically via
 [`deploy-trigger.yml`](../.github/workflows/deploy-trigger.yml); the secret, vars, and
-cron schedule stay put.
+cron schedule stay put. Confirm a successful workflow-dispatch run in the Actions
+tab.
 
 ## Notes
 
-- `repository_dispatch` only ever runs the workflow on the default branch (`main`),
-  which is exactly what the crawl targets.
-- An App private key doesn't expire — unlike a fine-grained PAT, there's nothing to
-  rotate on a schedule (rotate only if it leaks).
+- The Worker explicitly dispatches `crawl.yml` at `main`.
+- The private key is shared with the fleet sync in `dot_github`. Rotate it in both
+  places together, deploying each replacement secret before revoking the old key.
 - The Worker has no `fetch` handler and `workers_dev`/`preview_urls` are off, so it
   isn't reachable over HTTP — the key can only be exercised by the cron.

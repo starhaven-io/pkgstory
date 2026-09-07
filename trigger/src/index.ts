@@ -1,9 +1,8 @@
 // Reliable cron for the crawl: GitHub's own `schedule:` drops most fires under load.
-// Each tick fires a repository_dispatch authenticated as the starhaven-bot App.
+// Each tick dispatches the crawl workflow authenticated as the starhaven-bot App.
 
 const OWNER = "starhaven-io";
 const REPO = "pkgstory";
-const EVENT_TYPE = "crawl"; // must match repository_dispatch types: in crawl.yml
 const API = "https://api.github.com";
 const UA = "pkgstory-crawl-trigger"; // GitHub 403s API requests with no User-Agent
 
@@ -89,16 +88,20 @@ async function dispatchCrawl(env: Env): Promise<void> {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ repositories: [REPO], permissions: { contents: "write" } }),
+      body: JSON.stringify({ repositories: [REPO], permissions: { actions: "write" } }),
     },
   );
 
-  const res = await ghFetch(`/repos/${OWNER}/${REPO}/dispatches`, token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event_type: EVENT_TYPE }),
-  });
-  await ensureOk(res, "repository_dispatch");
+  const res = await ghFetch(
+    `/repos/${OWNER}/${REPO}/actions/workflows/crawl.yml/dispatches`,
+    token,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main" }),
+    },
+  );
+  await ensureOk(res, "workflow_dispatch");
 }
 
 async function tick(env: Env): Promise<void> {

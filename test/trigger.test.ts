@@ -79,7 +79,7 @@ describe("crawl trigger Worker", () => {
     expect(requests.map((request) => request.url)).toEqual([
       "https://api.github.com/repos/starhaven-io/pkgstory/installation",
       "https://api.github.com/app/installations/42/access_tokens",
-      "https://api.github.com/repos/starhaven-io/pkgstory/dispatches",
+      "https://api.github.com/repos/starhaven-io/pkgstory/actions/workflows/crawl.yml/dispatches",
     ]);
     const jwt = String(
       (requests[0]?.init.headers as Record<string, string> | undefined)?.Authorization,
@@ -111,14 +111,14 @@ describe("crawl trigger Worker", () => {
     expect(requests[1]?.init).toMatchObject({ method: "POST" });
     expect(JSON.parse(String(requests[1]?.init.body))).toEqual({
       repositories: ["pkgstory"],
-      permissions: { contents: "write" },
+      permissions: { actions: "write" },
     });
     expect(requests[2]?.init).toMatchObject({ method: "POST" });
     expect(requests[2]?.init.headers).toMatchObject({
       Authorization: "Bearer installation-token",
       "User-Agent": "pkgstory-crawl-trigger",
     });
-    expect(JSON.parse(String(requests[2]?.init.body))).toEqual({ event_type: "crawl" });
+    expect(JSON.parse(String(requests[2]?.init.body))).toEqual({ ref: "main" });
   });
 
   it("logs and rethrows a GitHub API failure", async () => {
@@ -136,7 +136,7 @@ describe("crawl trigger Worker", () => {
     );
   });
 
-  it("identifies a failed repository dispatch", async () => {
+  it("identifies a failed workflow dispatch", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
@@ -153,10 +153,10 @@ describe("crawl trigger Worker", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await expect(runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem })).rejects.toThrow(
-      "repository_dispatch failed: 422 Unprocessable Content — invalid event",
+      "workflow_dispatch failed: 422 Unprocessable Content — invalid event",
     );
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("crawl dispatch failed: Error: repository_dispatch failed"),
+      expect.stringContaining("crawl dispatch failed: Error: workflow_dispatch failed"),
     );
   });
 });
