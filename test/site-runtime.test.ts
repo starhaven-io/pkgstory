@@ -1,9 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { catalogJson, home } from "../site/src/lib/cache.ts";
+import { catalogJson, home, sitemapXml } from "../site/src/lib/cache.ts";
 import {
   bottleHistory,
   bottleIntervals,
+  changeDates,
+  changes,
   contributors,
   type D1,
   type D1PreparedStatement,
@@ -13,6 +15,8 @@ import {
   packageMeta,
   timeline,
 } from "../site/src/lib/d1.ts";
+import { GET as rssGet } from "../site/src/pages/[source]/[name]/rss.xml.ts";
+import { GET as sitemapGet, HEAD as sitemapHead } from "../site/src/pages/sitemap.xml.ts";
 import { env, resetCloudflareEnv } from "./helpers/cloudflare-workers.ts";
 
 interface QueryCall {
@@ -76,6 +80,53 @@ describe("site D1 helpers", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.sql).toContain("ORDER BY ve.introduced_at DESC, ve.id DESC");
     expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 25, 50]);
+  });
+
+  it("reads non-deduped changes and complete cadence dates", async () => {
+    const events = [
+      {
+        version: "1.0",
+        revision: 0,
+        introducedAt: 300,
+        commitSha: "c".repeat(40),
+        subject: "foo: revert to 1.0",
+      },
+    ];
+    const { db, calls } = fakeDb((sql) =>
+      sql.includes("SELECT vc.changed_at AS at")
+        ? { all: [{ at: "100" }, { at: 300 }] }
+        : { all: events },
+    );
+    await expect(changes(db, "homebrew-formula", "foo", 25)).resolves.toEqual(events);
+    await expect(changeDates(db, "homebrew-formula", "foo")).resolves.toEqual([100, 300]);
+    expect(calls[0]?.sql).toContain("FROM version_changes");
+    expect(calls[0]?.sql).toContain("ORDER BY vc.history_order DESC");
+    expect(calls[0]?.values).toEqual(["homebrew-formula", "foo", 25]);
+    expect(calls[1]?.sql).toContain("ORDER BY vc.changed_at ASC, vc.history_order ASC");
+  });
+
+  it("falls back to deduped events during a version-changes migration", async () => {
+    const fallback = fakeDb((sql) => {
+      if (sql.includes("version_changes"))
+        return { error: new Error("no such table: version_changes") };
+      return { all: [] };
+    });
+    await expect(changes(fallback.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+    await expect(changeDates(fallback.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+  });
+
+  it("uses row insertion order while history-order migration is pending", async () => {
+    const fallback = fakeDb((sql) => {
+      if (sql.includes("vc.history_order")) {
+        return { error: new Error("D1_ERROR: no such column: vc.history_order") };
+      }
+      return { all: [] };
+    });
+
+    await expect(changes(fallback.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+    await expect(changeDates(fallback.db, "homebrew-formula", "foo")).resolves.toEqual([]);
+    expect(fallback.calls.some((call) => call.sql.includes("vc.rowid DESC"))).toBe(true);
+    expect(fallback.calls.some((call) => call.sql.includes("vc.rowid ASC"))).toBe(true);
   });
 
   it("reads bottle gains and losses through the package index", async () => {
@@ -157,7 +208,7 @@ describe("site D1 helpers", () => {
 
   it("normalizes contributors and tolerates only the expected migration window", async () => {
     const contributorRow = {
-      displayName: "A Maintainer",
+      displayName: "maintainer@example.com",
       githubLogin: "maintainer",
       isBot: 0,
       touchCount: 3,
@@ -167,7 +218,7 @@ describe("site D1 helpers", () => {
     };
     const { db, calls } = fakeDb(() => ({ all: [contributorRow] }));
     await expect(contributors(db, "homebrew-formula", "foo")).resolves.toEqual([
-      { ...contributorRow, isBot: false },
+      { ...contributorRow, displayName: "maintainer", isBot: false },
     ]);
     expect(calls[0]?.values).toEqual(["homebrew-formula", "foo"]);
 
@@ -268,14 +319,17 @@ describe("site KV helpers", () => {
     const values = new Map([
       ["catalog", '[{"n":"foo"}]'],
       ["home", '{"formulae":1,"casks":0,"spotlight":[],"recent":[],"checkedAt":123}'],
+      ["sitemap", "<urlset>cached</urlset>"],
     ]);
     env.CACHE = { get: async (key: string) => values.get(key) ?? null };
 
     await expect(catalogJson()).resolves.toBe('[{"n":"foo"}]');
     await expect(home()).resolves.toMatchObject({ formulae: 1, checkedAt: 123 });
+    await expect(sitemapXml()).resolves.toBe("<urlset>cached</urlset>");
 
     values.clear();
     await expect(catalogJson()).resolves.toBe("[]");
+    await expect(sitemapXml()).resolves.toContain("https://pkgstory.dev/");
     await expect(home()).resolves.toEqual({
       formulae: 0,
       casks: 0,
@@ -283,6 +337,57 @@ describe("site KV helpers", () => {
       recent: [],
       checkedAt: null,
     });
+  });
+
+  it("serves the precomputed sitemap and keeps HEAD bodyless without a KV read", async () => {
+    let reads = 0;
+    env.CACHE = {
+      get: async () => {
+        reads += 1;
+        return "<urlset>cached</urlset>";
+      },
+    };
+
+    const head = await sitemapHead({} as never);
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+    expect(reads).toBe(0);
+
+    const get = await sitemapGet({} as never);
+    expect(await get.text()).toBe("<urlset>cached</urlset>");
+    expect(reads).toBe(1);
+  });
+});
+
+describe("package RSS", () => {
+  it("gives repeated versions distinct transition identities", async () => {
+    const events = [
+      {
+        version: "1.0",
+        revision: 0,
+        introducedAt: 300,
+        commitSha: "c".repeat(40),
+        subject: "foo: revert to 1.0",
+      },
+      {
+        version: "1.0",
+        revision: 0,
+        introducedAt: 100,
+        commitSha: "a".repeat(40),
+        subject: "foo 1.0",
+      },
+    ];
+    env.DB = fakeDb(() => ({ all: events })).db;
+
+    const response = await rssGet({
+      params: { source: "homebrew-formula", name: "foo" },
+      site: new URL("https://pkgstory.dev"),
+    } as never);
+    const xml = await response.text();
+
+    expect(xml.match(/<item>/g)).toHaveLength(2);
+    expect(xml).toContain(`urn:pkgstory:homebrew-formula:foo:${"c".repeat(40)}`);
+    expect(xml).toContain(`urn:pkgstory:homebrew-formula:foo:${"a".repeat(40)}`);
   });
 });
 

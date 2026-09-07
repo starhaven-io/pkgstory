@@ -8,9 +8,9 @@ import type { Source } from "../sources/index.ts";
  * row is the deletion, giving removed_at + the removing commit. Idempotent, and it
  * clears the flag if a package is later re-added. Runs after L0–L2 on a full crawl.
  */
-export function reconcileRemovals(db: DatabaseSync, source: Source): number {
-  const present = presentPackages(source.repoDir, source.dir, source.packageOf);
-  const replacements = source.packageReplacements();
+export function reconcileRemovals(db: DatabaseSync, source: Source, ref = "HEAD"): number {
+  const present = presentPackages(source.repoDir, source.dir, source.packageOf, ref);
+  const replacements = source.packageReplacements(ref);
 
   db.exec("CREATE TEMP TABLE IF NOT EXISTS _present (name TEXT PRIMARY KEY)");
   db.exec(
@@ -29,21 +29,26 @@ export function reconcileRemovals(db: DatabaseSync, source: Source): number {
   }
   db.exec("COMMIT");
 
-  const removed = Number(
+  const removed = (
     db
       .prepare(
-        `UPDATE packages
+        `SELECT COUNT(*) AS count FROM packages
+          WHERE source = ? AND removed_at IS NULL
+            AND name NOT IN (SELECT name FROM _present)`,
+      )
+      .get(source.id) as { count: number }
+  ).count;
+
+  db.prepare(
+    `UPDATE packages
             SET removed_at = (SELECT committed_at FROM commit_index ci
                                WHERE ci.package_id = packages.id
                                ORDER BY history_order DESC LIMIT 1),
                 removed_commit = (SELECT commit_sha FROM commit_index ci
                                    WHERE ci.package_id = packages.id
                                    ORDER BY history_order DESC LIMIT 1)
-          WHERE source = ? AND removed_at IS NULL
-            AND name NOT IN (SELECT name FROM _present)`,
-      )
-      .run(source.id).changes,
-  );
+          WHERE source = ? AND name NOT IN (SELECT name FROM _present)`,
+  ).run(source.id);
 
   db.prepare(
     `UPDATE packages

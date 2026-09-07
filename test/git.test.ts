@@ -3,7 +3,14 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { batchCat, parseBatchCat, parseLog, type RawCommit, streamLog } from "../src/git.ts";
+import {
+  batchCat,
+  headFile,
+  parseBatchCat,
+  parseLog,
+  type RawCommit,
+  streamLog,
+} from "../src/git.ts";
 
 // Raw `git log --raw --format=…` output uses
 // a record marker and NUL field separators, plus one ":<modes> <shas> <status>\t<path>"
@@ -148,6 +155,14 @@ describe("parseLog", () => {
     expect(parseLog("\n")).toEqual([]);
   });
 
+  it("rejects malformed or non-representable commit timestamps", () => {
+    const line = (timestamp: string) =>
+      `${C}${SHA_A}${F}${timestamp}${F}a@example.com${F}Alice${F}${F}subject`;
+    expect(() => parseLog(line("not-a-time"))).toThrow(/invalid commit timestamp/);
+    expect(() => parseLog(line("8640000000001"))).toThrow(/outside JavaScript's Date range/);
+    expect(() => parseLog(line("9007199254740992"))).toThrow(/outside JavaScript's Date range/);
+  });
+
   it("preserves control separators in untrusted identity and subject fields", () => {
     const subject = `foo: preserve \x1f text`;
     const out = commitLine(
@@ -168,7 +183,7 @@ describe("parseLog", () => {
 });
 
 describe("batchCat", () => {
-  it("returns valid blobs and skips missing objects", () => {
+  it("fails closed when any requested object is missing", () => {
     const repo = new GitRepo();
     repo.write(
       "Formula/f/foo.rb",
@@ -178,9 +193,9 @@ describe("batchCat", () => {
     const blobSha = repo.git("rev-parse", "HEAD:Formula/f/foo.rb");
     const missingSha = "f".repeat(40);
 
-    const blobs = batchCat(repo.dir, [blobSha, missingSha]);
-    expect(blobs.get(blobSha)).toContain("foo-1.0");
-    expect(blobs.has(missingSha)).toBe(false);
+    expect(() => batchCat(repo.dir, [blobSha, missingSha])).toThrow(
+      `git object is missing: ${missingSha}`,
+    );
   });
 
   it("rejects malformed cat-file sizes instead of silently truncating", () => {
@@ -191,6 +206,18 @@ describe("batchCat", () => {
       /missing trailing newline/,
     );
     expect(() => parseBatchCat(Buffer.from(`${sha} blob 5`))).toThrow(/unterminated header/);
+  });
+});
+
+describe("headFile", () => {
+  it("distinguishes an absent optional file from an unreadable revision", () => {
+    const repo = new GitRepo();
+    repo.write("formula_renames.json", '{"old":"new"}\n');
+    repo.commit("add rename metadata");
+
+    expect(headFile(repo.dir, "formula_renames.json")).toBe('{"old":"new"}\n');
+    expect(headFile(repo.dir, "tap_migrations.json")).toBeNull();
+    expect(() => headFile(repo.dir, "formula_renames.json", "f".repeat(40))).toThrow();
   });
 });
 

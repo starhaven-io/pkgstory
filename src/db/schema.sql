@@ -86,14 +86,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
   UNIQUE (package_id, commit_sha)
 );
 
--- Every version transition, including a revert to a previously-seen version. The
--- public timeline dedupes re-introductions, but contribution counts must not.
-CREATE TABLE IF NOT EXISTS version_changes (
-  package_id INTEGER NOT NULL,
-  commit_sha TEXT NOT NULL,
-  PRIMARY KEY (package_id, commit_sha),
-  FOREIGN KEY (package_id, commit_sha) REFERENCES commit_index (package_id, commit_sha)
-);
+-- version_changes is created by db.ts inside the migration transaction so a
+-- pre-transition database cannot expose the new table before its backfill commits.
 
 -- L2: the deduped version timeline — one row per (version, revision) change.
 CREATE TABLE IF NOT EXISTS version_events (
@@ -169,6 +163,7 @@ CREATE TABLE IF NOT EXISTS crawl_state (
 
 CREATE INDEX IF NOT EXISTS idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX IF NOT EXISTS idx_events_time ON version_events (introduced_at DESC);
+CREATE INDEX IF NOT EXISTS idx_commit_contributors_key ON commit_contributors (contributor_key);
 CREATE INDEX IF NOT EXISTS idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_pkg_time ON bottle_intervals (package_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bottle_intervals_open ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -17,6 +17,7 @@ import { reconcileRemovals } from "../src/crawl/removals.ts";
 import { buildSnapshots } from "../src/crawl/snapshot.ts";
 import { finalizeLatest, openDb, setCrawlState } from "../src/db/db.ts";
 import { headSha } from "../src/git.ts";
+import { makeSource } from "../src/sources/index.ts";
 import {
   cleanupFixtures,
   fakeBrewBin,
@@ -33,6 +34,7 @@ function runCli(args: string[], tap: TapRepo): string {
   const fakeBin = fakeBrewBin();
   return execFileSync(process.execPath, ["src/cli.ts", ...args], {
     encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...GIT_ENV,
       PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
@@ -105,6 +107,74 @@ describe("buildCommitIndexAll", () => {
       { name: "bar", contributors: 1 },
       { name: "foo", contributors: 2 },
     ]);
+    db.close();
+  });
+
+  it("does not persist an email-shaped author name", async () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("add foo", undefined, "leak@example.com <author@example.com>");
+
+    await buildCommitIndexAll(db, tap.source);
+    expect(db.prepare("SELECT author FROM commit_index").get()).toEqual({
+      author: "Unknown contributor",
+    });
+    db.close();
+  });
+
+  it("retains the live blob when one commit relocates and changes a package", async () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    tap.git("rm", "-q", "Formula/foo.rb");
+    tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
+    const relocated = tap.commit("foo 2.0: shard formula");
+
+    await buildCommitIndexAll(db, tap.source);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    finalizeLatest(db, tap.source.id);
+
+    expect(
+      db
+        .prepare("SELECT status, blob_sha FROM commit_index WHERE commit_sha = ?")
+        .get(relocated.sha),
+    ).toEqual({ status: "A", blob_sha: tap.git("rev-parse", `${relocated.sha}:Formula/f/foo.rb`) });
+    expect(db.prepare("SELECT latest_version FROM packages WHERE name = 'foo'").get()).toEqual({
+      latest_version: "2.0",
+    });
+    db.close();
+  });
+});
+
+describe("buildCommitIndex curated paths", () => {
+  it("finds a cask that historically occupied a noncanonical one-character shard", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+    const source = makeSource(
+      {
+        id: "homebrew-cask",
+        label: "Test casks",
+        tap: "test/cask",
+        dir: "Casks",
+        kind: "cask",
+      },
+      tap.dir,
+    );
+
+    tap.write("Casks/c/kuaitie.rb", 'cask "kuaitie" do\n  version "3.5.0"\nend\n');
+    tap.commit("add kuaitie in historical shard");
+
+    expect(buildCommitIndex(db, source, ["kuaitie"])).toBe(1);
+    expect(
+      db
+        .prepare("SELECT p.name FROM commit_index ci JOIN packages p ON p.id = ci.package_id")
+        .get(),
+    ).toEqual({ name: "kuaitie" });
     db.close();
   });
 });
@@ -269,6 +339,62 @@ describe("computeDelta (against a real git repo)", () => {
 });
 
 describe("crawlSince (seed → incremental cycle on one db)", () => {
+  it("makes repeated full crawls authoritative and ignores decoy roots", () => {
+    const tap = new TapRepo();
+    const dbDir = mkdtempSync(join(tmpdir(), "pkgstory-full-db-"));
+    trackFixture(dbDir);
+    const dbPath = join(dbDir, "full.db");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.write("docs/Formula/decoy.rb", formula("decoy", "9.9"));
+    tap.commit("seed");
+    runCli(["crawl", "--all", "--db", dbPath, "--source", "homebrew-formula"], tap);
+
+    const seeded = openDb(dbPath);
+    seeded.exec("INSERT INTO packages (source, name) VALUES ('homebrew-formula', 'ghost')");
+    seeded.close();
+
+    runCli(["crawl", "--all", "--db", dbPath, "--source", "homebrew-formula"], tap);
+    const rebuilt = openDb(dbPath);
+    expect(
+      rebuilt
+        .prepare("SELECT name FROM packages WHERE source = ? ORDER BY name")
+        .all(tap.source.id),
+    ).toEqual([{ name: "foo" }]);
+    expect(rebuilt.prepare("SELECT COUNT(*) AS n FROM version_changes").get()).toEqual({ n: 1 });
+    rebuilt.close();
+  });
+
+  it("keeps the last good database when a full crawl fails", () => {
+    const tap = new TapRepo();
+    const dbDir = mkdtempSync(join(tmpdir(), "pkgstory-full-rollback-"));
+    trackFixture(dbDir);
+    const dbPath = join(dbDir, "full.db");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const seeded = tap.commit("foo 1.0");
+    runCli(["crawl", "--all", "--db", dbPath, "--source", "homebrew-formula"], tap);
+
+    tap.write("Formula/f/foo.rb", formula("foo", "2.0", "  revision 9_007_199_254_740_992\n"));
+    tap.commit("foo 2.0 with unsafe revision");
+    expect(() =>
+      runCli(["crawl", "--all", "--db", dbPath, "--source", "homebrew-formula"], tap),
+    ).toThrow();
+
+    const preserved = openDb(dbPath);
+    expect(
+      preserved
+        .prepare(
+          `SELECT p.latest_version, cs.last_sha
+             FROM packages p JOIN crawl_state cs ON cs.source = p.source
+            WHERE p.name = 'foo'`,
+        )
+        .get(),
+    ).toEqual({ latest_version: "1.0", last_sha: seeded.sha });
+    preserved.close();
+    expect(readdirSync(dbDir).filter((name) => name.startsWith(".pkgstory-staging-"))).toEqual([]);
+  });
+
   it("does not treat a demo crawl as an incremental seed", () => {
     const tap = new TapRepo();
     const dbDir = mkdtempSync(join(tmpdir(), "pkgstory-db-"));
@@ -713,6 +839,22 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
+  it("rolls back an authoritative event rebuild when a snapshot is malformed", () => {
+    const tap = new TapRepo();
+    const db = openDb(":memory:");
+
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    tap.commit("foo 1.0");
+    buildCommitIndex(db, tap.source, ["foo"]);
+    buildSnapshots(db, tap.source);
+    buildEvents(db, tap.source);
+    db.prepare("UPDATE snapshots SET bottle_tags = 'not-json'").run();
+
+    expect(() => buildEvents(db, tap.source)).toThrow();
+    expect(db.prepare("SELECT version FROM version_events").all()).toEqual([{ version: "1.0" }]);
+    db.close();
+  });
+
   it("orders same-second commits by parent order, not insertion order", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
@@ -818,16 +960,16 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     full.close();
   });
 
-  it("reports a downgraded version with its original introduction time", () => {
+  it("reports a downgraded version with the revert time", () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
-    const intro = tap.commit("foo 1.0");
+    tap.commit("foo 1.0");
     tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
     tap.commit("foo 2.0");
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
-    tap.commit("foo: revert to 1.0");
+    const reverted = tap.commit("foo: revert to 1.0");
 
     buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
@@ -843,7 +985,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     ).toEqual({
       latest_version: "1.0",
       latest_revision: 0,
-      latest_at: intro.at,
+      latest_at: reverted.at,
       event_count: 2,
     });
     db.close();
@@ -855,7 +997,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     const now = T0 + 999000;
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
-    const intro = tap.commit("foo 1.0");
+    tap.commit("foo 1.0");
     tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
     tap.commit("foo 2.0");
     buildCommitIndex(db, tap.source, ["foo"]);
@@ -865,7 +1007,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     setCrawlState(db, tap.source.id, headSha(tap.dir), now);
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
-    tap.commit("foo: revert to 1.0");
+    const reverted = tap.commit("foo: revert to 1.0");
     expect(crawlSince(db, tap.source, now + 1).status).toBe("ok");
 
     const current = () =>
@@ -877,7 +1019,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     const expected = {
       latest_version: "1.0",
       latest_revision: 0,
-      latest_at: intro.at,
+      latest_at: reverted.at,
       event_count: 2,
     };
     expect(current()).toEqual(expected);
@@ -909,6 +1051,13 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     expect(db.prepare("SELECT latest_version FROM packages WHERE name = 'foo'").get()).toEqual({
       latest_version: "1.0",
     });
+    expect(
+      db
+        .prepare(
+          "SELECT version FROM version_changes ORDER BY changed_at DESC, history_order DESC LIMIT 2",
+        )
+        .all(),
+    ).toEqual([{ version: "1.0" }, { version: "1.1" }]);
     db.close();
   });
 
@@ -934,6 +1083,14 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.commit("foo 1.2", tied);
     expect(crawlSince(db, tap.source, now + 1).events).toBe(2);
 
+    const sameSecondChanges = () =>
+      db
+        .prepare(
+          "SELECT version FROM version_changes ORDER BY changed_at DESC, history_order DESC LIMIT 2",
+        )
+        .all();
+    expect(sameSecondChanges()).toEqual([{ version: "1.2" }, { version: "1.1" }]);
+
     const latest = () =>
       (
         db.prepare("SELECT latest_version FROM packages WHERE name = 'foo'").get() as {
@@ -946,6 +1103,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
     expect(latest()).toBe("1.2"); // the child commit still wins the tie
+    expect(sameSecondChanges()).toEqual([{ version: "1.2" }, { version: "1.1" }]);
     db.close();
   });
 

@@ -1,3 +1,7 @@
+import { publicContributorName } from './public-contributor.ts';
+
+export { publicContributorName };
+
 // Pure helpers + shared types. No node:sqlite — safe to import from the layout,
 // components, and on-demand (worker-rendered) pages.
 
@@ -391,9 +395,16 @@ export function versionParts(version: string, revision: number): { base: string;
 }
 
 export function isoDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
+  return dateFromUnixSeconds(unixSeconds)?.toISOString().slice(0, 10) ?? 'unknown';
 }
 
 export function isoDateTime(unixSeconds: number): string {
-  return `${new Date(unixSeconds * 1000).toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+  const date = dateFromUnixSeconds(unixSeconds);
+  return date ? `${date.toISOString().replace('T', ' ').slice(0, 16)} UTC` : 'unknown';
+}
+
+export function dateFromUnixSeconds(unixSeconds: number): Date | null {
+  if (!Number.isSafeInteger(unixSeconds)) return null;
+  const date = new Date(unixSeconds * 1000);
+  return Number.isNaN(date.getTime()) ? null : date;
 }

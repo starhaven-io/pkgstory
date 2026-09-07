@@ -40,6 +40,12 @@ const EMPTY_HOME: HomePayload = {
   checkedAt: null,
 };
 
+const EMPTY_SITEMAP = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://pkgstory.dev/</loc></url>
+</urlset>
+`;
+
 /** Raw JSON string of the search index — passed straight through to the client. */
 export async function catalogJson(): Promise<string> {
   return (await kv().get('catalog')) ?? '[]';
@@ -48,4 +54,8 @@ export async function catalogJson(): Promise<string> {
 export async function home(): Promise<HomePayload> {
   const raw = await kv().get('home');
   return raw ? (JSON.parse(raw) as HomePayload) : EMPTY_HOME;
+}
+
+export async function sitemapXml(): Promise<string> {
+  return (await kv().get('sitemap')) ?? EMPTY_SITEMAP;
 }

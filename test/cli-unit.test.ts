@@ -8,7 +8,14 @@ import { crawlSince, crawlSinceD1 } from "../src/crawl/incremental.ts";
 import { reconcileRemovals } from "../src/crawl/removals.ts";
 import { buildSnapshots } from "../src/crawl/snapshot.ts";
 import { ensureD1Schema } from "../src/db/d1remote.ts";
-import { finalizeLatest, openDb, setCrawlState } from "../src/db/db.ts";
+import {
+  finalizeLatest,
+  openDb,
+  openReadonlyDb,
+  openStagedDb,
+  resetSource,
+  setCrawlState,
+} from "../src/db/db.ts";
 import { exportSlice } from "../src/db/export.ts";
 import { refreshSiteCache } from "../src/db/sitecache.ts";
 import { headSha } from "../src/git.ts";
@@ -27,6 +34,9 @@ vi.mock("../src/db/d1remote.ts", () => ({ ensureD1Schema: vi.fn() }));
 vi.mock("../src/db/db.ts", () => ({
   finalizeLatest: vi.fn(),
   openDb: vi.fn(),
+  openReadonlyDb: vi.fn(),
+  openStagedDb: vi.fn(),
+  resetSource: vi.fn(),
   setCrawlState: vi.fn(),
 }));
 vi.mock("../src/db/export.ts", () => ({ exportSlice: vi.fn() }));
@@ -90,7 +100,10 @@ const ensureD1SchemaMock = vi.mocked(ensureD1Schema);
 const exportSliceMock = vi.mocked(exportSlice);
 const headShaMock = vi.mocked(headSha);
 const openDbMock = vi.mocked(openDb);
+const openReadonlyDbMock = vi.mocked(openReadonlyDb);
+const openStagedDbMock = vi.mocked(openStagedDb);
 const reconcileRemovalsMock = vi.mocked(reconcileRemovals);
+const resetSourceMock = vi.mocked(resetSource);
 const refreshSiteCacheMock = vi.mocked(refreshSiteCache);
 const resolveSourcesMock = vi.mocked(resolveSources);
 
@@ -122,7 +135,9 @@ describe("importable CLI dispatch", () => {
         { version: "1.0", revision: 0, introduced_at: 1_600_000_000 },
       ],
     });
-    openDbMock.mockReturnValue(db);
+    const publish = vi.fn(async () => undefined);
+    const discard = vi.fn();
+    openStagedDbMock.mockResolvedValue({ db, publish, discard });
     buildCommitIndexAllMock.mockImplementation(async (_db, _source, progress) => {
       progress?.(2, 3, 1);
       return { commits: 2, rows: 3, packages: 1 };
@@ -137,10 +152,21 @@ describe("importable CLI dispatch", () => {
 
     await main(["crawl", "--all", "--db", "fixture.db"]);
 
-    expect(buildCommitIndexAllMock).toHaveBeenCalledWith(db, formulaSource, expect.any(Function));
+    expect(resetSourceMock).toHaveBeenCalledWith(db, formulaSource.id);
+    expect(buildCommitIndexAllMock).toHaveBeenCalledWith(
+      db,
+      formulaSource,
+      expect.any(Function),
+      "a".repeat(40),
+    );
     expect(buildSnapshotsMock).toHaveBeenCalledWith(db, formulaSource, expect.any(Function));
     expect(buildEventsMock).toHaveBeenCalledWith(db, formulaSource);
-    expect(buildPackageContributorsMock).toHaveBeenCalledWith(db, formulaSource);
+    expect(buildPackageContributorsMock).toHaveBeenCalledWith(
+      db,
+      formulaSource,
+      undefined,
+      "a".repeat(40),
+    );
     expect(finalizeLatest).toHaveBeenCalledWith(db, formulaSource.id);
     expect(setCrawlState).toHaveBeenCalledWith(
       db,
@@ -148,7 +174,8 @@ describe("importable CLI dispatch", () => {
       "a".repeat(40),
       expect.any(Number),
     );
-    expect(db.close).toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(discard).not.toHaveBeenCalled();
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("Sample — foo"));
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining("2.0_1"));
   });
@@ -159,8 +186,18 @@ describe("importable CLI dispatch", () => {
     reconcileRemovalsMock.mockReturnValue(2);
 
     await main(["crawl", "--formulae", " foo, bar , "]);
-    expect(buildCommitIndexMock).toHaveBeenCalledWith(db, formulaSource, ["foo", "bar"]);
-    expect(buildPackageContributorsMock).toHaveBeenCalledWith(db, formulaSource, ["foo", "bar"]);
+    expect(buildCommitIndexMock).toHaveBeenCalledWith(
+      db,
+      formulaSource,
+      ["foo", "bar"],
+      "a".repeat(40),
+    );
+    expect(buildPackageContributorsMock).toHaveBeenCalledWith(
+      db,
+      formulaSource,
+      ["foo", "bar"],
+      "a".repeat(40),
+    );
 
     crawlSinceMock.mockReturnValueOnce({ status: "no-cursor", events: 0, commits: 0 });
     await main(["crawl", "--since"]);
@@ -188,24 +225,20 @@ describe("importable CLI dispatch", () => {
 
     await main(["crawl"]);
 
-    expect(buildCommitIndexMock).toHaveBeenNthCalledWith(1, db, formulaSource, [
-      "git",
-      "wget",
-      "jq",
-      "node",
-      "ripgrep",
-      "htop",
-      "curl",
-      "ffmpeg",
-      "terraform",
-    ]);
-    expect(buildCommitIndexMock).toHaveBeenNthCalledWith(2, db, caskSource, [
-      "visual-studio-code",
-      "firefox",
-      "rectangle",
-      "iterm2",
-      "docker",
-    ]);
+    expect(buildCommitIndexMock).toHaveBeenNthCalledWith(
+      1,
+      db,
+      formulaSource,
+      ["git", "wget", "jq", "node", "ripgrep", "htop", "curl", "ffmpeg", "terraform"],
+      "a".repeat(40),
+    );
+    expect(buildCommitIndexMock).toHaveBeenNthCalledWith(
+      2,
+      db,
+      caskSource,
+      ["visual-studio-code", "firefox", "rectangle", "iterm2", "docker"],
+      "a".repeat(40),
+    );
   });
 
   it("filters crawls by source and rejects unknown source ids", async () => {
@@ -215,7 +248,7 @@ describe("importable CLI dispatch", () => {
 
     await main(["crawl", "--source", "homebrew-cask", "--casks", "firefox"]);
     expect(buildCommitIndexMock).toHaveBeenCalledOnce();
-    expect(buildCommitIndexMock).toHaveBeenCalledWith(db, caskSource, ["firefox"]);
+    expect(buildCommitIndexMock).toHaveBeenCalledWith(db, caskSource, ["firefox"], "a".repeat(40));
 
     const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
       throw new Error(`exit ${code}`);
@@ -246,11 +279,12 @@ describe("importable CLI dispatch", () => {
 
   it("dispatches export, cache, help, and unknown commands", async () => {
     const db = fakeDb();
-    openDbMock.mockReturnValue(db);
+    openReadonlyDbMock.mockReturnValue(db);
     exportSliceMock.mockImplementation((_db, write) => write("-- exported\n"));
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     await main(["export", "--db", "fixture.db"]);
+    expect(openReadonlyDbMock).toHaveBeenCalledWith("fixture.db");
     expect(stdout).toHaveBeenCalledWith("-- exported\n");
     expect(db.close).toHaveBeenCalled();
 
@@ -272,9 +306,45 @@ describe("importable CLI dispatch", () => {
     expect(exit).toHaveBeenCalledWith(2);
   });
 
+  it("closes a read-only export database when validation fails", async () => {
+    const db = fakeDb();
+    openReadonlyDbMock.mockReturnValue(db);
+    exportSliceMock.mockImplementation(() => {
+      throw new Error("stale schema");
+    });
+
+    await expect(main(["export", "--db", "legacy.db"])).rejects.toThrow("stale schema");
+    expect(db.close).toHaveBeenCalledOnce();
+  });
+
+  it("does not discard a completed full crawl when publication fails", async () => {
+    const db = fakeDb();
+    const publish = vi.fn(async () => {
+      throw new Error("completed staged database retained at /tmp/staged/crawl.db");
+    });
+    const discard = vi.fn();
+    openStagedDbMock.mockResolvedValue({ db, publish, discard });
+    buildCommitIndexAllMock.mockResolvedValue({ commits: 0, rows: 0, packages: 0 });
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+
+    await expect(main(["crawl", "--all"])).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "completed staged database retained at /tmp/staged/crawl.db",
+      }),
+    );
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(publish).toHaveBeenCalledOnce();
+    expect(discard).not.toHaveBeenCalled();
+  });
+
   it("reports crawl failures through the executable error path", async () => {
     const db = fakeDb();
-    openDbMock.mockReturnValue(db);
+    const publish = vi.fn(async () => undefined);
+    const discard = vi.fn();
+    openStagedDbMock.mockResolvedValue({ db, publish, discard });
     buildCommitIndexAllMock.mockRejectedValue(new Error("git failed"));
     const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
       throw new Error(`exit ${code}`);
@@ -283,5 +353,7 @@ describe("importable CLI dispatch", () => {
     await expect(main(["crawl", "--all"])).rejects.toThrow("exit 1");
     expect(console.error).toHaveBeenCalledWith(expect.objectContaining({ message: "git failed" }));
     expect(exit).toHaveBeenCalledWith(1);
+    expect(discard).toHaveBeenCalledOnce();
+    expect(publish).not.toHaveBeenCalled();
   });
 });

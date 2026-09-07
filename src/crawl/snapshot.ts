@@ -86,7 +86,8 @@ export function buildSnapshots(
         continue;
       }
       const blob = blobs.get(row.blob_sha);
-      if (blob === undefined) continue;
+      if (blob === undefined)
+        throw new Error(`blob ${row.blob_sha} was not returned by git cat-file`);
 
       const { version, revision, versionSrc, bottled, bottleTags } = extractVersion(
         source.kind,

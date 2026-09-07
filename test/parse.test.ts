@@ -93,6 +93,95 @@ end`;
     expect(parseFormula(src).version).toBe("3.1.4");
   });
 
+  it("reads version metadata from a historical stable block", () => {
+    const tagged = `class Bar < Formula
+  stable do
+    url "https://github.com/bar/bar.git",
+        tag: "v3.1.4",
+        revision: "deadbeef"
+  end
+end`;
+    expect(parseFormula(tagged).version).toBe("3.1.4");
+
+    const explicit = `class Bar < Formula
+  stable do
+    url "https://example.com/download"
+    version "2.8.0-r3"
+    revision 2
+  end
+end`;
+    expect(parseFormula(explicit)).toMatchObject({
+      version: "2.8.0-r3",
+      revision: 2,
+      versionSrc: "version-stanza",
+    });
+  });
+
+  it("follows a url comma continuation even when the tag is only two-space indented", () => {
+    const src = `class Bar < Formula
+  url "https://github.com/bar/bar.git",
+  tag: "v3.1.4"
+end`;
+    expect(parseFormula(src).version).toBe("3.1.4");
+  });
+
+  it("associates a tag only with the top-level package url", () => {
+    const src = `class Foo < Formula
+  url "https://example.com/foo-1.2.3.tar.gz"
+  livecheck do
+    url :stable
+    strategy :github_latest do |json|
+      json["tag_name"]
+    end
+  end
+  resource "bar" do
+    url "https://github.com/bar/bar.git", tag: "v9.9.9"
+  end
+end`;
+    expect(parseFormula(src).version).toBe("1.2.3");
+  });
+
+  it("rejects revisions that cannot be represented exactly", () => {
+    expect(
+      parseFormula(`class X < Formula\n  revision ${Number.MAX_SAFE_INTEGER}\nend`).revision,
+    ).toBe(Number.MAX_SAFE_INTEGER);
+    expect(() =>
+      parseFormula(`class X < Formula\n  revision ${BigInt(Number.MAX_SAFE_INTEGER) + 1n}\nend`),
+    ).toThrow(/safe integer range/);
+    expect(() => parseFormula(`class X < Formula\n  revision ${"9".repeat(400)}\nend`)).toThrow(
+      /safe integer range/,
+    );
+    expect(() => parseFormula("class X < Formula\n  revision 12__345\nend")).toThrow(
+      /unsupported formula revision/,
+    );
+    expect(() => parseFormula("class X < Formula\n  revision 9oops\nend")).toThrow(
+      /unsupported formula revision/,
+    );
+  });
+
+  it("parses Ruby digit separators across the complete revision token", () => {
+    expect(parseFormula("class X < Formula\n  revision 1_000\nend").revision).toBe(1000);
+    expect(parseFormula("class X < Formula\n  revision 0_10\nend").revision).toBe(8);
+    expect(() => parseFormula("class X < Formula\n  revision 08\nend")).toThrow(
+      /unsupported formula revision/,
+    );
+    expect(() => parseFormula(`class X < Formula\n  revision 9_007_199_254_740_992\nend`)).toThrow(
+      /safe integer range/,
+    );
+  });
+
+  it("does not parse formula-like text after Ruby's __END__ data marker", () => {
+    const src = `class X < Formula
+  url "https://example.com/x-1.0.tar.gz"
+end
+__END__
+  revision 9oops
+  bottle do
+    sha256 "abc" => :sonoma
+  end`;
+    expect(parseFormula(src)).toMatchObject({ version: "1.0", revision: 0, bottled: false });
+  });
+
   it("returns null version when nothing is parseable", () => {
     expect(parseFormula("class X < Formula\nend").version).toBeNull();
   });

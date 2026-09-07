@@ -2,7 +2,7 @@ import { type D1Mode, d1Select, d1SelectMany, kvGet, kvPut } from "./d1remote.ts
 
 // Precompute the catalog-wide payloads the site would otherwise derive with an
 // expensive per-request scan, and stash them in KV. Reads on the hot paths
-// (home page, search index) then cost a single KV lookup — traffic-independent,
+// (home page, search index, sitemap) then cost a single KV lookup — traffic-independent,
 // so no amount of traffic can run up D1. Rebuilt at the end of every crawl.
 
 // Compact lifecycle marker: n=renamed, m=migrated, r=removed, x=disabled,
@@ -78,6 +78,21 @@ interface HomePayload {
   spotlightAt: number;
 }
 
+const SITE_ORIGIN = "https://pkgstory.dev";
+
+function buildSitemap(catalog: CatalogEntry[]): string {
+  const locs = [`${SITE_ORIGIN}/`];
+  for (const entry of catalog) {
+    const source = entry.s === "c" ? "homebrew-cask" : "homebrew-formula";
+    locs.push(`${SITE_ORIGIN}/${source}/${encodeURIComponent(entry.n)}/`);
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${locs.map((loc) => `  <url><loc>${loc}</loc></url>`).join("\n")}
+</urlset>
+`;
+}
+
 function sourceId(e: CatalogEntry): string {
   return e.s === "c" ? "homebrew-cask" : "homebrew-formula";
 }
@@ -114,7 +129,10 @@ function spotlightItem(e: CatalogEntry, parts: StoryParts): SpotlightItem {
 }
 
 function dateLabel(unixSeconds: unknown): string {
-  return new Date(Number(unixSeconds) * 1000).toISOString().slice(0, 10);
+  const value = Number(unixSeconds);
+  if (!Number.isSafeInteger(value)) return "unknown date";
+  const date = new Date(value * 1000);
+  return Number.isNaN(date.getTime()) ? "unknown date" : date.toISOString().slice(0, 10);
 }
 
 export function durationLabel(seconds: number): string {
@@ -346,11 +364,11 @@ const CATALOG_SQL = `SELECT name AS n,
  WHERE event_count > 0
  ORDER BY name`;
 
-const RECENT_SQL = `SELECT p.source, p.name, ve.version, ve.revision, ve.introduced_at AS introducedAt,
+const RECENT_SQL = `SELECT p.source, p.name, vc.version, vc.revision, vc.changed_at AS introducedAt,
        p.removed_at, p.renamed_to, p.migrated_to,
        p.deprecate_date, p.deprecate_reason, p.disable_date, p.disable_reason
-  FROM version_events ve JOIN packages p ON p.id = ve.package_id
- ORDER BY ve.introduced_at DESC, ve.id DESC
+  FROM version_changes vc JOIN packages p ON p.id = vc.package_id
+ ORDER BY vc.changed_at DESC, vc.history_order DESC, p.source, p.name
  LIMIT 25`;
 
 const CHECKED_SQL = "SELECT MAX(last_crawled_at) AS at FROM crawl_state";
@@ -472,5 +490,6 @@ export function refreshSiteCache(mode: D1Mode, opts: RefreshOptions = {}): { pac
   const home: HomePayload = { formulae, casks, spotlight, recent, checkedAt, spotlightAt };
   kvPut(mode, "catalog", JSON.stringify(catalog));
   kvPut(mode, "home", JSON.stringify(home));
+  kvPut(mode, "sitemap", buildSitemap(catalog));
   return { packages: catalog.length };
 }

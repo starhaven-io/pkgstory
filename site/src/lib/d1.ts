@@ -5,6 +5,7 @@ import {
   coalesceBottleIntervals,
   type ContributorSummary,
   type PackageMeta,
+  publicContributorName,
   type VersionEvent,
 } from './format.ts';
 
@@ -13,7 +14,7 @@ export const BOTTLE_HISTORY_LIMIT = 100;
 
 // Minimal D1 surface (avoids a @cloudflare/workers-types dependency). Used by the
 // on-demand per-package pages, which read only one package's rows via the index.
-// Catalog-wide reads (home page, search index) go through ./cache.ts (KV) instead.
+// Catalog-wide reads (home page, search index, sitemap) go through ./cache.ts (KV) instead.
 export interface D1PreparedStatement {
   bind(...values: unknown[]): D1PreparedStatement;
   all<T = unknown>(): Promise<{ results: T[] }>;
@@ -48,6 +49,81 @@ export async function timeline(
     .bind(source, name, limit, offset)
     .all<VersionEvent>();
   return results;
+}
+
+/** Every version transition, including reverts to an already-seen version. */
+export async function changes(db: D1, source: string, name: string, limit = TIMELINE_LIMIT): Promise<VersionEvent[]> {
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT vc.version, vc.revision, vc.changed_at AS introducedAt,
+                vc.commit_sha AS commitSha, vc.subject
+           FROM version_changes vc JOIN packages p ON p.id = vc.package_id
+          WHERE p.source = ? AND p.name = ?
+          ORDER BY vc.history_order DESC
+          LIMIT ?`,
+      )
+      .bind(source, name, limit)
+      .all<VersionEvent>();
+    return results;
+  } catch (error) {
+    if (/no such table: version_changes/.test(String(error))) return timeline(db, source, name, limit);
+    if (/no such column: vc\.history_order/.test(String(error))) {
+      const { results } = await db
+        .prepare(
+          `SELECT vc.version, vc.revision, vc.changed_at AS introducedAt,
+                  vc.commit_sha AS commitSha, vc.subject
+             FROM version_changes vc JOIN packages p ON p.id = vc.package_id
+            WHERE p.source = ? AND p.name = ?
+            ORDER BY vc.changed_at DESC, vc.rowid DESC
+            LIMIT ?`,
+        )
+        .bind(source, name, limit)
+        .all<VersionEvent>();
+      return results;
+    }
+    throw error;
+  }
+}
+
+/** Complete transition timestamps for one package, used for all-history cadence. */
+export async function changeDates(db: D1, source: string, name: string): Promise<number[]> {
+  try {
+    const { results } = await db
+      .prepare(
+        `SELECT vc.changed_at AS at
+           FROM version_changes vc JOIN packages p ON p.id = vc.package_id
+          WHERE p.source = ? AND p.name = ?
+          ORDER BY vc.changed_at ASC, vc.history_order ASC`,
+      )
+      .bind(source, name)
+      .all<{ at: number }>();
+    return results.map((row) => Number(row.at));
+  } catch (error) {
+    if (/no such column: vc\.history_order/.test(String(error))) {
+      const { results } = await db
+        .prepare(
+          `SELECT vc.changed_at AS at
+             FROM version_changes vc JOIN packages p ON p.id = vc.package_id
+            WHERE p.source = ? AND p.name = ?
+            ORDER BY vc.changed_at ASC, vc.rowid ASC`,
+        )
+        .bind(source, name)
+        .all<{ at: number }>();
+      return results.map((row) => Number(row.at));
+    }
+    if (!/no such table: version_changes/.test(String(error))) throw error;
+    const { results } = await db
+      .prepare(
+        `SELECT ve.introduced_at AS at
+           FROM version_events ve JOIN packages p ON p.id = ve.package_id
+          WHERE p.source = ? AND p.name = ?
+          ORDER BY ve.introduced_at ASC, ve.id ASC`,
+      )
+      .bind(source, name)
+      .all<{ at: number }>();
+    return results.map((row) => Number(row.at));
+  }
 }
 
 /** Formula bottle gains and losses, newest first. */
@@ -131,7 +207,11 @@ export async function contributors(db: D1, source: string, name: string): Promis
       )
       .bind(source, name)
       .all<Omit<ContributorSummary, 'isBot'> & { isBot: number }>();
-    return results.map((contributor) => ({ ...contributor, isBot: contributor.isBot !== 0 }));
+    return results.map((contributor) => ({
+      ...contributor,
+      displayName: publicContributorName(contributor.displayName, contributor.githubLogin),
+      isBot: contributor.isBot !== 0,
+    }));
   } catch (error) {
     // Code can deploy before the crawler creates the new read tables. Keep package
     // pages available during that migration window; other D1 failures still surface.

@@ -66,6 +66,31 @@ describe("contributor identities", () => {
     expect(first.key).toMatch(/^email:[0-9a-f]{64}$/);
   });
 
+  it("never publishes an email-shaped author name", () => {
+    for (const name of [
+      "person@example.com",
+      "Person <person@example.com>",
+      "person [at] example [dot] com",
+      "person at example [dot] com",
+      "person [at] example dot com",
+      "person at example.com",
+      "person＠example．com",
+    ]) {
+      expect(contributorFromIdentity({ name, email: "person@example.com" }).displayName).toBe(
+        "Unknown contributor",
+      );
+    }
+    expect(
+      contributorFromIdentity({
+        name: "person@example.com",
+        email: "1+octocat@users.noreply.github.com",
+      }).displayName,
+    ).toBe("octocat");
+    expect(
+      contributorFromIdentity({ name: "@octocat", email: "person@example.com" }).displayName,
+    ).toBe("@octocat");
+  });
+
   it("does not turn an invalid noreply local part into a GitHub profile link", () => {
     const contributor = contributorFromIdentity({
       name: "Untrusted",

@@ -10,7 +10,14 @@ import { crawlSince, crawlSinceD1 } from "./crawl/incremental.ts";
 import { reconcileRemovals } from "./crawl/removals.ts";
 import { buildSnapshots } from "./crawl/snapshot.ts";
 import { ensureD1Schema } from "./db/d1remote.ts";
-import { finalizeLatest, openDb, setCrawlState } from "./db/db.ts";
+import {
+  finalizeLatest,
+  openDb,
+  openReadonlyDb,
+  openStagedDb,
+  resetSource,
+  setCrawlState,
+} from "./db/db.ts";
 import { exportSlice } from "./db/export.ts";
 import { refreshSiteCache } from "./db/sitecache.ts";
 import { headSha } from "./git.ts";
@@ -54,10 +61,23 @@ function parseD1Mode(value: string): "local" | "remote" {
   return value;
 }
 
-function finalize(db: DatabaseSync, source: Source, now: number, writeCursor: boolean): number {
+function displayDate(unixSeconds: number): string {
+  if (!Number.isSafeInteger(unixSeconds)) return "unknown";
+  const date = new Date(unixSeconds * 1000);
+  return Number.isNaN(date.getTime()) ? "unknown" : date.toISOString();
+}
+
+function finalize(
+  db: DatabaseSync,
+  source: Source,
+  now: number,
+  writeCursor: boolean,
+  ref = "HEAD",
+): number {
   finalizeLatest(db, source.id);
-  const removed = reconcileRemovals(db, source);
-  if (writeCursor) setCrawlState(db, source.id, headSha(source.repoDir), now);
+  const removed = reconcileRemovals(db, source, ref);
+  if (writeCursor)
+    setCrawlState(db, source.id, ref === "HEAD" ? headSha(source.repoDir) : ref, now);
   return removed;
 }
 
@@ -102,7 +122,7 @@ async function crawl(argv: string[]): Promise<void> {
             : "no cursor — seed D1 first";
       console.log(`  ${source.label.padEnd(18)} ${msg}`);
     }
-    // Republish the KV blobs the site serves from (search index + home payload).
+    // Republish the KV blobs the site serves directly.
     if (seeded) {
       const { packages } = refreshSiteCache(d1mode);
       console.log(`  site cache         ${packages.toLocaleString()} packages → KV`);
@@ -110,69 +130,88 @@ async function crawl(argv: string[]): Promise<void> {
     return;
   }
 
-  const db = openDb(dbPath);
+  const staged = values.all ? await openStagedDb(dbPath) : null;
+  const db = staged?.db ?? openDb(dbPath);
   const mode = values.since ? "incremental" : values.all ? "full catalog" : "demo";
   console.log(`pkgstory crawl → ${dbPath} · ${mode}\n`);
 
-  for (const source of sources) {
-    if (values.since) {
-      const r = crawlSince(db, source, now);
-      if (r.status === "no-cursor") {
-        console.log(`  ${source.label.padEnd(18)} no cursor — run 'crawl --all' to seed first`);
-      } else if (r.status === "up-to-date") {
-        console.log(`  ${source.label.padEnd(18)} up to date`);
-      } else {
+  try {
+    for (const source of sources) {
+      if (values.since) {
+        const r = crawlSince(db, source, now);
+        if (r.status === "no-cursor") {
+          console.log(`  ${source.label.padEnd(18)} no cursor — run 'crawl --all' to seed first`);
+        } else if (r.status === "up-to-date") {
+          console.log(`  ${source.label.padEnd(18)} up to date`);
+        } else {
+          console.log(
+            `  ${source.label.padEnd(18)} ${r.commits} new commits → ${r.events} version events`,
+          );
+        }
+      } else if (values.all) {
+        const ref = headSha(source.repoDir);
+        resetSource(db, source.id);
+        console.log(`[${source.label}] indexing full history …`);
+        const idx = await buildCommitIndexAll(
+          db,
+          source,
+          (c, _r, p) =>
+            console.log(`    L0  ${c.toLocaleString()} commits · ${p.toLocaleString()} packages`),
+          ref,
+        );
         console.log(
-          `  ${source.label.padEnd(18)} ${r.commits} new commits → ${r.events} version events`,
+          `  L0: ${idx.rows.toLocaleString()} index rows · ${idx.packages.toLocaleString()} packages`,
+        );
+        const snaps = buildSnapshots(db, source, (d, t) =>
+          console.log(`    L1  ${d.toLocaleString()}/${t.toLocaleString()} snapshots`),
+        );
+        console.log(`  L1: ${snaps.toLocaleString()} snapshots`);
+        const events = buildEvents(db, source);
+        const contributors = buildPackageContributors(db, source, undefined, ref);
+        const removed = finalize(db, source, now, true, ref);
+        console.log(
+          `  L2: ${events.toLocaleString()} version events · ${contributors.toLocaleString()} contributor links · ${removed.toLocaleString()} removed\n`,
+        );
+      } else {
+        const override = source.id === "homebrew-cask" ? list(values.casks) : list(values.formulae);
+        const names = override ?? DEMO[source.id];
+        if (names.length === 0) continue;
+        const ref = headSha(source.repoDir);
+        const commits = buildCommitIndex(db, source, names, ref);
+        const snaps = buildSnapshots(db, source);
+        const events = buildEvents(db, source);
+        const contributors = buildPackageContributors(db, source, names, ref);
+        const removed = finalize(db, source, now, false, ref);
+        console.log(
+          `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events · ${contributors} contributor links${removed ? ` · ${removed} removed` : ""}`,
         );
       }
-    } else if (values.all) {
-      console.log(`[${source.label}] indexing full history …`);
-      const idx = await buildCommitIndexAll(db, source, (c, _r, p) =>
-        console.log(`    L0  ${c.toLocaleString()} commits · ${p.toLocaleString()} packages`),
-      );
-      console.log(
-        `  L0: ${idx.rows.toLocaleString()} index rows · ${idx.packages.toLocaleString()} packages`,
-      );
-      const snaps = buildSnapshots(db, source, (d, t) =>
-        console.log(`    L1  ${d.toLocaleString()}/${t.toLocaleString()} snapshots`),
-      );
-      console.log(`  L1: ${snaps.toLocaleString()} snapshots`);
-      const events = buildEvents(db, source);
-      const contributors = buildPackageContributors(db, source);
-      const removed = finalize(db, source, now, true);
-      console.log(
-        `  L2: ${events.toLocaleString()} version events · ${contributors.toLocaleString()} contributor links · ${removed.toLocaleString()} removed\n`,
-      );
-    } else {
-      const override = source.id === "homebrew-cask" ? list(values.casks) : list(values.formulae);
-      const names = override ?? DEMO[source.id];
-      if (names.length === 0) continue;
-      const commits = buildCommitIndex(db, source, names);
-      const snaps = buildSnapshots(db, source);
-      const events = buildEvents(db, source);
-      const contributors = buildPackageContributors(db, source, names);
-      const removed = finalize(db, source, now, false);
-      console.log(
-        `  ${source.label.padEnd(18)} ${commits} commits → ${snaps} snapshots → ${events} version events · ${contributors} contributor links${removed ? ` · ${removed} removed` : ""}`,
-      );
     }
+
+    const checked = db.prepare("SELECT MAX(last_crawled_at) AS at FROM crawl_state").get() as {
+      at: number | null;
+    };
+    if (checked?.at) console.log(`\nlast checked: ${displayDate(checked.at)}`);
+
+    sampleTimeline(db);
+  } catch (error) {
+    if (staged) staged.discard();
+    else db.close();
+    throw error;
   }
 
-  const checked = db.prepare("SELECT MAX(last_crawled_at) AS at FROM crawl_state").get() as {
-    at: number | null;
-  };
-  if (checked?.at) console.log(`\nlast checked: ${new Date(checked.at * 1000).toISOString()}`);
-
-  sampleTimeline(db);
-  db.close();
+  if (staged) await staged.publish();
+  else db.close();
 }
 
 function exportCmd(argv: string[]): void {
   const { values } = parseArgs({ args: argv, options: { db: { type: "string" } } });
-  const db = openDb(values.db ?? DEFAULT_DB);
-  exportSlice(db, (chunk) => process.stdout.write(chunk));
-  db.close();
+  const db = openReadonlyDb(values.db ?? DEFAULT_DB);
+  try {
+    exportSlice(db, (chunk) => process.stdout.write(chunk));
+  } finally {
+    db.close();
+  }
 }
 
 function cacheCmd(argv: string[]): void {
@@ -216,7 +255,7 @@ function sampleTimeline(db: DatabaseSync): void {
 
   console.log(`Sample — ${top.name} (${top.source}), ${top.n} versions tracked:`);
   for (const r of rows) {
-    const date = new Date(r.introduced_at * 1000).toISOString().slice(0, 10);
+    const date = displayDate(r.introduced_at).slice(0, 10);
     const rev = r.revision ? `_${r.revision}` : "";
     console.log(`  ${date}  ${r.version}${rev}`);
   }

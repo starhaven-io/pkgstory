@@ -7,6 +7,7 @@ interface SnapRow {
   bottled: number;
   bottle_tags: string;
   committed_at: number;
+  history_order: number;
   commit_sha: string;
   subject: string;
 }
@@ -26,7 +27,9 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertChange = db.prepare(
-    "INSERT OR IGNORE INTO version_changes (package_id, commit_sha) VALUES (?, ?)",
+    `INSERT OR REPLACE INTO version_changes
+       (package_id, commit_sha, version, revision, changed_at, history_order, subject)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertBottle = db.prepare(
     `INSERT OR IGNORE INTO bottle_events
@@ -53,7 +56,8 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
         )`,
   );
   const snaps = db.prepare(
-    `SELECT s.version, s.revision, s.bottled, s.bottle_tags, s.committed_at, s.commit_sha, ci.subject
+    `SELECT s.version, s.revision, s.bottled, s.bottle_tags, s.committed_at,
+            ci.history_order, s.commit_sha, ci.subject
        FROM snapshots s JOIN commit_index ci
          ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha
       WHERE s.package_id = ?
@@ -62,78 +66,102 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
   let events = 0;
 
   db.exec("BEGIN");
-  db.prepare(
-    `DELETE FROM bottle_events
+  try {
+    db.prepare(
+      `DELETE FROM version_changes
       WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
-  ).run(source.id);
-  db.prepare(
-    `DELETE FROM bottle_intervals
+    ).run(source.id);
+    db.prepare(
+      `DELETE FROM version_events
       WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
-  ).run(source.id);
-  for (const pkg of pkgs) {
-    const rows = snaps.all(pkg.id) as unknown as SnapRow[];
-    let lastKey: string | null = null;
-    let lastBottled: boolean | null = null;
-    let lastTags = new Set<string>();
-    for (const row of rows) {
-      const bottled = row.bottled !== 0;
-      const tags = new Set<string>(JSON.parse(row.bottle_tags) as string[]);
-      for (const tag of tags) {
-        if (!lastTags.has(tag))
-          insertBottleInterval.run(
+    ).run(source.id);
+    db.prepare(
+      `DELETE FROM bottle_events
+      WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
+    ).run(source.id);
+    db.prepare(
+      `DELETE FROM bottle_intervals
+      WHERE package_id IN (SELECT id FROM packages WHERE source = ?)`,
+    ).run(source.id);
+    for (const pkg of pkgs) {
+      const rows = snaps.all(pkg.id) as unknown as SnapRow[];
+      let lastKey: string | null = null;
+      let lastBottled: boolean | null = null;
+      let lastTags = new Set<string>();
+      for (const row of rows) {
+        const bottled = row.bottled !== 0;
+        const tags = new Set<string>(JSON.parse(row.bottle_tags) as string[]);
+        for (const tag of tags) {
+          if (!lastTags.has(tag))
+            insertBottleInterval.run(
+              pkg.id,
+              tag,
+              row.committed_at,
+              row.commit_sha,
+              row.subject,
+              row.version,
+              row.revision,
+            );
+        }
+        for (const tag of lastTags) {
+          if (!tags.has(tag))
+            closeBottleInterval.run(
+              row.committed_at,
+              row.commit_sha,
+              row.subject,
+              row.version,
+              row.revision,
+              pkg.id,
+              tag,
+              row.committed_at,
+              row.commit_sha,
+            );
+        }
+        lastTags = tags;
+        if (
+          (lastBottled === null && bottled) ||
+          (lastBottled !== null && bottled !== lastBottled)
+        ) {
+          insertBottle.run(
             pkg.id,
-            tag,
+            bottled ? 1 : 0,
+            row.version,
+            row.revision,
             row.committed_at,
             row.commit_sha,
             row.subject,
+          );
+        }
+        lastBottled = bottled;
+        if (!row.version) continue;
+        const key = `${row.version}\x00${row.revision}`;
+        if (key !== lastKey) {
+          lastKey = key;
+          insertChange.run(
+            pkg.id,
+            row.commit_sha,
             row.version,
             row.revision,
+            row.committed_at,
+            row.history_order,
+            row.subject,
           );
-      }
-      for (const tag of lastTags) {
-        if (!tags.has(tag))
-          closeBottleInterval.run(
+          const r = insert.run(
+            pkg.id,
+            row.version,
+            row.revision,
             row.committed_at,
             row.commit_sha,
             row.subject,
-            row.version,
-            row.revision,
-            pkg.id,
-            tag,
-            row.committed_at,
-            row.commit_sha,
           );
-      }
-      lastTags = tags;
-      if ((lastBottled === null && bottled) || (lastBottled !== null && bottled !== lastBottled)) {
-        insertBottle.run(
-          pkg.id,
-          bottled ? 1 : 0,
-          row.version,
-          row.revision,
-          row.committed_at,
-          row.commit_sha,
-          row.subject,
-        );
-      }
-      lastBottled = bottled;
-      if (!row.version) continue;
-      const key = `${row.version}\x00${row.revision}`;
-      if (key !== lastKey) {
-        lastKey = key;
-        insertChange.run(pkg.id, row.commit_sha);
-        const r = insert.run(
-          pkg.id,
-          row.version,
-          row.revision,
-          row.committed_at,
-          row.commit_sha,
-          row.subject,
-        );
-        events += Number(r.changes);
+          events += Number(r.changes);
+        }
       }
     }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
-  db.exec("COMMIT");
   return events;
 }

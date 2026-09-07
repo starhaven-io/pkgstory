@@ -1,17 +1,18 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { crawlSinceD1 } from "../src/crawl/incremental.ts";
-import { d1Apply, d1Select } from "../src/db/d1remote.ts";
+import { d1Apply, d1ApplyCommand, d1Select } from "../src/db/d1remote.ts";
 import { cleanupFixtures, formula, TapRepo } from "./helpers/tap.ts";
 
 // Real git fixture, scripted wrangler: the delta derivation runs for real, so
 // these assert on the exact SQL batch the crawl would ship.
 vi.mock("../src/db/d1remote.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/db/d1remote.ts")>();
-  return { ...actual, d1Select: vi.fn(() => []), d1Apply: vi.fn() };
+  return { ...actual, d1Select: vi.fn(() => []), d1Apply: vi.fn(), d1ApplyCommand: vi.fn() };
 });
 
 const d1SelectMock = vi.mocked(d1Select);
 const d1ApplyMock = vi.mocked(d1Apply);
+const d1ApplyCommandMock = vi.mocked(d1ApplyCommand);
 
 afterAll(cleanupFixtures);
 
@@ -27,7 +28,7 @@ function scriptD1(state: D1State): void {
       return state.cursor === null ? [] : [{ last_sha: state.cursor }];
     }
     if (sql.includes("FROM contributor_seeds")) return state.seeded ? [{ "1": 1 }] : [];
-    if (sql.includes("FROM packages WHERE source")) return state.baselines;
+    if (sql.includes("FROM packages") && sql.includes("WHERE source")) return state.baselines;
     throw new Error(`unexpected d1Select in test: ${sql}`);
   });
 }
@@ -81,7 +82,9 @@ describe("crawlSinceD1", () => {
 
     const r = crawlSinceD1(tap.source, "local", 1751000000);
     expect(r.status).toBe("up-to-date");
-    const sql = appliedSql();
+    expect(d1ApplyMock).not.toHaveBeenCalled();
+    expect(d1ApplyCommandMock).toHaveBeenCalledOnce();
+    const sql = d1ApplyCommandMock.mock.calls[0]?.[1] ?? "";
     expect(sql).toContain("INSERT INTO crawl_state");
     expect(sql).toContain("1751000000");
     expect(statements(sql)).toHaveLength(1); // heartbeat only
@@ -114,6 +117,7 @@ describe("crawlSinceD1", () => {
           removed_commit: null,
           renamed_to: null,
           migrated_to: null,
+          change_order: 7,
         },
       ],
     });
@@ -126,6 +130,7 @@ describe("crawlSinceD1", () => {
       `INSERT OR IGNORE INTO packages (source, name) VALUES ('homebrew-formula', 'foo');`,
     );
     expect(sql).toMatch(/INSERT OR IGNORE INTO version_events[^\n]*'1\.1', 0, \d+,/);
+    expect(sql).toMatch(/INSERT OR IGNORE INTO version_changes[^\n]*, 8, 'foo 1\.1'\);/);
     expect(sql).toContain(`'${bump.sha}'`);
     expect(sql).toMatch(/UPDATE packages SET latest_version = '1\.1', latest_revision = 0/);
     expect(sql).toMatch(/UPDATE packages SET deprecate_date = '2026-01-02'/);
@@ -133,7 +138,8 @@ describe("crawlSinceD1", () => {
     expect(sql).toContain("INSERT INTO package_contribution_slices ");
     expect(sql).toContain(`UPDATE contributor_seeds SET seeded_at_sha = '${bump.sha}'`);
 
-    // Cursor last: a partial apply must never advance the cursor past unapplied rows.
+    // Cursor last is observable defense in depth for local/mock executors; remote
+    // Wrangler file imports are themselves atomic.
     const all = statements(sql);
     expect(all.at(-1)).toContain("INSERT INTO crawl_state");
     expect(all.at(-1)).toContain(`'${bump.sha}'`);

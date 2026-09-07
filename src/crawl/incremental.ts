@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
-import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
+import { type D1Mode, d1Apply, d1ApplyCommand, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
 import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
@@ -82,7 +82,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const head = headSha(source.repoDir);
   if (head === lastSha) return { head, commits: 0, packages: [] };
 
-  const commits = logSince(source.repoDir, lastSha); // oldest-first
+  const commits = logSince(source.repoDir, lastSha, head); // oldest-first
   const raw = new Map<string, RawTouch[]>();
   const shas: string[] = [];
   let anyDeleted = false;
@@ -114,11 +114,13 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const blobs = batchCat(source.repoDir, shas);
   // Only resolve the HEAD tree when a deletion appeared — the authoritative check that
   // separates a real removal from a relocation (delete + add in one commit).
-  const present = anyDeleted ? presentPackages(source.repoDir, source.dir, source.packageOf) : null;
+  const present = anyDeleted
+    ? presentPackages(source.repoDir, source.dir, source.packageOf, head)
+    : null;
   // Homebrew normally updates rename/migration metadata in the deleting commit; if a
   // later metadata-only commit reclassifies an old deletion, the full reconcile path
   // backfills it.
-  const replacements = anyDeleted ? source.packageReplacements() : null;
+  const replacements = anyDeleted ? source.packageReplacements(head) : null;
 
   const packages: PackageDelta[] = [];
   for (const [name, touches] of raw) {
@@ -146,7 +148,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       }
       latestLive = t;
       const blob = blobs.get(t.blobSha);
-      if (blob === undefined) continue;
+      if (blob === undefined) throw new Error(`blob ${t.blobSha} was not returned by git cat-file`);
       const { version, revision, bottled, bottleTags } = extractVersion(
         source.kind,
         name,
@@ -305,8 +307,8 @@ export function contributionStatements(
   for (const aggregate of contributions) {
     const contributor = aggregate.contributor;
     statements.push(
-      `INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at) VALUES (${sqlLit(contributor.key)}, ${sqlLit(contributor.displayName)}, ${sqlLit(contributor.githubLogin)}, ${contributor.isBot ? 1 : 0}, ${aggregate.lastAt}) ON CONFLICT (contributor_key) DO UPDATE SET display_name = excluded.display_name, github_login = COALESCE(excluded.github_login, contributors.github_login), is_bot = excluded.is_bot, last_seen_at = excluded.last_seen_at WHERE excluded.last_seen_at >= contributors.last_seen_at;`,
-      `INSERT INTO package_contribution_slices (package_id, contributor_key, window_start_sha, window_end_sha, touch_count, version_count, first_at, last_at) VALUES (${packageIdSql}, ${sqlLit(contributor.key)}, ${sqlLit(windowStartSha)}, ${sqlLit(windowEndSha)}, ${aggregate.touchCount}, ${aggregate.versionCount}, ${aggregate.firstAt}, ${aggregate.lastAt}) ON CONFLICT (package_id, contributor_key, window_start_sha) DO UPDATE SET window_end_sha = excluded.window_end_sha, touch_count = excluded.touch_count, version_count = excluded.version_count, first_at = excluded.first_at, last_at = excluded.last_at;`,
+      `INSERT INTO contributors (contributor_key, display_name, github_login, is_bot, last_seen_at) VALUES (${sqlLit(contributor.key)}, ${sqlLit(contributor.displayName)}, ${sqlLit(contributor.githubLogin)}, ${contributor.isBot ? 1 : 0}, ${sqlLit(aggregate.lastAt)}) ON CONFLICT (contributor_key) DO UPDATE SET display_name = excluded.display_name, github_login = COALESCE(excluded.github_login, contributors.github_login), is_bot = excluded.is_bot, last_seen_at = excluded.last_seen_at WHERE excluded.last_seen_at >= contributors.last_seen_at;`,
+      `INSERT INTO package_contribution_slices (package_id, contributor_key, window_start_sha, window_end_sha, touch_count, version_count, first_at, last_at) VALUES (${packageIdSql}, ${sqlLit(contributor.key)}, ${sqlLit(windowStartSha)}, ${sqlLit(windowEndSha)}, ${sqlLit(aggregate.touchCount)}, ${sqlLit(aggregate.versionCount)}, ${sqlLit(aggregate.firstAt)}, ${sqlLit(aggregate.lastAt)}) ON CONFLICT (package_id, contributor_key, window_start_sha) DO UPDATE SET window_end_sha = excluded.window_end_sha, touch_count = excluded.touch_count, version_count = excluded.version_count, first_at = excluded.first_at, last_at = excluded.last_at;`,
     );
   }
   return statements;
@@ -335,7 +337,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
      VALUES (?, ?, ?, ?, ?, ?)`,
   );
   const insertVersionChange = db.prepare(
-    "INSERT OR IGNORE INTO version_changes (package_id, commit_sha) VALUES (?, ?)",
+    `INSERT OR IGNORE INTO version_changes
+       (package_id, commit_sha, version, revision, changed_at, history_order, subject)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
   const insertBottleEvent = db.prepare(
     `INSERT OR IGNORE INTO bottle_events
@@ -364,8 +368,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   const updateLatest = db.prepare(
     `UPDATE packages
         SET latest_version = ?, latest_revision = ?,
-            latest_at = (SELECT introduced_at FROM version_events
-                          WHERE package_id = ? AND version = ? AND revision = ?),
+            latest_at = ?,
             event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = ?)
       WHERE id = ?`,
   );
@@ -408,14 +411,17 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     changedPackageIds.push(pkg.id);
     const baseHistoryOrder = (latestHistoryOrder.get(pkg.id) as unknown as { value: number }).value;
+    const historyOrderBySha = new Map<string, number>();
     for (const [offset, touch] of history.entries()) {
+      const historyOrder = baseHistoryOrder + offset + 1;
+      historyOrderBySha.set(touch.sha, historyOrder);
       const author = touch.contributors.find((contributor) => contributor.role === "author");
       insertCommit.run(
         pkg.id,
         touch.sha,
         touch.blobSha,
         touch.at,
-        baseHistoryOrder + offset + 1,
+        historyOrder,
         author?.displayName ?? null,
         touch.subject,
         touch.status,
@@ -431,7 +437,11 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       touches,
     );
     for (const e of folded.events) {
-      insertVersionChange.run(pkg.id, e.sha);
+      const historyOrder = historyOrderBySha.get(e.sha);
+      if (historyOrder === undefined) {
+        throw new Error(`version change ${e.sha} has no package history row`);
+      }
+      insertVersionChange.run(pkg.id, e.sha, e.version, e.revision, e.at, historyOrder, e.subject);
       events += Number(
         insertEvent.run(pkg.id, e.version, e.revision, e.at, e.sha, e.subject).changes,
       );
@@ -476,9 +486,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       updateLatest.run(
         folded.latest.version,
         folded.latest.revision,
-        pkg.id,
-        folded.latest.version,
-        folded.latest.revision,
+        folded.latest.at,
         pkg.id,
         pkg.id,
       );
@@ -502,9 +510,9 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
     delta.head,
     source.id,
   );
+  setCrawlState(db, source.id, delta.head, now);
   db.exec("COMMIT");
 
-  setCrawlState(db, source.id, delta.head, now);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }
 
@@ -521,6 +529,7 @@ interface Baseline {
   removedCommit: string | null;
   renamedTo: string | null;
   migratedTo: string | null;
+  changeOrder: number;
 }
 
 /**
@@ -546,9 +555,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .length > 0;
 
   const delta = computeDelta(source, lastSha);
-  const cursorSql = `INSERT INTO crawl_state (source, last_sha, last_crawled_at) VALUES (${sqlLit(source.id)}, ${sqlLit(delta.head)}, ${now}) ON CONFLICT (source) DO UPDATE SET last_sha = excluded.last_sha, last_crawled_at = excluded.last_crawled_at;`;
+  const cursorSql = `INSERT INTO crawl_state (source, last_sha, last_crawled_at) VALUES (${sqlLit(source.id)}, ${sqlLit(delta.head)}, ${sqlLit(now)}) ON CONFLICT (source) DO UPDATE SET last_sha = excluded.last_sha, last_crawled_at = excluded.last_crawled_at;`;
   if (delta.head === lastSha) {
-    d1Apply(mode, cursorSql); // heartbeat
+    d1ApplyCommand(mode, cursorSql); // one statement; no blocking D1 import needed
     return { status: "up-to-date", events: 0, commits: 0, head: delta.head };
   }
 
@@ -562,7 +571,12 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .join(",");
     for (const row of d1Select(
       mode,
-      `SELECT name, latest_version, latest_revision, latest_bottled, latest_bottle_tags, deprecate_date, deprecate_reason, disable_date, disable_reason, removed_at, removed_commit, renamed_to, migrated_to FROM packages WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
+      `SELECT name, latest_version, latest_revision, latest_bottled, latest_bottle_tags,
+              deprecate_date, deprecate_reason, disable_date, disable_reason,
+              removed_at, removed_commit, renamed_to, migrated_to,
+              COALESCE((SELECT MAX(vc.history_order) FROM version_changes vc WHERE vc.package_id = packages.id), -1) AS change_order
+         FROM packages
+        WHERE source = ${sqlLit(source.id)} AND name IN (${inList})`,
     )) {
       baseline.set(row.name as string, {
         version: (row.latest_version as string | null) ?? null,
@@ -580,6 +594,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         removedCommit: (row.removed_commit as string | null) ?? null,
         renamedTo: (row.renamed_to as string | null) ?? null,
         migratedTo: (row.migrated_to as string | null) ?? null,
+        changeOrder: Number(row.change_order ?? -1),
       });
     }
   }
@@ -635,27 +650,29 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       `INSERT OR IGNORE INTO packages (source, name) VALUES (${sqlLit(source.id)}, ${sqlLit(name)});`,
     );
     stmts.push(...contributionStatements(idSub, lastSha, delta.head, contributions));
-    for (const e of folded.events) {
+    for (const [eventOffset, e] of folded.events.entries()) {
+      const historyOrder = (base?.changeOrder ?? -1) + eventOffset + 1;
       stmts.push(
-        `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject) VALUES (${idSub}, ${sqlLit(e.version)}, ${e.revision}, ${e.at}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
+        `INSERT OR IGNORE INTO version_changes (package_id, commit_sha, version, revision, changed_at, history_order, subject) VALUES (${idSub}, ${sqlLit(e.sha)}, ${sqlLit(e.version)}, ${sqlLit(e.revision)}, ${sqlLit(e.at)}, ${sqlLit(historyOrder)}, ${sqlLit(e.subject)});`,
+        `INSERT OR IGNORE INTO version_events (package_id, version, revision, introduced_at, commit_sha, subject) VALUES (${idSub}, ${sqlLit(e.version)}, ${sqlLit(e.revision)}, ${sqlLit(e.at)}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
       );
       events += 1;
     }
     for (const e of folded.bottleEvents) {
       stmts.push(
-        `INSERT OR IGNORE INTO bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES (${idSub}, ${e.bottled ? 1 : 0}, ${sqlLit(e.version)}, ${e.revision}, ${e.at}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
+        `INSERT OR IGNORE INTO bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES (${idSub}, ${e.bottled ? 1 : 0}, ${sqlLit(e.version)}, ${sqlLit(e.revision)}, ${sqlLit(e.at)}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
       );
     }
     for (const transition of folded.bottleTransitions) {
       stmts.push(
         transition.available
-          ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject, started_version, started_revision) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${transition.at}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)}, ${sqlLit(transition.version)}, ${transition.revision});`
-          : `UPDATE bottle_intervals SET ended_at = ${transition.at}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)}, ended_version = ${sqlLit(transition.version)}, ended_revision = ${transition.revision} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${transition.at} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
+          ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject, started_version, started_revision) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${sqlLit(transition.at)}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)}, ${sqlLit(transition.version)}, ${sqlLit(transition.revision)});`
+          : `UPDATE bottle_intervals SET ended_at = ${sqlLit(transition.at)}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)}, ended_version = ${sqlLit(transition.version)}, ended_revision = ${sqlLit(transition.revision)} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${sqlLit(transition.at)} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
       );
     }
     if (folded.latest) {
       stmts.push(
-        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${folded.latest.revision}, latest_at = (SELECT introduced_at FROM version_events ve WHERE ve.package_id = packages.id AND ve.version = ${sqlLit(folded.latest.version)} AND ve.revision = ${folded.latest.revision}), event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
+        `UPDATE packages SET latest_version = ${sqlLit(folded.latest.version)}, latest_revision = ${sqlLit(folded.latest.revision)}, latest_at = ${sqlLit(folded.latest.at)}, event_count = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id) WHERE ${where};`,
       );
     }
     if (folded.bottled !== null && (bottleStateChanged || folded.bottleEvents.length > 0)) {
@@ -676,7 +693,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     if (removedChanged) {
       stmts.push(
         removed
-          ? `UPDATE packages SET removed_at = ${removed.at}, removed_commit = ${sqlLit(removed.commit)}, renamed_to = ${sqlLit(removed.renamedTo)}, migrated_to = ${sqlLit(removed.migratedTo)} WHERE ${where};`
+          ? `UPDATE packages SET removed_at = ${sqlLit(removed.at)}, removed_commit = ${sqlLit(removed.commit)}, renamed_to = ${sqlLit(removed.renamedTo)}, migrated_to = ${sqlLit(removed.migratedTo)} WHERE ${where};`
           : `UPDATE packages SET removed_at = NULL, removed_commit = NULL, renamed_to = NULL, migrated_to = NULL WHERE ${where};`,
       );
     }
@@ -687,10 +704,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     );
   }
   stmts.push(cursorSql);
-  // No BEGIN/COMMIT wrapper: remote D1 rejects SQL transactions in a --file, and the
-  // writes are otherwise replayable (INSERT OR IGNORE events + recomputed latest/
-  // lifecycle). Cursor goes last so a partial apply is retried; see OPERATIONS.md for
-  // the one initial-platform-interval ambiguity if only a new package row lands.
+  // Wrangler sends --file imports through D1's atomic import API. Keep the cursor last
+  // as an additional, observable invariant and so local/mock executors remain safe.
   d1Apply(mode, `${stmts.join("\n")}\n`);
   return { status: "ok", events, commits: delta.commits, head: delta.head };
 }

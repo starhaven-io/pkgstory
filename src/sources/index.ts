@@ -16,15 +16,14 @@ export interface Source {
   kind: PackageKind;
   repoDir: string;
   /**
-   * Current sharded path plus the pre-sharding flat path, e.g.
-   * `Formula/g/git.rb` and `Formula/git.rb` — so a curated (demo) crawl sees the
-   * package's whole in-repo history, not just the post-2023 shard era.
+   * Current sharded path plus bounded historical shard layouts and the
+   * pre-sharding flat path, so a curated crawl sees the whole in-repo history.
    */
   pathsFor(name: string): string[];
   /** Package name for a touched path, keyed on basename so relocations don't matter. */
   packageOf(path: string): string | null;
   /** Current root-level rename/migration metadata, keyed by old package name. */
-  packageReplacements(): Map<string, PackageReplacement>;
+  packageReplacements(ref?: string): Map<string, PackageReplacement>;
 }
 
 interface SourceDef {
@@ -56,8 +55,14 @@ function shardOf(kind: PackageKind, name: string): string {
   return name[0]?.toLowerCase() ?? "_";
 }
 
-function rootMap(repoDir: string, file: string): Map<string, string> {
-  const raw = headFile(repoDir, file);
+function shardsFor(kind: PackageKind, name: string): string[] {
+  // lib formulae and font casks moved from their original first-character shard
+  // into dedicated shard trees. Both paths are part of their version history.
+  return [...new Set([shardOf(kind, name), name[0]?.toLowerCase() ?? "_"])];
+}
+
+function rootMap(repoDir: string, file: string, ref: string): Map<string, string> {
+  const raw = headFile(repoDir, file, ref);
   if (raw === null) return new Map();
 
   const parsed = JSON.parse(raw) as unknown;
@@ -72,14 +77,15 @@ function rootMap(repoDir: string, file: string): Map<string, string> {
 function loadPackageReplacements(
   repoDir: string,
   kind: PackageKind,
+  ref: string,
 ): Map<string, PackageReplacement> {
   const renameFile = kind === "formula" ? "formula_renames.json" : "cask_renames.json";
   const out = new Map<string, PackageReplacement>();
 
-  for (const [from, to] of rootMap(repoDir, renameFile)) {
+  for (const [from, to] of rootMap(repoDir, renameFile, ref)) {
     out.set(from, { renamedTo: to, migratedTo: null });
   }
-  for (const [from, to] of rootMap(repoDir, "tap_migrations.json")) {
+  for (const [from, to] of rootMap(repoDir, "tap_migrations.json", ref)) {
     const replacement = out.get(from) ?? { renamedTo: null, migratedTo: null };
     replacement.migratedTo = to;
     out.set(from, replacement);
@@ -90,21 +96,53 @@ function loadPackageReplacements(
 /** Exported for tests, which point a real Source at a fixture repo. */
 export function makeSource(def: SourceDef, repoDir: string): Source {
   const dir = def.dir;
-  // <dir> as any path component (covers Library/Formula/ and Formula/), then any
-  // number of shard subdirs (casks shard fonts two deep: Casks/font/font-a/x.rb),
-  // then <name>.rb — so every layout/relocation maps to one package.
-  const re = new RegExp(`(?:^|/)${dir}/(?:[^/]+/)*([^/]+)\\.rb$`);
+  const validName = /^[a-z0-9][a-z0-9@+_.-]*$/i;
   return {
     ...def,
     repoDir,
     pathsFor(name: string): string[] {
-      return [`${dir}/${shardOf(def.kind, name)}/${name}.rb`, `${dir}/${name}.rb`];
+      if (!validName.test(name)) throw new Error(`invalid package name: ${JSON.stringify(name)}`);
+      const paths = [
+        ...shardsFor(def.kind, name).map((shard) => `${dir}/${shard}/${name}.rb`),
+        `${dir}/${name}.rb`,
+      ];
+      // A handful of casks moved through a noncanonical one-character shard
+      // during renames. Keep the glob bounded to exactly one path component.
+      if (def.kind === "cask") paths.push(`:(glob)${dir}/?/${name}.rb`);
+      if (def.kind === "formula") {
+        paths.push(
+          ...shardsFor(def.kind, name).map((shard) => `Library/${dir}/${shard}/${name}.rb`),
+          `Library/${dir}/${name}.rb`,
+        );
+      }
+      return paths;
     },
     packageOf(path: string): string | null {
-      return path.match(re)?.[1] ?? null;
+      const parts = path.split("/");
+      const relative =
+        def.kind === "formula" && parts[0] === "Library" && parts[1] === dir
+          ? parts.slice(2)
+          : parts[0] === dir
+            ? parts.slice(1)
+            : null;
+      const file = relative?.at(-1);
+      if (!relative || !file?.endsWith(".rb")) return null;
+      const name = file.slice(0, -3);
+      if (!validName.test(name)) return null;
+
+      if (def.kind === "cask" && relative.length === 2 && /^[a-z0-9]$/i.test(relative[0] ?? "")) {
+        return name;
+      }
+
+      const prefix = path.startsWith(`Library/${dir}/`) ? `Library/${dir}` : dir;
+      const supported = [
+        `${prefix}/${name}.rb`,
+        ...shardsFor(def.kind, name).map((shard) => `${prefix}/${shard}/${name}.rb`),
+      ];
+      return supported.includes(path) ? name : null;
     },
-    packageReplacements(): Map<string, PackageReplacement> {
-      return loadPackageReplacements(repoDir, def.kind);
+    packageReplacements(ref = "HEAD"): Map<string, PackageReplacement> {
+      return loadPackageReplacements(repoDir, def.kind, ref);
     },
   };
 }

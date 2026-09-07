@@ -11,6 +11,7 @@ import {
   lifecycleState,
   type PackageMeta,
   plusYear,
+  publicContributorName,
   sourceLabel,
   statusOf,
   todayISO,
@@ -40,6 +41,14 @@ const meta = (overrides: Partial<PackageMeta> = {}): PackageMeta => ({
 
 afterEach(() => {
   vi.useRealTimers();
+});
+
+describe("public contributor names", () => {
+  it("redacts mixed email obfuscations at the rendering boundary", () => {
+    expect(publicContributorName("person at example [dot] com", null)).toBe("Unknown contributor");
+    expect(publicContributorName("person [at] example dot com", "octocat")).toBe("octocat");
+    expect(publicContributorName("A Person", null)).toBe("A Person");
+  });
 });
 
 describe("site lifecycle formatting", () => {
@@ -376,5 +385,7 @@ describe("site display helpers", () => {
     expect(plusYear("2026-08-13")).toBe("2027-08-13");
     expect(isoDate(1_700_000_000)).toBe("2023-11-14");
     expect(isoDateTime(1_700_000_000)).toBe("2023-11-14 22:13 UTC");
+    expect(isoDate(8_640_000_000_001)).toBe("unknown");
+    expect(isoDateTime(Number.POSITIVE_INFINITY)).toBe("unknown");
   });
 });

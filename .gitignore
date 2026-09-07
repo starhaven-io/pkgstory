@@ -18,6 +18,7 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+.pkgstory-staging-*/
 
 # Tooling
 !_typos.toml

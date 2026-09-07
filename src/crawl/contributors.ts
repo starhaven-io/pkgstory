@@ -140,6 +140,7 @@ export function buildPackageContributors(
   db: DatabaseSync,
   source: Source,
   names?: string[],
+  ref = "HEAD",
 ): number {
   if (names) {
     const getPackage = db.prepare("SELECT id FROM packages WHERE source = ? AND name = ?");
@@ -153,7 +154,7 @@ export function buildPackageContributors(
     return rows;
   }
 
-  const seedSha = headSha(source.repoDir);
+  const seedSha = ref === "HEAD" ? headSha(source.repoDir) : ref;
   db.exec("BEGIN");
   db.prepare(
     `DELETE FROM package_contributors

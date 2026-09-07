@@ -1,11 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
+import { contributorFromIdentity } from "../contributors.ts";
 import { upsertPackage } from "../db/db.ts";
 import { logRaw, type RawFile, streamLog } from "../git.ts";
 import type { Source } from "../sources/index.ts";
 import { clearContributorLinks, contributorWriter } from "./contributors.ts";
 
-function liveFilesFirst(files: RawFile[]): RawFile[] {
-  return files.toSorted((a, b) => Number(a.status === "D") - Number(b.status === "D"));
+function deletedFilesFirst(files: RawFile[]): RawFile[] {
+  // A relocation can delete and add the same package in one commit. The index key
+  // is package + commit, so write the live path last and retain its blob.
+  return files.toSorted((a, b) => Number(b.status === "D") - Number(a.status === "D"));
 }
 
 /**
@@ -13,10 +16,15 @@ function liveFilesFirst(files: RawFile[]): RawFile[] {
  * current paths for speed; the bucket-by-basename step below is what the full-tree
  * production pass uses to stay relocation-proof.
  */
-export function buildCommitIndex(db: DatabaseSync, source: Source, names: string[]): number {
+export function buildCommitIndex(
+  db: DatabaseSync,
+  source: Source,
+  names: string[],
+  ref = "HEAD",
+): number {
   const wanted = new Set(names);
   const pathspecs = names.flatMap((n) => source.pathsFor(n));
-  const commits = logRaw(source.repoDir, pathspecs);
+  const commits = logRaw(source.repoDir, pathspecs, ref);
 
   const insert = db.prepare(
     `INSERT INTO commit_index
@@ -26,7 +34,9 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
        committed_at = excluded.committed_at,
        history_order = excluded.history_order,
        author = excluded.author,
-       subject = excluded.subject`,
+       subject = excluded.subject,
+       blob_sha = excluded.blob_sha,
+       status = excluded.status`,
   );
   const pkgIds = new Map<string, number>();
   const contributors = contributorWriter(db);
@@ -36,7 +46,8 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
   db.exec("BEGIN");
   clearContributorLinks(db, source, wanted.size ? names : undefined);
   for (const commit of commits) {
-    for (const file of liveFilesFirst(commit.files)) {
+    const author = contributorFromIdentity(commit.author).displayName;
+    for (const file of deletedFilesFirst(commit.files)) {
       const name = source.packageOf(file.path);
       if (!name) continue;
       if (wanted.size && !wanted.has(name)) continue;
@@ -52,7 +63,7 @@ export function buildCommitIndex(db: DatabaseSync, source: Source, names: string
         file.blobSha,
         commit.committedAt,
         historyOrder,
-        commit.author.name,
+        author,
         commit.subject,
         file.status,
       );
@@ -73,6 +84,7 @@ export async function buildCommitIndexAll(
   db: DatabaseSync,
   source: Source,
   onProgress?: (commits: number, rows: number, packages: number) => void,
+  ref = "HEAD",
 ): Promise<{ commits: number; rows: number; packages: number }> {
   const insert = db.prepare(
     `INSERT INTO commit_index
@@ -82,7 +94,9 @@ export async function buildCommitIndexAll(
        committed_at = excluded.committed_at,
        history_order = excluded.history_order,
        author = excluded.author,
-       subject = excluded.subject`,
+       subject = excluded.subject,
+       blob_sha = excluded.blob_sha,
+       status = excluded.status`,
   );
   const pkgIds = new Map<string, number>();
   const contributors = contributorWriter(db);
@@ -92,37 +106,42 @@ export async function buildCommitIndexAll(
 
   db.exec("BEGIN");
   clearContributorLinks(db, source);
-  await streamLog(source.repoDir, (commit) => {
-    commits += 1;
-    for (const file of liveFilesFirst(commit.files)) {
-      const name = source.packageOf(file.path);
-      if (!name) continue;
-      let pid = pkgIds.get(name);
-      if (pid === undefined) {
-        pid = upsertPackage(db, source.id, name);
-        pkgIds.set(name, pid);
+  await streamLog(
+    source.repoDir,
+    (commit) => {
+      commits += 1;
+      const author = contributorFromIdentity(commit.author).displayName;
+      for (const file of deletedFilesFirst(commit.files)) {
+        const name = source.packageOf(file.path);
+        if (!name) continue;
+        let pid = pkgIds.get(name);
+        if (pid === undefined) {
+          pid = upsertPackage(db, source.id, name);
+          pkgIds.set(name, pid);
+        }
+        rows += Number(
+          insert.run(
+            pid,
+            commit.sha,
+            file.blobSha,
+            commit.committedAt,
+            historyOrder,
+            author,
+            commit.subject,
+            file.status,
+          ).changes,
+        );
+        contributors.link(pid, commit);
       }
-      rows += Number(
-        insert.run(
-          pid,
-          commit.sha,
-          file.blobSha,
-          commit.committedAt,
-          historyOrder,
-          commit.author.name,
-          commit.subject,
-          file.status,
-        ).changes,
-      );
-      contributors.link(pid, commit);
-    }
-    historyOrder -= 1;
-    if (commits % 25000 === 0) {
-      db.exec("COMMIT");
-      onProgress?.(commits, rows, pkgIds.size);
-      db.exec("BEGIN");
-    }
-  });
+      historyOrder -= 1;
+      if (commits % 25000 === 0) {
+        db.exec("COMMIT");
+        onProgress?.(commits, rows, pkgIds.size);
+        db.exec("BEGIN");
+      }
+    },
+    ref,
+  );
   db.exec("COMMIT");
   return { commits, rows, packages: pkgIds.size };
 }

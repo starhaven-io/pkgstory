@@ -7,7 +7,7 @@ build:
 # Install dependencies
 # Site deps too: root tests import pure helpers from site/src/lib, and Vitest
 # resolves site/tsconfig.json for them, which extends astro's.
-install: site-install
+install: site-install trigger-install
     npm ci --strict-allow-scripts
 
 # fleet:block npm-policy
@@ -68,30 +68,29 @@ site-seed-local db="pkgstory.db": site-install
     sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
     trap 'rm -f "$sql"' EXIT
     node src/cli.ts export --db "{{db}}" > "$sql"
-    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
+    (cd site && WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler d1 execute pkgstory --local --file "$sql" >/dev/null)
     node src/cli.ts cache --d1 local
 
 # Reseed the deployed D1/KV site state from a full-crawl database
 site-seed-remote db="pkgstory.db": site-install
     #!/usr/bin/env bash
     set -euo pipefail
-    # The slice drops and rebuilds every table, so the deployed site serves errors from
-    # the first DROP until the last INSERT lands. Seed only from a `crawl --all` database:
-    # an incremental-only one exports no contributors at all.
-    read -rp "Reseed the DEPLOYED pkgstory D1 from {{db}}? The live site errors until it finishes. [y/N] " reply
+    # Wrangler applies the remote SQL file atomically and restores the old database on
+    # failure. Seed only from a `crawl --all` database: an incremental-only one exports
+    # no contributors at all.
+    read -rp "Atomically reseed the DEPLOYED pkgstory D1 from {{db}}? [y/N] " reply
     [[ "${reply}" == [yY] ]] || { echo "aborted"; exit 1; }
     # wrangler offers its browser login only when stdin and stdout are both TTYs, and
     # every remote call below reads wrangler through a pipe. `whoami` never prompts, so
-    # gate on it here: a stale login then fails before the first DROP rather than
-    # partway through, with the deployed site already emptied.
-    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler whoami --json >/dev/null) || {
+    # gate on it here so a stale login fails before the import is uploaded.
+    (cd site && WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler whoami --json >/dev/null) || {
         echo "wrangler is not authenticated; run: cd site && npx wrangler login" >&2
         exit 1
     }
     sql="$(mktemp "${TMPDIR:-/tmp}/pkgstory-d1.XXXXXX.sql")"
     trap 'rm -f "$sql"' EXIT
     node src/cli.ts export --db "{{db}}" > "$sql"
-    (cd site && WRANGLER_SEND_METRICS=false ./node_modules/.bin/wrangler d1 execute pkgstory --remote --yes --file "$sql" >/dev/null)
+    (cd site && WRANGLER_SEND_METRICS=false WRANGLER_WRITE_LOGS=false ./node_modules/.bin/wrangler d1 execute pkgstory --remote --yes --file "$sql" >/dev/null)
     node src/cli.ts cache --d1 remote
 
 # Start the site dev server
@@ -116,7 +115,7 @@ site-preview:
 
 # Build the SSR site, then check documentation links
 lychee: site-build
-    lychee --config lychee.toml README.md trigger/README.md
+    lychee --config lychee.toml README.md SECURITY.md docs/OPERATIONS.md trigger/README.md
 
 # Trigger (crawl cron Worker)
 
@@ -142,7 +141,7 @@ trigger-deploy:
 
 # Check
 
-# Run all checks (mirrors CI; skips tools that aren't installed)
+# Run the complete local gate, including checks that are hosted separately in CI
 check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -160,6 +159,9 @@ check:
         skipped+=("$2 (brew install $3)")
     }
     run npm-policy node scripts/check-npm-install-policy.mjs . site trigger
+    run root-dependencies npm ls --depth=0
+    run site-dependencies npm --prefix site ls --depth=0
+    run trigger-dependencies npm --prefix trigger ls --depth=0
     run typecheck npm run --silent typecheck
     run lint npm run --silent lint
     if command -v typos &>/dev/null; then
@@ -177,6 +179,11 @@ check:
     (cd site && npm run format:check) || failed=1
     echo "--- site-build ---"
     (cd site && npm run build) || failed=1
+    if command -v lychee &>/dev/null; then
+        run links lychee --config lychee.toml README.md SECURITY.md docs/OPERATIONS.md trigger/README.md
+    else
+        skip links lychee lychee
+    fi
     echo "--- site-deploy-dry ---"
     (cd site && WRANGLER_SEND_METRICS=false npm run deploy:dry) || failed=1
     echo "--- trigger-typecheck ---"

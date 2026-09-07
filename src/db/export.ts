@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { publicDisplayName } from "../contributors.ts";
 import { sqlLit as lit } from "./d1remote.ts";
 
 // The D1 read-slice: only what the site queries. commit_index/snapshots are
@@ -8,6 +9,7 @@ DROP TABLE IF EXISTS package_contribution_slices;
 DROP TABLE IF EXISTS contributors;
 DROP TABLE IF EXISTS bottle_intervals;
 DROP TABLE IF EXISTS bottle_events;
+DROP TABLE IF EXISTS version_changes;
 DROP TABLE IF EXISTS version_events;
 DROP TABLE IF EXISTS crawl_state;
 DROP TABLE IF EXISTS packages;
@@ -42,6 +44,16 @@ CREATE TABLE version_events (
   commit_sha    TEXT,
   subject       TEXT,
   UNIQUE (package_id, version, revision)
+);
+CREATE TABLE version_changes (
+  package_id INTEGER NOT NULL,
+  commit_sha TEXT NOT NULL,
+  version TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  changed_at INTEGER NOT NULL,
+  history_order INTEGER NOT NULL DEFAULT 0,
+  subject TEXT,
+  PRIMARY KEY (package_id, commit_sha)
 );
 CREATE TABLE bottle_events (
   id         INTEGER PRIMARY KEY,
@@ -99,6 +111,9 @@ CREATE TABLE crawl_state (
 );
 CREATE INDEX idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX idx_events_time ON version_events (introduced_at DESC);
+CREATE INDEX idx_changes_pkg_time ON version_changes (package_id, changed_at DESC);
+CREATE INDEX idx_changes_time ON version_changes (changed_at DESC);
+CREATE INDEX idx_changes_pkg_order ON version_changes (package_id, history_order DESC);
 CREATE INDEX idx_bottle_events_pkg_time ON bottle_events (package_id, changed_at DESC);
 CREATE INDEX idx_bottle_intervals_pkg_time ON bottle_intervals (package_id, started_at DESC);
 CREATE INDEX idx_bottle_intervals_open ON bottle_intervals (package_id, tag) WHERE ended_at IS NULL;
@@ -109,6 +124,94 @@ CREATE INDEX idx_contribution_slices_package ON package_contribution_slices (pac
 // Rows per INSERT. Keeps statement count low (~2k for the full catalog) so
 // `wrangler d1 execute` doesn't choke parsing one statement per row.
 const BATCH = 200;
+
+const REQUIRED_EXPORT_COLUMNS = {
+  packages: [
+    "id",
+    "source",
+    "name",
+    "latest_version",
+    "latest_revision",
+    "latest_at",
+    "latest_bottled",
+    "latest_bottle_tags",
+    "event_count",
+    "bottle_event_count",
+    "bottle_interval_count",
+    "removed_at",
+    "removed_commit",
+    "renamed_to",
+    "migrated_to",
+    "deprecate_date",
+    "deprecate_reason",
+    "disable_date",
+    "disable_reason",
+  ],
+  commit_index: ["package_id", "commit_sha", "history_order"],
+  version_events: ["package_id", "version", "revision", "introduced_at", "commit_sha", "subject"],
+  version_changes: [
+    "package_id",
+    "commit_sha",
+    "version",
+    "revision",
+    "changed_at",
+    "history_order",
+    "subject",
+  ],
+  bottle_events: [
+    "package_id",
+    "bottled",
+    "version",
+    "revision",
+    "changed_at",
+    "commit_sha",
+    "subject",
+  ],
+  bottle_intervals: [
+    "package_id",
+    "tag",
+    "started_at",
+    "started_commit",
+    "started_subject",
+    "started_version",
+    "started_revision",
+    "ended_at",
+    "ended_commit",
+    "ended_subject",
+    "ended_version",
+    "ended_revision",
+  ],
+  contributors: ["contributor_key", "display_name", "github_login", "is_bot", "last_seen_at"],
+  package_contributors: [
+    "package_id",
+    "contributor_key",
+    "touch_count",
+    "version_count",
+    "first_at",
+    "last_at",
+  ],
+  contributor_seeds: ["source", "seeded_at_sha"],
+  crawl_state: ["source", "last_sha", "last_crawled_at"],
+} as const;
+
+function assertExportSchema(db: DatabaseSync): void {
+  const missing: string[] = [];
+  for (const [table, required] of Object.entries(REQUIRED_EXPORT_COLUMNS)) {
+    const present = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+        (column) => column.name,
+      ),
+    );
+    for (const column of required) {
+      if (!present.has(column)) missing.push(`${table}.${column}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `crawl database schema is stale (missing ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", …" : ""}); run \`pkgstory crawl --all\` before export`,
+    );
+  }
+}
 
 function dumpTable(
   db: DatabaseSync,
@@ -124,7 +227,7 @@ function dumpTable(
     write(`INSERT INTO ${table} (${columns}) VALUES ${buf.join(",")};\n`);
     buf = [];
   };
-  for (const r of db.prepare(sql).all() as Record<string, unknown>[]) {
+  for (const r of db.prepare(sql).iterate() as Iterable<Record<string, unknown>>) {
     buf.push(`(${tuple(r)})`);
     if (buf.length >= BATCH) flush();
   }
@@ -134,10 +237,41 @@ function dumpTable(
 /**
  * Emit the site-slice as self-contained SQL (schema + batched multi-row inserts) for
  * D1. A full reseed; apply with `wrangler d1 execute <db> [--local|--remote] --file
- * slice.sql`. Multi-row inserts keep this to ~2k statements; no explicit transaction
- * (remote D1 rejects BEGIN/COMMIT in a SQL file, and ~2k statements is fast anyway).
+ * slice.sql`. Multi-row inserts keep this to ~2k statements. Wrangler's remote D1
+ * import is atomic; D1 itself owns the transaction around the uploaded file.
  */
 export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): void {
+  assertExportSchema(db);
+  const legacyChanges = db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*)
+            FROM version_changes vc
+            LEFT JOIN commit_index ci
+              ON ci.package_id = vc.package_id AND ci.commit_sha = vc.commit_sha
+           WHERE vc.version IS NULL OR vc.revision IS NULL OR vc.changed_at IS NULL
+              OR ci.commit_sha IS NULL OR vc.history_order != ci.history_order)
+         +
+         (SELECT COUNT(*)
+            FROM version_events ve
+           WHERE ve.commit_sha IS NULL
+              OR NOT EXISTS (SELECT 1 FROM version_changes vc
+                              WHERE vc.package_id = ve.package_id
+                                AND vc.commit_sha = ve.commit_sha))
+         +
+         (SELECT COUNT(*)
+            FROM (SELECT package_id
+                    FROM commit_index
+                   GROUP BY package_id
+                  HAVING COUNT(*) != COUNT(DISTINCT history_order))) AS count`,
+    )
+    .get() as { count: number };
+  if (legacyChanges.count > 0) {
+    throw new Error(
+      "version transition data is incomplete or unordered; run `pkgstory crawl --all` before export",
+    );
+  }
+
   write(SCHEMA);
 
   dumpTable(
@@ -161,7 +295,7 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
                                     JOIN packages p ON p.id = pc.package_id
                                     JOIN contributor_seeds cs ON cs.source = p.source)`,
     (r) =>
-      `${lit(r.contributor_key)},${lit(r.display_name)},${lit(r.github_login)},${lit(r.is_bot)},${lit(r.last_seen_at)}`,
+      `${lit(r.contributor_key)},${lit(publicDisplayName(String(r.display_name), r.github_login == null ? null : String(r.github_login)))},${lit(r.github_login)},${lit(r.is_bot)},${lit(r.last_seen_at)}`,
   );
   dumpTable(
     db,
@@ -207,13 +341,21 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
   dumpTable(
     db,
     write,
+    "version_changes",
+    "package_id,commit_sha,version,revision,changed_at,history_order,subject",
+    "SELECT package_id, commit_sha, version, revision, changed_at, history_order, subject FROM version_changes",
+    (r) =>
+      `${lit(r.package_id)},${lit(r.commit_sha)},${lit(r.version)},${lit(r.revision)},${lit(r.changed_at)},${lit(r.history_order)},${lit(r.subject)}`,
+  );
+  dumpTable(
+    db,
+    write,
     "crawl_state",
     "source,last_sha,last_crawled_at",
     "SELECT source, last_sha, last_crawled_at FROM crawl_state",
     (r) => `${lit(r.source)},${lit(r.last_sha)},${lit(r.last_crawled_at)}`,
   );
-  // The marker lands last: a partial non-transactional reseed must not enable
-  // incremental contributor writes on top of an incomplete historical seed.
+  // The marker lands last as a defense in depth invariant for local/mock importers.
   dumpTable(
     db,
     write,
