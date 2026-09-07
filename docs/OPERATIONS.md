@@ -111,10 +111,11 @@ hours old.
 These controls are not established by repository files and must be verified in
 their respective control planes:
 
-- Grant the dedicated crawl GitHub App **Actions: Read and write** for `pkgstory`
-  before deploying the workflow-dispatch trigger. Confirm one successful
-  dispatch, then remove repository-content write access and rotate the Worker
-  private key. Reversing this order can stop scheduled crawls.
+- Grant **starhaven-bot** **Actions: Read and write** and accept the updated
+  installation permissions before merging the workflow-dispatch trigger. Keep its
+  repository-content and pull-request permissions: the fleet sync in `dot_github`
+  opens PRs as the same App, and its private key is shared with that sync, so
+  rotate the key in both places together.
 - Require the aggregate CI conclusion and dismiss stale pull-request approvals
   when reviewable code changes.
 - Monitor `/health.json` from outside GitHub Actions and alert on HTTP 503. The

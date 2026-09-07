@@ -2,9 +2,6 @@ name: Crawl
 
 on:
   workflow_dispatch:
-  repository_dispatch:
-    # Fired by the trigger/ Worker as the starhaven-bot App.
-    types: [crawl]
   schedule:
     # Fallback only — the trigger/ Worker drives the real cadence. Offset off the hour.
     - cron: "23 */6 * * *"
