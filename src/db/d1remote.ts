@@ -19,6 +19,7 @@ function run(args: string[]): string {
   return execFileSync(WRANGLER, ["d1", "execute", DB_NAME, ...args], {
     cwd: SITE,
     encoding: "utf8",
+    env: { ...process.env, WRANGLER_SEND_METRICS: "false", WRANGLER_WRITE_LOGS: "false" },
     maxBuffer: 1024 * 1024 * 128,
   });
 }
@@ -26,8 +27,7 @@ function run(args: string[]): string {
 export function sqlLit(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "number") {
-    // NaN/Infinity would emit invalid SQL; fail loudly instead of corrupting a batch.
-    if (!Number.isFinite(v)) throw new RangeError(`non-finite number in SQL literal: ${v}`);
+    if (!Number.isSafeInteger(v)) throw new RangeError(`unsafe integer in SQL literal: ${v}`);
     return String(v);
   }
   // Strip C0 controls (keeping \n and \t): a NUL in an attacker-supplied commit
@@ -90,6 +90,11 @@ export function d1Apply(mode: D1Mode, sql: string): void {
   withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--file", file]));
 }
 
+/** Execute one bounded write without entering Wrangler's database-import path. */
+export function d1ApplyCommand(mode: D1Mode, sql: string): void {
+  d1Exec(mode, sql);
+}
+
 /**
  * Bring an already-seeded D1 database up to the current read-model schema.
  * Callers run this once per process before crawling into or reading D1 —
@@ -97,8 +102,107 @@ export function d1Apply(mode: D1Mode, sql: string): void {
  */
 export function ensureD1Schema(mode: D1Mode): void {
   ensureD1PackageColumns(mode);
+  ensureD1VersionChanges(mode);
   ensureD1BottleSchema(mode);
   ensureD1ContributorTables(mode);
+}
+
+/** Add the non-deduped transition stream used by RSS and recent updates. */
+export function ensureD1VersionChanges(mode: D1Mode): void {
+  const tables = new Set(
+    d1Select(
+      mode,
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'version_changes'",
+    ).map((row) => String(row.name)),
+  );
+  if (!tables.has("version_changes")) {
+    d1Apply(
+      mode,
+      `CREATE TABLE version_changes (
+  package_id INTEGER NOT NULL,
+  commit_sha TEXT NOT NULL,
+  version TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  changed_at INTEGER NOT NULL,
+  history_order INTEGER NOT NULL DEFAULT 0,
+  subject TEXT,
+  PRIMARY KEY (package_id, commit_sha)
+);
+CREATE INDEX idx_changes_pkg_time ON version_changes (package_id, changed_at DESC);
+CREATE INDEX idx_changes_time ON version_changes (changed_at DESC);
+CREATE INDEX idx_changes_pkg_order ON version_changes (package_id, history_order DESC);
+INSERT OR IGNORE INTO version_changes
+  (package_id, commit_sha, version, revision, changed_at, history_order, subject)
+SELECT package_id, commit_sha, version, revision, introduced_at, id, subject
+  FROM version_events
+ WHERE commit_sha IS NOT NULL
+ ORDER BY id ASC;
+`,
+    );
+    return;
+  }
+
+  const columns = new Set(
+    d1Select(mode, "PRAGMA table_info(version_changes)").map((row) => String(row.name)),
+  );
+  const stmts: string[] = [];
+  const addedVersion = !columns.has("version");
+  const addedRevision = !columns.has("revision");
+  const addedChangedAt = !columns.has("changed_at");
+  const addedHistoryOrder = !columns.has("history_order");
+  const addedSubject = !columns.has("subject");
+  if (addedVersion) stmts.push("ALTER TABLE version_changes ADD COLUMN version TEXT;");
+  if (addedRevision)
+    stmts.push("ALTER TABLE version_changes ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;");
+  if (addedChangedAt) stmts.push("ALTER TABLE version_changes ADD COLUMN changed_at INTEGER;");
+  if (addedHistoryOrder)
+    stmts.push("ALTER TABLE version_changes ADD COLUMN history_order INTEGER NOT NULL DEFAULT 0;");
+  if (addedSubject) stmts.push("ALTER TABLE version_changes ADD COLUMN subject TEXT;");
+
+  const recovered: string[] = [];
+  if (addedVersion)
+    recovered.push(
+      "version = (SELECT ve.version FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha)",
+    );
+  if (addedRevision)
+    recovered.push(
+      "revision = (SELECT ve.revision FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha)",
+    );
+  if (addedChangedAt)
+    recovered.push(
+      "changed_at = (SELECT ve.introduced_at FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha)",
+    );
+  if (addedSubject)
+    recovered.push(
+      "subject = (SELECT ve.subject FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha)",
+    );
+  if (recovered.length > 0) {
+    stmts.push(
+      `UPDATE version_changes SET ${recovered.join(", ")} WHERE EXISTS (SELECT 1 FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha);`,
+    );
+  }
+  if (addedHistoryOrder) stmts.push("UPDATE version_changes SET history_order = rowid;");
+  if (addedVersion || addedRevision || addedChangedAt) {
+    // A deduped version_events row can recover canonical introductions but not
+    // historical reverts. Drop only unrecoverable legacy shells; a reseed restores
+    // their complete transition history.
+    stmts.push(
+      "DELETE FROM version_changes WHERE version IS NULL OR changed_at IS NULL OR NOT EXISTS (SELECT 1 FROM version_events ve WHERE ve.package_id = version_changes.package_id AND ve.commit_sha = version_changes.commit_sha);",
+    );
+  }
+  if (stmts.length === 0) return;
+  stmts.push(
+    `INSERT OR IGNORE INTO version_changes
+  (package_id, commit_sha, version, revision, changed_at, history_order, subject)
+SELECT package_id, commit_sha, version, revision, introduced_at, id, subject
+  FROM version_events
+ WHERE commit_sha IS NOT NULL
+ ORDER BY id ASC;`,
+    "CREATE INDEX IF NOT EXISTS idx_changes_pkg_time ON version_changes (package_id, changed_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_changes_time ON version_changes (changed_at DESC);",
+    "CREATE INDEX IF NOT EXISTS idx_changes_pkg_order ON version_changes (package_id, history_order DESC);",
+  );
+  d1Apply(mode, `${stmts.join("\n")}\n`);
 }
 
 export function ensureD1PackageColumns(mode: D1Mode): void {
@@ -243,6 +347,7 @@ export function kvGet(mode: D1Mode, key: string): string | null {
       {
         cwd: SITE,
         encoding: "utf8",
+        env: { ...process.env, WRANGLER_SEND_METRICS: "false", WRANGLER_WRITE_LOGS: "false" },
         maxBuffer: 1024 * 1024 * 32,
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -265,7 +370,12 @@ export function kvPut(mode: D1Mode, key: string, value: string): void {
     execFileSync(
       WRANGLER,
       ["kv", "key", "put", key, "--binding", "CACHE", `--${mode}`, "--path", file],
-      { cwd: SITE, encoding: "utf8", maxBuffer: 1024 * 1024 * 8 },
+      {
+        cwd: SITE,
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024 * 8,
+        env: { ...process.env, WRANGLER_SEND_METRICS: "false", WRANGLER_WRITE_LOGS: "false" },
+      },
     ),
   );
 }

@@ -143,6 +143,9 @@ describe("refreshSiteCache", () => {
     const { packages } = refreshSiteCache("local");
     expect(packages).toBe(2);
     expect(d1SelectManyMock).toHaveBeenCalledTimes(1);
+    expect(d1SelectManyMock.mock.calls[0]?.[1]?.[1]).toContain(
+      "ORDER BY vc.changed_at DESC, vc.history_order DESC",
+    );
     const home = putHome();
     expect(home.formulae).toBe(1);
     expect(home.casks).toBe(1);
@@ -150,6 +153,9 @@ describe("refreshSiteCache", () => {
     expect(typeof home.spotlightAt).toBe("number");
     const catalogCall = kvPutMock.mock.calls.find(([, key]) => key === "catalog");
     expect(JSON.parse((catalogCall as unknown[])?.[2] as string)).toHaveLength(2);
+    const sitemapCall = kvPutMock.mock.calls.find(([, key]) => key === "sitemap");
+    expect(sitemapCall?.[2]).toContain("https://pkgstory.dev/homebrew-formula/alpha/");
+    expect(sitemapCall?.[2]).toContain("https://pkgstory.dev/homebrew-cask/beta/");
   });
 
   it("publishes recent changes with their effective lifecycle state", () => {
@@ -277,6 +283,19 @@ describe("refreshSiteCache", () => {
     expect(spotlight[1]?.stat).toBe("12 in a year");
     expect(spotlight[2]?.stat).toBe("3.2 years quiet");
     expect(spotlight[3]?.stat).toBe("since 2001-09-09");
+  });
+
+  it("does not let an invalid stored timestamp break cache publication", () => {
+    d1SelectManyMock.mockReturnValue([[catalogRow("alpha", "f")], [], [{ at: 1 }]]);
+    d1SelectMock.mockImplementation((_mode, sql) => {
+      if (sql.includes("ORDER BY first_at ASC")) {
+        return [{ source: "homebrew-formula", name: "alpha", first_at: 9_000_000_000_000 }];
+      }
+      return [];
+    });
+
+    expect(() => refreshSiteCache("local")).not.toThrow();
+    expect(putHome().spotlight[0]?.stat).toBe("since unknown date");
   });
 
   it("uses the real reserve category stories when the core categories are empty", () => {

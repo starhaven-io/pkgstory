@@ -1,7 +1,13 @@
 import rss from '@astrojs/rss';
 import type { APIContext } from 'astro';
-import { getDb, timeline } from '../../../lib/d1.ts';
-import { decodeRouteParam, displayVersion, isKnownSource, sourceLabel } from '../../../lib/format.ts';
+import { changes, getDb } from '../../../lib/d1.ts';
+import {
+  dateFromUnixSeconds,
+  decodeRouteParam,
+  displayVersion,
+  isKnownSource,
+  sourceLabel,
+} from '../../../lib/format.ts';
 
 export const prerender = false;
 
@@ -16,7 +22,7 @@ export async function GET(context: APIContext) {
     });
 
   const encodedName = encodeURIComponent(name);
-  const events = await timeline(getDb(), source, name);
+  const events = await changes(getDb(), source, name);
   if (events.length === 0)
     return new Response('Not found', {
       status: 404,
@@ -28,14 +34,20 @@ export async function GET(context: APIContext) {
     title: `${name} updates · pkgstory`,
     description: `Version updates for ${name} (${sourceLabel(source)}).`,
     site: context.site ?? 'https://pkgstory.dev',
-    items: events.map((e) => {
+    items: events.flatMap((e, index) => {
+      const pubDate = dateFromUnixSeconds(e.introducedAt);
+      if (!pubDate) return [];
       const version = displayVersion(e.version, e.revision);
-      return {
-        title: `${name} ${version}`,
-        link: `/${source}/${encodedName}/#${encodeURIComponent(version)}`,
-        pubDate: new Date(e.introducedAt * 1000),
-        description: `${name} updated to ${version}`,
-      };
+      const changeId = encodeURIComponent(e.commitSha ?? `${e.introducedAt}-${index}`);
+      return [
+        {
+          title: `${name} ${version}`,
+          link: `/${source}/${encodedName}/#${encodeURIComponent(version)}`,
+          pubDate,
+          description: `${name} updated to ${version}`,
+          customData: `<guid isPermaLink="false">urn:pkgstory:${source}:${encodedName}:${changeId}</guid>`,
+        },
+      ];
     }),
   });
   // Readers poll feeds hard; cache like the HTML pages so polls stop at the edge.

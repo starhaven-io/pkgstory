@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
+import { publicContributorName } from "../site/src/lib/public-contributor.ts";
 import type { GitIdentity, RawCommit } from "./git.ts";
+
+export { publicContributorName as publicDisplayName } from "../site/src/lib/public-contributor.ts";
 
 export type ContributorRole = "author" | "coauthor";
 
@@ -25,7 +28,7 @@ export function contributorFromIdentity(identity: GitIdentity): Contributor {
   const name = identity.name.trim();
   const email = identity.email.trim().toLowerCase();
   const githubLogin = email.match(GITHUB_NOREPLY)?.[1] ?? null;
-  const displayName = name || githubLogin || "Unknown contributor";
+  const displayName = publicContributorName(name, githubLogin);
   const botLogin = githubLogin?.toLowerCase() ?? "";
   const isBot =
     botLogin.endsWith("[bot]") ||
@@ -44,7 +47,7 @@ export function contributorFromIdentity(identity: GitIdentity): Contributor {
       ? `bot:${displayName.toLowerCase()}`
       : githubLogin
         ? `github:${githubLogin.toLowerCase()}`
-        : `email:${digest(email || displayName.toLowerCase())}`,
+        : `email:${digest(email || name.toLowerCase() || displayName.toLowerCase())}`,
     displayName,
     githubLogin,
     isBot,

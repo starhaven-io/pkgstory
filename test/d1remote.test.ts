@@ -5,11 +5,13 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   d1Apply,
+  d1ApplyCommand,
   d1Select,
   d1SelectMany,
   ensureD1BottleSchema,
   ensureD1ContributorTables,
   ensureD1PackageColumns,
+  ensureD1VersionChanges,
   kvGet,
   kvPut,
   sqlLit,
@@ -95,7 +97,7 @@ describe("d1SelectMany", () => {
       [{ c: 3 }],
     ]);
     expect(execFileSyncMock).toHaveBeenCalledTimes(1);
-    const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
+    const args = execFileSyncMock.mock.calls.at(-1)?.[1] as string[];
     expect(args[args.indexOf("--command") + 1]).toBe("SELECT a;\nSELECT b;\nSELECT c");
   });
 
@@ -134,6 +136,27 @@ describe("d1Apply", () => {
     expect(seenContent).toBe("UPDATE t SET x = 1;\n");
     expect(() => readFileSync(seenPath)).toThrow(); // private temp dir cleaned up
   });
+
+  it("uses the atomic file-import path for remote applies", () => {
+    execFileSyncMock.mockReturnValueOnce("");
+    d1Apply("remote", "SELECT 1;\n");
+    const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
+    expect(args).toContain("--remote");
+    expect(args).toContain("--file");
+    expect(args).not.toContain("--command");
+  });
+});
+
+describe("d1ApplyCommand", () => {
+  it("uses the command path for a single remote write", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
+    d1ApplyCommand("remote", "UPDATE crawl_state SET last_crawled_at = 1");
+
+    const args = execFileSyncMock.mock.calls.at(-1)?.[1] as string[];
+    expect(args).toContain("--remote");
+    expect(args).toContain("--command");
+    expect(args).not.toContain("--file");
+  });
 });
 
 describe("ensure* schema probes", () => {
@@ -155,6 +178,53 @@ describe("ensure* schema probes", () => {
     expect(applied).toBe(
       "ALTER TABLE packages ADD COLUMN migrated_to TEXT;\nALTER TABLE packages ADD COLUMN latest_bottle_tags TEXT;\nALTER TABLE packages ADD COLUMN bottle_interval_count INTEGER NOT NULL DEFAULT 0;\n",
     );
+  });
+
+  it("creates and backfills the version transition table once", () => {
+    execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+    ensureD1VersionChanges("local");
+    expect(applied).toContain("CREATE TABLE version_changes");
+    expect(applied).toContain(
+      "SELECT package_id, commit_sha, version, revision, introduced_at, id, subject",
+    );
+    expect(applied).toContain("history_order INTEGER NOT NULL DEFAULT 0");
+
+    execFileSyncMock.mockClear();
+    execFileSyncMock
+      .mockReturnValueOnce('[{"results":[{"name":"version_changes"}],"success":true}]')
+      .mockReturnValueOnce(
+        '[{"results":[{"name":"package_id"},{"name":"commit_sha"},{"name":"version"},{"name":"revision"},{"name":"changed_at"},{"name":"history_order"},{"name":"subject"}],"success":true}]',
+      );
+    ensureD1VersionChanges("local");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("upgrades a legacy transition table and keeps only recoverable rows", () => {
+    execFileSyncMock
+      .mockReturnValueOnce('[{"results":[{"name":"version_changes"}],"success":true}]')
+      .mockReturnValueOnce('[{"results":[{"name":"commit_sha"}],"success":true}]');
+    let applied = "";
+    execFileSyncMock.mockImplementationOnce(((_bin: string, args: string[]) => {
+      applied = readFileSync(args[args.indexOf("--file") + 1] ?? "", "utf8");
+      return "";
+    }) as never);
+
+    ensureD1VersionChanges("local");
+    expect(applied).toContain("ADD COLUMN version TEXT");
+    expect(applied).toContain("ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
+    expect(applied).toContain("ADD COLUMN changed_at INTEGER");
+    expect(applied).toContain("ADD COLUMN history_order");
+    expect(applied).toContain("ADD COLUMN subject TEXT");
+    expect(applied).toContain("WHERE EXISTS (SELECT 1 FROM version_events");
+    expect(applied).toContain("SET history_order = rowid");
+    expect(applied).toContain("DELETE FROM version_changes");
+    expect(applied).toContain("INSERT OR IGNORE INTO version_changes");
+    expect(applied).toContain("idx_changes_pkg_order");
   });
 
   it("does nothing when the package columns already exist", () => {
@@ -303,15 +373,17 @@ describe("sqlLit", () => {
     expect(sqlLit(undefined)).toBe("NULL");
   });
 
-  it("passes finite numbers through bare", () => {
+  it("passes safe integers through bare", () => {
     expect(sqlLit(0)).toBe("0");
     expect(sqlLit(-3)).toBe("-3");
     expect(sqlLit(1700000000)).toBe("1700000000");
   });
 
-  it("rejects non-finite numbers instead of emitting invalid SQL", () => {
+  it("rejects non-finite, fractional, and unsafe numbers", () => {
     expect(() => sqlLit(Number.NaN)).toThrow(RangeError);
     expect(() => sqlLit(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+    expect(() => sqlLit(1.5)).toThrow(RangeError);
+    expect(() => sqlLit(Number.MAX_SAFE_INTEGER + 1)).toThrow(RangeError);
   });
 
   it("doubles single quotes (the only escape SQLite literals need)", () => {

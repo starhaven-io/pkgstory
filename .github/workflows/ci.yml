@@ -159,10 +159,10 @@ jobs:
         run: npm ci --strict-allow-scripts
 
       - name: Install site dependencies
-        if: matrix.check == 'test'
+        if: matrix.check == 'lint' || matrix.check == 'test'
         working-directory: site
-        # Root tests import pure helpers from site/src/lib, and Vitest resolves
-        # site/tsconfig.json for them, which extends astro's.
+        # Root tests import site/src/lib helpers and Astro routes, so both the
+        # typecheck and Vitest need site's dependencies resolvable.
         run: npm ci --strict-allow-scripts
 
 

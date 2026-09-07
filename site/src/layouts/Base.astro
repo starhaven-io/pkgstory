@@ -1,5 +1,5 @@
 ---
-import { isoDateTime } from '../lib/format.ts';
+import { dateFromUnixSeconds, isoDateTime } from '../lib/format.ts';
 
 interface Props {
   title: string;
@@ -16,7 +16,7 @@ interface Props {
   canonicalPath?: string;
 }
 const { title, description, tagline, feedHref, lastCheckedAt, canonicalPath } = Astro.props;
-const checkedIso = lastCheckedAt ? new Date(lastCheckedAt * 1000).toISOString() : null;
+const checkedIso = lastCheckedAt ? (dateFromUnixSeconds(lastCheckedAt)?.toISOString() ?? null) : null;
 // Canonical origin (not the request host) so og:url/canonical stay stable behind the
 // edge cache; description falls back to the tagline for social unfurls.
 const canonical = new URL(canonicalPath ?? Astro.url.pathname, Astro.site ?? Astro.url.origin).href;

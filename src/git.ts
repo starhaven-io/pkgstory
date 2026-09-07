@@ -29,11 +29,25 @@ const COMMIT = "\x1ecommit\x1e";
 const FIELD = "\0";
 const IDENTITY = "\x1d";
 const FORMAT = `${COMMIT}%H%x00%ct%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
+const MAX_DATE_SECONDS = 8_640_000_000_000;
 
 function parseIdentity(value: string): GitIdentity | null {
   const match = value.trim().match(/^(.*?)\s*<([^<>]+)>$/);
   if (!match) return null;
   return { name: match[1]?.trim() ?? "", email: match[2]?.trim() ?? "" };
+}
+
+function parseTimestamp(raw: string | undefined, sha: string): number {
+  if (raw === undefined || !/^-?\d+$/.test(raw)) {
+    throw new RangeError(
+      `invalid commit timestamp for ${sha || "unknown commit"}: ${raw ?? "missing"}`,
+    );
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || Math.abs(value) > MAX_DATE_SECONDS) {
+    throw new RangeError(`commit timestamp is outside JavaScript's Date range for ${sha}: ${raw}`);
+  }
+  return value;
 }
 
 /** Resolve a Homebrew tap to its local clone, e.g. `brew --repository homebrew/core`. */
@@ -56,7 +70,7 @@ export function repoExists(dir: string): boolean {
  * production L0, where every package is bucketed by basename downstream, which is
  * what makes the index immune to Homebrew's historical file relocations.
  */
-export function logRaw(repoDir: string, pathspecs: string[]): RawCommit[] {
+export function logRaw(repoDir: string, pathspecs: string[], ref = "HEAD"): RawCommit[] {
   const args = [
     "-C",
     repoDir,
@@ -67,6 +81,7 @@ export function logRaw(repoDir: string, pathspecs: string[]): RawCommit[] {
     "--no-abbrev", // full 40-char blob shas — `--raw` abbreviates by default
     "--date=unix",
     `--format=${FORMAT}`,
+    ref,
   ];
   if (pathspecs.length) args.push("--", ...pathspecs);
   const out = execFileSync("git", args, {
@@ -93,7 +108,7 @@ function logFolder(onCommit: (commit: RawCommit) => void): {
         const parts = line.slice(COMMIT.length).split(FIELD);
         cur = {
           sha: parts[0] ?? "",
-          committedAt: Number(parts[1] ?? 0),
+          committedAt: parseTimestamp(parts[1], parts[0] ?? ""),
           author: { name: parts[3] ?? "", email: parts[2] ?? "" },
           coauthors: (parts[4] ?? "")
             .split(IDENTITY)
@@ -156,7 +171,7 @@ export function parseBatchCat(out: Buffer): Map<string, string> {
     const [sha, type, size] = header.split(" ");
     i = nl + 1;
     if (!sha) throw new Error(`malformed git cat-file header: ${header}`);
-    if (type === "missing") continue;
+    if (type === "missing") throw new Error(`git object is missing: ${sha}`);
     if (!type || size === undefined) throw new Error(`malformed git cat-file header: ${header}`);
     const len = Number(size);
     if (!Number.isInteger(len) || len < 0) {
@@ -180,16 +195,18 @@ export function headSha(repoDir: string): string {
   return execFileSync("git", ["-C", repoDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
 }
 
-export function headFile(repoDir: string, path: string): string | null {
-  try {
-    return execFileSync("git", ["-C", repoDir, "show", `HEAD:${path}`], {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024 * 16,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch {
-    return null;
-  }
+export function headFile(repoDir: string, path: string, ref = "HEAD"): string | null {
+  const entry = execFileSync(
+    "git",
+    ["-C", repoDir, "ls-tree", "-z", "--name-only", ref, "--", `:(literal)${path}`],
+    { encoding: "utf8", maxBuffer: 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (entry.length === 0) return null;
+
+  return execFileSync("git", ["-C", repoDir, "show", `${ref}:${path}`], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024 * 16,
+  });
 }
 
 /**
@@ -202,10 +219,11 @@ export function presentPackages(
   repoDir: string,
   dir: string,
   packageOf: (path: string) => string | null,
+  ref = "HEAD",
 ): Set<string> {
   const out = execFileSync(
     "git",
-    ["-C", repoDir, "ls-tree", "-r", "--name-only", "HEAD", "--", `${dir}/`],
+    ["-C", repoDir, "ls-tree", "-r", "--name-only", ref, "--", `${dir}/`],
     { encoding: "utf8", maxBuffer: 1024 * 1024 * 256 },
   );
   const set = new Set<string>();
@@ -221,7 +239,7 @@ export function presentPackages(
  * streamed) because an incremental window is a handful of commits, not the whole
  * history. Oldest-first so callers can fold versions chronologically.
  */
-export function logSince(repoDir: string, sinceSha: string): RawCommit[] {
+export function logSince(repoDir: string, sinceSha: string, head = "HEAD"): RawCommit[] {
   const out = execFileSync(
     "git",
     [
@@ -235,7 +253,7 @@ export function logSince(repoDir: string, sinceSha: string): RawCommit[] {
       "--reverse",
       "--date=unix",
       `--format=${FORMAT}`,
-      `${sinceSha}..HEAD`,
+      `${sinceSha}..${head}`,
     ],
     { encoding: "utf8", maxBuffer: 1024 * 1024 * 256 },
   );
@@ -250,6 +268,7 @@ export function logSince(repoDir: string, sinceSha: string): RawCommit[] {
 export async function streamLog(
   repoDir: string,
   onCommit: (commit: RawCommit) => void,
+  ref = "HEAD",
 ): Promise<void> {
   const child = spawn(
     "git",
@@ -263,6 +282,7 @@ export async function streamLog(
       "--no-abbrev",
       "--date=unix",
       `--format=${FORMAT}`,
+      ref,
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );

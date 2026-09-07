@@ -8,20 +8,24 @@ export interface ParsedFormula {
   bottleTags: string[];
 }
 
-// Anchored to 2-space (top-level) indentation: Homebrew style guarantees it, and it
-// avoids matching a nested `version`/`revision` inside a resource or on_os block.
+// Modern metadata is normally top-level. Historical `stable do` blocks indent the
+// same metadata one level further, so those are parsed as an explicit region below.
 // Quote-agnostic: 2009-era formulae wrote `version '1.0'` with single quotes.
 const VERSION_STANZA = /^ {2}version\s+(["'])([^"']+)\1/m;
+const STABLE_VERSION_STANZA = /^ {4}version\s+(["'])([^"']+)\1/m;
 const OLD_VERSION_STANZA = /^\s*@version\s*=\s*(["'])(.*?)\1/m;
-const REVISION = /^ {2}revision\s+(\d+)/m;
+const REVISION = /^ {2}revision\s+([^\s#]+)/m;
+const STABLE_REVISION = /^ {4}revision\s+([^\s#]+)/m;
 // A bottle block records an actual built artifact. Historical `bottle :unneeded`
 // and `bottle :disable` modifiers do not, so deliberately exclude them.
 const BOTTLE_BLOCK = /^ {2}bottle\s+do\s*(?:#.*)?$/m;
 const LEGACY_BOTTLE = /^ {2}bottle\s+["']/m;
 // Modern formula URLs are top-level only; nested resource URLs are dependency
 // archives, not package versions. The old @url form lived inside initialize.
-const URL_LINES = [/^ {2}url\s+(["'])(.*?)\1/m, /^\s*@url\s*=\s*(["'])(.*?)\1/m];
-const TAG_OPT = /\btag:\s*"([^"]+)"/;
+const URL_LINE = /^ {2}url\s+(["'])(.*?)\1/m;
+const STABLE_URL_LINE = /^ {4}url\s+(["'])(.*?)\1/m;
+const OLD_URL_LINE = /^\s*@url\s*=\s*(["'])(.*?)\1/m;
+const TAG_OPT = /\btag:\s*(["'])([^"']+)\1/;
 const SEMVERISH = /(\d+(?:\.\d+)+(?:[._-][0-9A-Za-z.]+)?)/;
 // Build/artifact/platform labels that ride along in a download filename
 // (apache-activemq-6.2.6-bin, ack-2.24-single-file, racket-8.0-src, ispc-1.9.2-osx)
@@ -35,34 +39,96 @@ const PACKAGING_LABEL = /[-_.](?:src|source|bin|single|osx|macos|darwin|linux)$/
  * same blobs this reads, so it needs no re-crawl).
  */
 export function parseFormula(src: string): ParsedFormula {
-  const revMatch = src.match(REVISION);
-  const revision = revMatch?.[1] ? Number(revMatch[1]) : 0;
-  const bottleTags = parseBottleTags(src);
+  const body = beforeDataSection(src);
+  const stable = stableBody(body);
+  const revMatch = body.match(REVISION) ?? stable?.match(STABLE_REVISION);
+  const revision = parseRevision(revMatch?.[1]);
+  const bottleTags = parseBottleTags(body);
   const bottled = bottleTags.length > 0;
 
-  const stanza = src.match(VERSION_STANZA);
+  const stanza = body.match(VERSION_STANZA) ?? stable?.match(STABLE_VERSION_STANZA);
   if (stanza?.[2])
     return { version: stanza[2], revision, versionSrc: "version-stanza", bottled, bottleTags };
 
-  const oldStanza = src.match(OLD_VERSION_STANZA);
+  const oldStanza = body.match(OLD_VERSION_STANZA);
   if (oldStanza?.[2])
     return { version: oldStanza[2], revision, versionSrc: "version-stanza", bottled, bottleTags };
 
-  const tag = src.match(TAG_OPT);
-  if (tag?.[1]) {
-    const v = cleanVersion(tag[1]);
+  const modernUrls: Array<{ source: string; match: RegExpMatchArray | null }> = [
+    { source: body, match: body.match(URL_LINE) },
+  ];
+  if (stable) modernUrls.push({ source: stable, match: stable.match(STABLE_URL_LINE) });
+  for (const candidate of modernUrls) {
+    const url = candidate.match;
+    if (!url?.[2]) continue;
+    const tag = urlStanza(candidate.source, url.index ?? 0).match(TAG_OPT);
+    if (tag?.[2]) {
+      const v = cleanVersion(tag[2]);
+      if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
+    }
+    const v = versionFromUrl(url[2]);
     if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
   }
 
-  for (const re of URL_LINES) {
-    const url = src.match(re);
-    if (url?.[2]) {
-      const v = versionFromUrl(url[2]);
-      if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
-    }
+  const oldUrl = body.match(OLD_URL_LINE);
+  if (oldUrl?.[2]) {
+    const v = versionFromUrl(oldUrl[2]);
+    if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
   }
 
   return { version: null, revision, versionSrc: "none", bottled, bottleTags };
+}
+
+function beforeDataSection(src: string): string {
+  const marker = src.search(/^__END__\s*$/m);
+  return marker === -1 ? src : src.slice(0, marker);
+}
+
+// `stable do` is a package metadata region, unlike resource/livecheck/on_* blocks.
+// Its closing `end` is the next one at formula-level indentation.
+function stableBody(src: string): string | null {
+  const start = src.match(/^ {2}stable\s+do\s*(?:#.*)?$/m);
+  if (!start || start.index === undefined) return null;
+  const rest = src.slice(start.index + start[0].length);
+  const end = rest.search(/^ {2}end\b/m);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+function parseRevision(raw: string | undefined): number {
+  if (raw === undefined) return 0;
+  if (!/^\d(?:_?\d)*$/.test(raw)) {
+    throw new RangeError(`unsupported formula revision: ${raw}`);
+  }
+  const compact = raw.replaceAll("_", "");
+  const octal = compact.length > 1 && compact.startsWith("0");
+  if (octal && !/^[0-7]+$/.test(compact)) {
+    throw new RangeError(`unsupported formula revision: ${raw}`);
+  }
+  const digits = compact.replace(/^0+(?=\d)/, "");
+  const maxDigits = octal ? 18 : String(Number.MAX_SAFE_INTEGER).length;
+  if (digits.length > maxDigits) {
+    throw new RangeError(`formula revision is outside JavaScript's safe integer range: ${raw}`);
+  }
+  const exact = BigInt(octal ? `0o${digits}` : digits);
+  if (exact > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError(`formula revision is outside JavaScript's safe integer range: ${raw}`);
+  }
+  return Number(exact);
+}
+
+// A git URL's tag may be on the same line or on continuation lines. Ruby permits
+// unusual alignment here, so follow the comma chain rather than trusting indent.
+function urlStanza(src: string, start: number): string {
+  const lines = src.slice(start).split("\n");
+  const stanza = [lines[0] ?? ""];
+  let continuation = stanza[0]?.trimEnd().endsWith(",") ?? false;
+  for (const line of lines.slice(1)) {
+    if (!continuation) break;
+    stanza.push(line);
+    if (/^\s*(?:#.*)?$/.test(line)) continue;
+    continuation = line.trimEnd().endsWith(",");
+  }
+  return stanza.join("\n");
 }
 
 export function parseBottleTags(src: string): string[] {

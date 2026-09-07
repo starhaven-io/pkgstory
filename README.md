@@ -32,7 +32,7 @@ source.
 
 Every Homebrew version bump is a commit to a single file (`Formula/g/git.rb`,
 `Casks/v/visual-studio-code.rb`). The crawler turns that history into a
-four-layer index, drawn so the expensive extraction happens exactly once:
+three-layer index, drawn so the expensive extraction happens exactly once:
 
 - **L0 — commit index.** One streaming pass over git history records every
   commit that touched a package file, keyed by basename so Homebrew's historical
@@ -45,18 +45,19 @@ four-layer index, drawn so the expensive extraction happens exactly once:
   lifecycle. Richer fields (dependencies, patches) can layer in later by
   re-reading the same blobs — no history re-walk.
 - **L2 — version events, bottle intervals, and contributors.** Snapshots collapse
-  into one row per `(version, revision)` change and one availability interval per
-  formula bottle platform. Each interval records the commits that added and
+  into a canonical row per `(version, revision)` plus a complete transition stream
+  that retains reverts, and one availability interval per formula bottle platform.
+  Each interval records the commits that added and
   removed that platform plus the formula version at each boundary. The site
   coalesces staggered architecture jobs from the same formula release when the
   gap is at most seven days, while retaining the exact commit-level intervals
   in D1.
   Commit authors and explicit co-authors collapse into per-package contribution
-  summaries; automation is classified separately, and raw author email addresses
-  are never exported to the site.
+  summaries; automation is classified separately, dedicated email fields are
+  hashed, and email-shaped display names are redacted before export.
 
-A `git ls-tree` pass over `HEAD` after each crawl reconciles which packages still
-exist in the tap. For absent packages, pkgstory consults the tap-root
+A `git ls-tree` pass over the crawl's pinned Git revision reconciles which packages
+still exist in the tap. For absent packages, pkgstory consults that revision's tap-root
 `formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files before
 falling back to a plain deletion — so a rename or cross-tap migration is recorded
 with its target instead of being described as removed entirely.
@@ -68,9 +69,9 @@ cost:
 
 - **Per-package pages** read one package's rows from **D1** (SQLite at the edge)
   through an indexed query, behind an edge cache.
-- **The home page and the search index** (`/packages.json`, ~20k entries) are
-  precomputed into **Workers KV** by the crawler and served as a single lookup —
-  independent of how much traffic arrives.
+- **The home page, search index, and sitemap** (`/packages.json`, ~20k entries)
+  are precomputed into **Workers KV** by the crawler and served as single lookups
+  — independent of how much traffic arrives.
 
 A GitHub Action re-crawls every 30 minutes: it derives the delta since the last
 commit it saw, writes only the new version events and bottle intervals to D1, and
@@ -114,15 +115,22 @@ scripts; `just npm-policy` verifies all three lockfiles.
 just install                                    # install dependencies
 just crawl                                      # build pkgstory.db from a curated demo set
 just crawl --formulae git,wget --casks firefox  # or specific packages
-just crawl --all                                # the full catalog (~20k packages)
+just crawl --all                                # authoritatively replace the full catalog (~20k packages)
 just site-seed-local                            # load pkgstory.db into local D1 + KV
 just site-dev                                   # preview the site
-just check                                      # everything CI runs
+just check                                      # complete local gate
 ```
 
 Run `just install-hooks` once per clone (DCO sign-off + pre-push checks). The
 `crawl --d1 local|remote` mode writes deltas straight to Cloudflare D1 and
 refreshes the KV cache — it's what the scheduled job runs.
+
+Each full or incremental source crawl pins one commit before reading history,
+blobs, presence, and rename metadata. A successful `crawl --all` replaces that
+source's complete local slice, so rerunning it cannot retain stale derived rows.
+Full crawls build in a private database copy and publish through SQLite's
+transactional backup API; a failed or interrupted rebuild leaves the previous
+database untouched.
 
 <!-- fleet:block license-section -->
 
