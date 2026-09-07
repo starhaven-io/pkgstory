@@ -2,6 +2,15 @@
 
 Runbook for the deployed pkgstory pipeline (crawler → D1/KV → site).
 
+## Code deployment
+
+Main-branch changes to `site/` or `trigger/` redeploy the corresponding Worker.
+Each deployment also runs when its workflow or the shared npm-policy checker
+changes. Deployment and crawl dispatches require `main`; rejected refs use
+separate concurrency groups so they cannot cancel or replace pending production
+work. Site and trigger deployments retain separate queues, and a new crawl never
+interrupts an active D1 write.
+
 ## Freshness model
 
 - The trigger Worker fires `workflow_dispatch` on the cron defined in

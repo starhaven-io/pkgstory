@@ -69,6 +69,7 @@ describe("CI workflow contracts", () => {
       MATRIX: '[{"check":"test"}]',
       RUN_CODEQL: "true",
       RUN_CODECOV: "true",
+      CODECOV_ELIGIBLE: "true",
       RUN_ZIZMOR: "true",
       COMMITS_RESULT: "success",
       CHECK_RESULT: "success",
@@ -128,5 +129,28 @@ describe("CI workflow contracts", () => {
     }
     const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
     expect(workflow).toContain("needs: [generate-matrix, commits, check, codeql, codecov, zizmor]");
+  });
+
+  it("keeps rejected dispatches outside production concurrency groups", () => {
+    for (const [file, group, rejected] of [
+      ["crawl.yml", "crawl", "rejected-crawl"],
+      ["deploy-site.yml", "deploy-site", "rejected-deploy"],
+      ["deploy-trigger.yml", "deploy-trigger", "rejected-deploy-trigger"],
+    ]) {
+      const workflow = readFileSync(
+        new URL(`../.github/workflows/${file}`, import.meta.url),
+        "utf8",
+      );
+      expect(workflow).toContain(
+        `group: \${{ github.ref == 'refs/heads/main' && '${group}' || format('${rejected}-{0}', github.run_id) }}`,
+      );
+      if (file === "crawl.yml") {
+        expect(workflow).toContain("cancel-in-progress: false");
+      } else {
+        const push = workflow.split("  workflow_dispatch:")[0];
+        expect(push).toContain(`      - ".github/workflows/${file}"`);
+        expect(push).toContain('      - "scripts/check-npm-install-policy.mjs"');
+      }
+    }
   });
 });
