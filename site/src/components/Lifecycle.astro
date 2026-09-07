@@ -1,10 +1,9 @@
 ---
-import { isoDate, lifecycleState, plusYear, todayISO } from '../lib/format.ts';
+import { isoDate, lifecycleState, todayISO } from '../lib/format.ts';
 
 // The end-of-life banner on a package page. Renders nothing while active (including
 // future-scheduled stanzas). The current state is derived from both deprecate!/disable!
-// stanzas against today, and the next transition is projected ~1 year on — the cadence
-// Homebrew follows (deprecate → disable → remove).
+// stanzas against today. Only dates explicitly recorded upstream are shown.
 interface Props {
   name: string;
   removedAt: number | null;
@@ -35,7 +34,6 @@ const {
 const state = lifecycleState(
   {
     removedAt,
-    removedCommit,
     renamedTo,
     migratedTo,
     deprecateDate,
@@ -81,13 +79,9 @@ const removedStage =
 const removedText = `Deleted from ${tap} on ${isoDate(removedAt ?? 0)}. ${removedStage}${
   lastVersion ? `The final version shipped in ${tap} was ${lastVersion}.` : ''
 }`;
-const disabledText = `${name} was disabled in ${tap}${on}${why}.${
-  disableDate ? ` It will be removed from ${tap} around ${plusYear(disableDate)}.` : ''
-}`;
-// A deprecated package will be disabled on its scheduled disable date, else ~1 year on.
-const cutoff = disableDate ?? (deprecateDate ? plusYear(deprecateDate) : null);
+const disabledText = `${name} was disabled in ${tap}${on}${why}.`;
 const deprecatedText = `${name} was deprecated in ${tap}${on}${why}.${
-  cutoff ? ` It will no longer be able to be installed after ${cutoff}.` : ''
+  disableDate ? ` It is scheduled to be disabled on ${disableDate}.` : ''
 }`;
 ---
 

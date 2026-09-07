@@ -42,8 +42,16 @@ describe("package JSON route contract", () => {
     expect(timelinePage("12")).toBe(12);
   });
 
-  it.each(["", "0", "-1", "01", "1.0", "abc"])("rejects a malformed page value %j", (value) => {
-    expect(timelinePage(value)).toBeNull();
+  it.each(["", "0", "-1", "01", "1.0", "abc", "9007199254740992"])(
+    "rejects a malformed page value %j",
+    (value) => {
+      expect(timelinePage(value)).toBeNull();
+    },
+  );
+
+  it("rejects a page whose row offset exceeds exact integer precision", () => {
+    expect(timelinePage(String(Number.MAX_SAFE_INTEGER), 500)).toBeNull();
+    expect(timelinePage("12", 500)).toBe(12);
   });
 
   it("uses denormalized current state and the requested source heartbeat", () => {

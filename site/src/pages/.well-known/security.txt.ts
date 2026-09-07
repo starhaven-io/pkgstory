@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 
 const getSecurityTxt = (canonicalURL: URL) => {
-  // One year from build time, normalized to midnight UTC.
+  // One year from response generation, normalized to midnight UTC.
   const expires = new Date();
   expires.setUTCFullYear(expires.getUTCFullYear() + 1);
   expires.setUTCHours(0, 0, 0, 0);

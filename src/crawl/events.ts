@@ -46,14 +46,7 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
     `UPDATE bottle_intervals
         SET ended_at = ?, ended_commit = ?, ended_subject = ?,
             ended_version = ?, ended_revision = ?
-      WHERE package_id = ? AND tag = ? AND ended_at IS NULL
-        AND started_at <= ?
-        AND NOT EXISTS (
-          SELECT 1 FROM bottle_intervals closed
-           WHERE closed.package_id = bottle_intervals.package_id
-             AND closed.tag = bottle_intervals.tag
-             AND closed.ended_commit = ?
-        )`,
+      WHERE package_id = ? AND tag = ? AND ended_at IS NULL`,
   );
   const snaps = db.prepare(
     `SELECT s.version, s.revision, s.bottled, s.bottle_tags, s.committed_at,
@@ -113,8 +106,6 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
               row.revision,
               pkg.id,
               tag,
-              row.committed_at,
-              row.commit_sha,
             );
         }
         lastTags = tags;

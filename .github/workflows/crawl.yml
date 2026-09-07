@@ -24,7 +24,7 @@ concurrency:
 jobs:
   crawl:
     name: Crawl deltas into D1
-    if: github.repository_owner == 'starhaven-io'
+    if: github.repository_owner == 'starhaven-io' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: cloudflare # holds the Cloudflare token (matches deploy-site)

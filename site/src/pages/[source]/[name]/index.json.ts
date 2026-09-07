@@ -26,9 +26,9 @@ export const GET: APIRoute = async ({ params, url }) => {
   if (!isKnownSource(source)) return packageJsonNotFound();
 
   // Same ?page= contract as the HTML timeline (offset pages of TIMELINE_LIMIT).
-  const page = timelinePage(url.searchParams.get('page'));
+  const page = timelinePage(url.searchParams.get('page'), TIMELINE_LIMIT);
   if (page === null) return packageJsonNotFound();
-  const bottlePage = timelinePage(url.searchParams.get('bottle-page'));
+  const bottlePage = timelinePage(url.searchParams.get('bottle-page'), BOTTLE_HISTORY_LIMIT);
   if (bottlePage === null || (source !== 'homebrew-formula' && url.searchParams.has('bottle-page')))
     return packageJsonNotFound();
 

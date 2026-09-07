@@ -18,7 +18,7 @@ import {
 } from "../src/db/d1remote.ts";
 
 vi.mock("node:child_process", () => ({
-  execFileSync: vi.fn(() => "[]"),
+  execFileSync: vi.fn(() => '[{"results":[],"success":true}]'),
 }));
 
 const execFileSyncMock = vi.mocked(execFileSync);
@@ -74,6 +74,21 @@ describe("d1Select output parsing", () => {
     expect(() => d1Select("local", "SELECT 1")).toThrow(/no JSON array/);
     execFileSyncMock.mockReturnValueOnce("");
     expect(() => d1Select("local", "SELECT 1")).toThrow(/no JSON array/);
+  });
+
+  it("rejects empty, unsuccessful, and malformed result envelopes", () => {
+    for (const output of [
+      "[]",
+      "[null]",
+      '[{"success":false,"results":[]}]',
+      '[{"success":true}]',
+      '[{"success":true,"results":null}]',
+      '[{"success":true,"results":[null]}]',
+      '[{"success":true,"results":[[]]}]',
+    ]) {
+      execFileSyncMock.mockReturnValueOnce(output);
+      expect(() => d1Select("local", "SELECT 1")).toThrow(/malformed result set/);
+    }
   });
 
   it("throws on a truncated or malformed JSON payload", () => {

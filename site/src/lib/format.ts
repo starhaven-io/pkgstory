@@ -109,7 +109,12 @@ function inEffect(date: string | null, reason: string | null, today: string): bo
   return present && (date == null || date <= today);
 }
 
-export function lifecycleState(m: PackageMeta, today: string): LifecycleState {
+type LifecycleMeta = Pick<
+  PackageMeta,
+  'removedAt' | 'renamedTo' | 'migratedTo' | 'deprecateDate' | 'deprecateReason' | 'disableDate' | 'disableReason'
+>;
+
+export function lifecycleState(m: LifecycleMeta, today: string): LifecycleState {
   if (m.removedAt != null) {
     if (m.renamedTo != null) return 'renamed';
     if (m.migratedTo != null) return 'migrated';
@@ -123,12 +128,6 @@ export function lifecycleState(m: PackageMeta, today: string): LifecycleState {
 export function statusOf(m: PackageMeta, today: string): StatusCode | null {
   const state = lifecycleState(m, today);
   return state === 'active' ? null : STATE_CODE[state];
-}
-
-/** A date one year on, "YYYY-MM-DD" — the ~1-year cadence brew uses between stages. */
-export function plusYear(date: string): string {
-  const [y, m, d] = date.split('-').map(Number);
-  return new Date(Date.UTC((y ?? 0) + 1, (m ?? 1) - 1, d ?? 1)).toISOString().slice(0, 10);
 }
 
 /** A recent-updates row on the home page (from the precomputed KV `home` blob). */

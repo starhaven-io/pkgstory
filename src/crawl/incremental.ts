@@ -2,7 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
 import { type D1Mode, d1Apply, d1ApplyCommand, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
-import { batchCat, headSha, logSince, presentPackages } from "../git.ts";
+import { assertAncestor, batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
 import { type Lifecycle, parseLifecycle } from "../parse/lifecycle.ts";
 import type { Source } from "../sources/index.ts";
@@ -82,6 +82,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   const head = headSha(source.repoDir);
   if (head === lastSha) return { head, commits: 0, packages: [] };
 
+  assertAncestor(source.repoDir, lastSha, head);
   const commits = logSince(source.repoDir, lastSha, head); // oldest-first
   const raw = new Map<string, RawTouch[]>();
   const shas: string[] = [];
@@ -357,7 +358,14 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         SET ended_at = ?, ended_commit = ?, ended_subject = ?,
             ended_version = ?, ended_revision = ?
       WHERE package_id = ? AND tag = ? AND ended_at IS NULL
-        AND started_at <= ?
+        AND EXISTS (
+          SELECT 1 FROM commit_index opened JOIN commit_index closed
+            ON closed.package_id = opened.package_id
+           WHERE opened.package_id = bottle_intervals.package_id
+             AND opened.commit_sha = bottle_intervals.started_commit
+             AND closed.commit_sha = ?
+             AND opened.history_order < closed.history_order
+        )
         AND NOT EXISTS (
           SELECT 1 FROM bottle_intervals closed
            WHERE closed.package_id = bottle_intervals.package_id
@@ -477,7 +485,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
           transition.revision,
           pkg.id,
           transition.tag,
-          transition.at,
+          transition.sha,
           transition.sha,
         );
       }
@@ -663,11 +671,19 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         `INSERT OR IGNORE INTO bottle_events (package_id, bottled, version, revision, changed_at, commit_sha, subject) VALUES (${idSub}, ${e.bottled ? 1 : 0}, ${sqlLit(e.version)}, ${sqlLit(e.revision)}, ${sqlLit(e.at)}, ${sqlLit(e.sha)}, ${sqlLit(e.subject)});`,
       );
     }
-    for (const transition of folded.bottleTransitions) {
+    for (const [offset, transition] of folded.bottleTransitions.entries()) {
+      // Replayed windows may already contain a later open interval. Bound by
+      // commit order, not timestamps: committer clocks can move backwards.
+      const laterStarts = folded.bottleTransitions
+        .slice(offset + 1)
+        .filter((later) => later.available && later.tag === transition.tag)
+        .map((later) => sqlLit(later.sha));
+      const beforeLaterStarts =
+        laterStarts.length > 0 ? ` AND started_commit NOT IN (${laterStarts.join(",")})` : "";
       stmts.push(
         transition.available
           ? `INSERT OR IGNORE INTO bottle_intervals (package_id, tag, started_at, started_commit, started_subject, started_version, started_revision) VALUES (${idSub}, ${sqlLit(transition.tag)}, ${sqlLit(transition.at)}, ${sqlLit(transition.sha)}, ${sqlLit(transition.subject)}, ${sqlLit(transition.version)}, ${sqlLit(transition.revision)});`
-          : `UPDATE bottle_intervals SET ended_at = ${sqlLit(transition.at)}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)}, ended_version = ${sqlLit(transition.version)}, ended_revision = ${sqlLit(transition.revision)} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL AND started_at <= ${sqlLit(transition.at)} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
+          : `UPDATE bottle_intervals SET ended_at = ${sqlLit(transition.at)}, ended_commit = ${sqlLit(transition.sha)}, ended_subject = ${sqlLit(transition.subject)}, ended_version = ${sqlLit(transition.version)}, ended_revision = ${sqlLit(transition.revision)} WHERE package_id = ${idSub} AND tag = ${sqlLit(transition.tag)} AND ended_at IS NULL${beforeLaterStarts} AND NOT EXISTS (SELECT 1 FROM bottle_intervals closed WHERE closed.package_id = ${idSub} AND closed.tag = ${sqlLit(transition.tag)} AND closed.ended_commit = ${sqlLit(transition.sha)});`,
       );
     }
     if (folded.latest) {

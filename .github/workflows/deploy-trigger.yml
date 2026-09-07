@@ -21,6 +21,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-slim
     timeout-minutes: 60
     permissions:

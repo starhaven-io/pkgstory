@@ -257,7 +257,7 @@ describe("importable CLI dispatch", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("runs D1 crawls and republishes cache only after a seeded source", async () => {
+  it("runs D1 crawls and rejects a missing source cursor before publishing cache", async () => {
     resolveSourcesMock.mockReturnValue([formulaSource, caskSource]);
     crawlSinceD1Mock
       .mockReturnValueOnce({ status: "ok", events: 2, commits: 3, head: "b".repeat(40) })
@@ -273,8 +273,33 @@ describe("importable CLI dispatch", () => {
     vi.clearAllMocks();
     resolveSourcesMock.mockReturnValue([formulaSource]);
     crawlSinceD1Mock.mockReturnValue({ status: "no-cursor", events: 0, commits: 0 });
-    await main(["crawl", "--d1", "local"]);
+    vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    await expect(main(["crawl", "--d1", "local"])).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("no D1 cursor") }),
+    );
     expect(refreshSiteCacheMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects conflicting crawl modes before opening storage", async () => {
+    vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    for (const flags of [
+      ["--all", "--since"],
+      ["--all", "--d1", "remote"],
+      ["--since", "--d1", "local"],
+    ]) {
+      await expect(main(["crawl", ...flags])).rejects.toThrow();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining("choose only one crawl mode"),
+      );
+    }
+    expect(openDbMock).not.toHaveBeenCalled();
+    expect(openStagedDbMock).not.toHaveBeenCalled();
+    expect(ensureD1SchemaMock).not.toHaveBeenCalled();
   });
 
   it("dispatches export, cache, help, and unknown commands", async () => {
