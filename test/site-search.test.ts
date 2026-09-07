@@ -19,7 +19,7 @@ function searchPage(fetch: typeof globalThis.fetch) {
     ["recent", recent],
   ]);
   const page = readFileSync(new URL("../site/src/pages/index.astro", import.meta.url), "utf8");
-  const script = page.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  const script = page.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
   if (!script) throw new Error("home-page search script missing");
   runInNewContext(stripTypeScriptTypes(script), {
     document: { getElementById: (id: string) => elements.get(id) },
