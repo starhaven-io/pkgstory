@@ -205,6 +205,10 @@ jobs:
         if: matrix.check == 'test'
         run: npm run test:coverage
 
+      - name: Normalize report paths
+        if: success() && matrix.check == 'test'
+        run: python3 -I scripts/upload-codecov.py --prepare --coverage coverage/lcov.info
+
       - name: Save coverage report
         if: success() && matrix.check == 'test'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -296,32 +300,33 @@ jobs:
   codecov:
     name: Codecov
     needs: [generate-matrix, check]
-    if: ${{ !cancelled() && needs.generate-matrix.outputs.run_codecov == 'true' }}
+    # Forks still run coverage tests; Codecov OIDC accepts same-repository runs.
+    if: needs.generate-matrix.outputs.run_codecov == 'true' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-slim
     timeout-minutes: 15
     permissions:
       contents: read
-      id-token: write # required for Codecov OIDC authentication
+      id-token: write # Authenticate report uploads to Codecov with GitHub OIDC.
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the trusted uploader
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
+          sparse-checkout: /scripts/upload-codecov.py
+          sparse-checkout-cone-mode: false
+          path: codecov-uploader
 
-      - name: Download coverage report
-        id: download-coverage
-        continue-on-error: true
+      - name: Download coverage-report
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: coverage-report
-          path: coverage
+          path: reports
 
-      - name: Upload coverage to Codecov
-        if: steps.download-coverage.outcome == 'success'
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          use_oidc: true
-          files: coverage/lcov.info
-          fail_ci_if_error: false
+      - name: Upload reports with verified Codecov CLI
+        run: >-
+          python3 -I codecov-uploader/scripts/upload-codecov.py
+          --coverage reports/lcov.info
 
   zizmor:
     name: zizmor
@@ -341,6 +346,7 @@ jobs:
     steps:
       - name: Result
         env:
+          CODECOV_ELIGIBLE: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
           MATRIX_RESULT: ${{ needs.generate-matrix.result }}
           MATRIX: ${{ needs.generate-matrix.outputs.matrix }}
           RUN_CODEQL: ${{ needs.generate-matrix.outputs.run_codeql }}
@@ -372,5 +378,6 @@ jobs:
           require_result commits "${COMMITS_RESULT}" "${REQUIRE_COMMITS}"
           require_result check "${CHECK_RESULT}" "${REQUIRE_CHECK}"
           require_result codeql "${CODEQL_RESULT}" "${RUN_CODEQL}"
+          [[ "${CODECOV_ELIGIBLE}" == true ]] || RUN_CODECOV=false
           require_result codecov "${CODECOV_RESULT}" "${RUN_CODECOV}"
           require_result zizmor "${ZIZMOR_RESULT}" "${RUN_ZIZMOR}"

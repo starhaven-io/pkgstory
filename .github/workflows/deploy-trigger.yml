@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "trigger/**"
+      - ".github/workflows/deploy-trigger.yml"
+      - "scripts/check-npm-install-policy.mjs"
   workflow_dispatch:
 
 defaults:
@@ -15,7 +17,7 @@ defaults:
 permissions: {}
 
 concurrency:
-  group: deploy-trigger
+  group: ${{ github.ref == 'refs/heads/main' && 'deploy-trigger' || format('rejected-deploy-trigger-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
