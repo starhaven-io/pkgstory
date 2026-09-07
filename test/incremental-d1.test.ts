@@ -1,7 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { crawlSinceD1 } from "../src/crawl/incremental.ts";
 import { d1Apply, d1ApplyCommand, d1Select } from "../src/db/d1remote.ts";
-import { cleanupFixtures, formula, TapRepo } from "./helpers/tap.ts";
+import { openDb, setCrawlState } from "../src/db/db.ts";
+import { cleanupFixtures, formula, T0, TapRepo } from "./helpers/tap.ts";
 
 // Real git fixture, scripted wrangler: the delta derivation runs for real, so
 // these assert on the exact SQL batch the crawl would ship.
@@ -58,6 +59,7 @@ ${extra}end
 describe("crawlSinceD1", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    d1ApplyMock.mockReset();
   });
 
   it("reports no-cursor (and writes nothing) on an unseeded database", () => {
@@ -249,7 +251,7 @@ describe("crawlSinceD1", () => {
     );
     expect(sql).toContain("ended_version = '1.0', ended_revision = 0");
     expect(sql).toContain(
-      `AND tag = 'arm64_tahoe' AND ended_at IS NULL AND started_at <= ${lost.at}`,
+      `AND tag = 'arm64_tahoe' AND ended_at IS NULL AND started_commit NOT IN ('${regained.sha}')`,
     );
     expect(sql).toContain(`closed.ended_commit = '${lost.sha}'`);
     expect(sql).toContain(
@@ -263,6 +265,46 @@ describe("crawlSinceD1", () => {
     expect(sql).toContain(`latest_bottle_tags = '["arm64_tahoe"]'`);
     expect(statements(sql).at(-1)).toContain(`'${regained.sha}'`);
   });
+
+  it.each([true, false])(
+    "keeps backdated intervals correct on replay (known baseline: %s)",
+    (known) => {
+      const tap = new TapRepo();
+      const db = openDb(":memory:");
+      const bottle = '  bottle do\n    sha256 cellar: :any, arm64_sonoma: "aaa"\n  end\n';
+      tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+      const cursor = tap.commit("foo: bottled");
+      db.prepare(
+        "INSERT INTO packages (id, source, name, latest_version, latest_revision, latest_bottled, latest_bottle_tags) VALUES (1, ?, 'foo', '1.0', 0, ?, ?)",
+      ).run(tap.source.id, known ? 1 : null, known ? '["arm64_sonoma"]' : null);
+      if (known)
+        db.prepare(
+          "INSERT INTO bottle_intervals (package_id, tag, started_at, started_commit) VALUES (1, 'arm64_sonoma', ?, ?)",
+        ).run(cursor.at, cursor.sha);
+      setCrawlState(db, tap.source.id, cursor.sha, T0);
+      d1SelectMock.mockImplementation((_mode, sql) => db.prepare(sql).all());
+      d1ApplyMock.mockImplementation((_mode, sql) => {
+        db.exec(sql);
+      });
+      tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+      const lost = tap.commit("foo: bottle lost", T0 - 100);
+      tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+      const regained = tap.commit("foo: bottle restored", T0 - 200);
+      const intervals = () =>
+        db.prepare("SELECT started_commit, ended_commit FROM bottle_intervals ORDER BY id").all();
+      const expected = [
+        ...(known ? [{ started_commit: cursor.sha, ended_commit: lost.sha }] : []),
+        { started_commit: regained.sha, ended_commit: null },
+      ];
+
+      crawlSinceD1(tap.source, "local", T0 + 1);
+      expect(intervals()).toEqual(expected);
+      setCrawlState(db, tap.source.id, cursor.sha, T0 + 2);
+      crawlSinceD1(tap.source, "local", T0 + 3);
+      expect(intervals()).toEqual(expected);
+      db.close();
+    },
+  );
 
   it("ships a versionless bottle transition from a known baseline", () => {
     const tap = new TapRepo();

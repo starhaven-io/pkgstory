@@ -2,8 +2,8 @@ import { type D1Mode, d1Select, d1SelectMany, kvGet, kvPut } from "./d1remote.ts
 
 // Precompute the catalog-wide payloads the site would otherwise derive with an
 // expensive per-request scan, and stash them in KV. Reads on the hot paths
-// (home page, search index, sitemap) then cost a single KV lookup — traffic-independent,
-// so no amount of traffic can run up D1. Rebuilt at the end of every crawl.
+// (home page, search index, sitemap) use KV instead of scanning D1 on each request.
+// Rebuilt at the end of every successful crawl.
 
 // Compact lifecycle marker: n=renamed, m=migrated, r=removed, x=disabled,
 // d=deprecated; omitted when active.
@@ -11,7 +11,7 @@ export type StatusCode = "n" | "m" | "r" | "x" | "d";
 
 // A deprecate!/disable! stanza is only in effect once its date has passed (a future
 // date is a scheduled announcement). Recomputed every crawl, so a scheduled package
-// flips to deprecated/disabled the day its date lands — no re-crawl needed.
+// flips to deprecated/disabled on the next successful cache refresh.
 function inEffect(date: unknown, reason: unknown, today: string): boolean {
   const present = date != null || reason != null;
   return present && (date == null || String(date) <= today);
@@ -200,8 +200,8 @@ function runCategory(
 // Six core angles plus two reserves, each a distinct "shape" of history so no two
 // cards restate the same superlative. Ordered by priority; the picker stops once the
 // grid is full, so the reserves only run when a core category is empty (e.g. no
-// removed package in a small dataset). Recomputed every crawl into the KV `home`
-// blob — the site never runs these scans at request time.
+// removed package in a small dataset). Recomputed when the cached stories expire
+// or a manual refresh requests it; the site does not run these scans.
 function buildSpotlight(mode: D1Mode, catalog: CatalogEntry[]): SpotlightItem[] {
   const byPkg = new Map(catalog.map((e) => [packageKey(sourceId(e), e.n), e]));
   const yearAgo = Math.floor(Date.now() / 1000) - 365 * 86400;
@@ -352,7 +352,7 @@ function buildSpotlight(mode: D1Mode, catalog: CatalogEntry[]): SpotlightItem[] 
   return pickSpotlightStories(categories.map((cat) => () => runCategory(mode, byPkg, cat)));
 }
 
-// The lean search index — one row per package with events. ~22k-row scan (no join).
+// The lean search index — one row per package with events, without a join.
 const CATALOG_SQL = `SELECT name AS n,
        CASE source WHEN 'homebrew-cask' THEN 'c' ELSE 'f' END AS s,
        latest_version  AS v,
@@ -427,6 +427,7 @@ const SPOTLIGHT_TTL_SECONDS = 23 * 3600;
 function reusableSpotlight(
   mode: D1Mode,
   now: number,
+  catalog: CatalogEntry[],
 ): { spotlight: SpotlightItem[]; spotlightAt: number } | null {
   const raw = kvGet(mode, "home");
   if (raw === null) return null;
@@ -442,7 +443,12 @@ function reusableSpotlight(
       prior.spotlightAt <= now && // a future stamp is clock skew — rebuild
       now - prior.spotlightAt <= SPOTLIGHT_TTL_SECONDS
     ) {
-      return { spotlight: prior.spotlight, spotlightAt: prior.spotlightAt };
+      const byPkg = new Map(catalog.map((entry) => [packageKey(sourceId(entry), entry.n), entry]));
+      const spotlight = prior.spotlight.flatMap((story) => {
+        const entry = byPkg.get(packageKey(story.source, story.name));
+        return entry ? [spotlightItem(entry, story)] : [];
+      });
+      if (spotlight.length > 0) return { spotlight, spotlightAt: prior.spotlightAt };
     }
   } catch {
     // Unparsable prior blob — fall through and rebuild from D1.
@@ -483,7 +489,8 @@ export function refreshSiteCache(mode: D1Mode, opts: RefreshOptions = {}): { pac
     else formulae += 1;
   }
 
-  const reused = (opts.spotlight ?? "auto") === "auto" ? reusableSpotlight(mode, now) : null;
+  const reused =
+    (opts.spotlight ?? "auto") === "auto" ? reusableSpotlight(mode, now, catalog) : null;
   const spotlight = reused?.spotlight ?? buildSpotlight(mode, catalog);
   const spotlightAt = reused?.spotlightAt ?? now;
 

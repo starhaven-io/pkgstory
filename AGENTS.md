@@ -65,7 +65,7 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 - `src/db/`: SQLite schema and helpers.
 - `test/`: Vitest coverage for parsers and crawl behavior.
 - `site/`: Astro app deployed to Cloudflare Workers.
-- `trigger/`: Small Cloudflare Worker that reliably triggers scheduled crawls.
+- `trigger/`: Small Cloudflare Worker that dispatches scheduled crawls.
 - `justfile`: canonical local command surface.
 
 ## Project-specific notes

@@ -1,6 +1,7 @@
 ---
 export const prerender = false;
 
+import { timelinePage } from '../../../lib/package-json.ts';
 import Base from '../../../layouts/Base.astro';
 import Chip from '../../../components/Chip.astro';
 import Contributors from '../../../components/Contributors.astro';
@@ -40,19 +41,10 @@ if (!isKnownSource(source)) {
 
 // ?page=N pages back through timelines longer than TIMELINE_LIMIT (offset paging
 // on the idx_events_pkg_time index). Page 1 is the bare, canonical URL.
-const pageParam = Astro.url.searchParams.get('page');
-const page = pageParam === null ? 1 : Number.parseInt(pageParam, 10);
-if (pageParam !== null && (!Number.isInteger(page) || page < 1 || String(page) !== pageParam)) {
-  return Astro.rewrite('/404');
-}
+const page = timelinePage(Astro.url.searchParams.get('page'), TIMELINE_LIMIT);
 const bottlePageParam = Astro.url.searchParams.get('bottle-page');
-const bottlePage = bottlePageParam === null ? 1 : Number.parseInt(bottlePageParam, 10);
-if (
-  bottlePageParam !== null &&
-  (!Number.isInteger(bottlePage) || bottlePage < 1 || String(bottlePage) !== bottlePageParam)
-) {
-  return Astro.rewrite('/404');
-}
+const bottlePage = timelinePage(bottlePageParam, BOTTLE_HISTORY_LIMIT);
+if (page === null || bottlePage === null) return Astro.rewrite('/404');
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();

@@ -4,11 +4,12 @@ Runbook for the deployed pkgstory pipeline (crawler → D1/KV → site).
 
 ## Freshness model
 
-- The trigger Worker (`trigger/`) fires a `workflow_dispatch` every 30
-  minutes; `crawl.yml` runs `pkgstory crawl --d1 remote`, which writes the
-  delta to D1 and republishes the KV blobs.
+- The trigger Worker fires `workflow_dispatch` on the cron defined in
+  [`trigger/wrangler.jsonc`](../trigger/wrangler.jsonc); `crawl.yml` runs
+  `pkgstory crawl --d1 remote`, which writes the delta to D1 and republishes the KV blobs.
 - Every crawl, including an up-to-date one, advances that source's
-  `crawl_state.last_crawled_at` heartbeat.
+  `crawl_state.last_crawled_at` heartbeat after that source succeeds. A missing D1
+  cursor fails the run and requires seeding; it is not a successful empty crawl.
 - <https://pkgstory.dev/health.json> reports each expected source and serves
   HTTP 503 when either source is missing or more than two hours stale. Its
   top-level fields report the worst source.
@@ -74,7 +75,8 @@ Caveats:
   read-only and refuses a stale schema rather than migrating production seed
   material as a side effect.
 - Changes to history ordering or commit timestamp semantics require a new full
-  crawl and remote reseed. Existing D1 event and interval rows are precomputed;
+  crawl and remote reseed. A cursor outside the current Git ancestry also requires
+  rebuilding and reseeding. Existing D1 event and interval rows are precomputed;
   an incremental crawl cannot rewrite their historical boundaries.
 - The `version_changes` table preserves reverts for RSS and recent updates.
   Its online migration backfills canonical introductions only; run a full crawl
@@ -104,20 +106,23 @@ Caveats:
 
 A manual rebuild always recomputes the home-page spotlight, which is appropriate
 after a reseed. Scheduled crawls reuse the published spotlight until it is 23
-hours old.
+hours old, while refreshing each card's current version and lifecycle on every
+cache publication.
 
 ## External control checklist
 
 These controls are not established by repository files and must be verified in
 their respective control planes:
 
-- Grant **starhaven-bot** **Actions: Read and write** and accept the updated
-  installation permissions before merging the workflow-dispatch trigger. Keep its
-  repository-content and pull-request permissions: the fleet sync in `dot_github`
-  opens PRs as the same App, and its private key is shared with that sync, so
-  rotate the key in both places together.
-- Require the aggregate CI conclusion and dismiss stale pull-request approvals
-  when reviewable code changes.
+- Dispatch requires **starhaven-bot** to have **Actions: Read and write**, with
+  the corresponding permission grant accepted on its repository installation. Keep its
+  repository-content and pull-request permissions needed by other consumers.
+  Before rotating a key, inventory its consumers, including the fleet sync in
+  `dot_github`, update each consumer and verify it works before revocation.
+  Checked-in configuration does not verify equality of hosted secret values.
+- Require the aggregate CI conclusion on the current revision. Keep approval
+  settings aligned with the single-maintainer operating model in the infrastructure
+  control plane.
 - Monitor `/health.json` from outside GitHub Actions and alert on HTTP 503. The
   workflow's issue automation detects failed runs, but cannot detect every case
   where scheduling stops entirely.

@@ -1,17 +1,16 @@
 # crawl-trigger
 
-A Cloudflare Worker whose only job is a reliable cron. It fires every 30 minutes
-and triggers the [`Crawl`](../.github/workflows/crawl.yml) GitHub Action through
-its `workflow_dispatch` endpoint as the **starhaven-bot** GitHub App.
+A Cloudflare Worker that dispatches scheduled crawls. Its cron is defined in
+[`wrangler.jsonc`](wrangler.jsonc). It triggers the
+[`Crawl`](../.github/workflows/crawl.yml) GitHub Action through its `workflow_dispatch` endpoint as the **starhaven-bot** GitHub App.
 
 ## Why
 
-GitHub Actions' `schedule:` trigger is best-effort — under load it silently delays
-and drops most fires, so the every-30-min crawl regularly drifted several hours
-stale. Cloudflare's cron triggers don't get dropped. The crawl itself still runs on
-GitHub (it needs full Homebrew tap clones and the Node crawler); this Worker just
-pulls the trigger on a dependable schedule. `crawl.yml` keeps a coarse `schedule:`
-only as a fallback for when this Worker is down.
+The Worker separates dispatch from the crawl, which still runs on GitHub because
+it needs full Homebrew tap clones and the Node crawler. `crawl.yml` retains a
+coarse `schedule:` fallback. Neither schedule establishes data freshness by
+itself: monitor `/health.json` and inspect dispatch and crawl failures using the
+[operations runbook](../docs/OPERATIONS.md).
 
 ## How it authenticates
 
@@ -26,8 +25,8 @@ is a secret.
 
 1. Make sure **starhaven-bot** is installed on `pkgstory`, grant it **Actions:
    Read and write**, and accept the updated permissions on the org installation.
-   Leave its other permissions alone: the fleet sync in `dot_github` opens PRs as
-   starhaven-bot and needs them.
+   Leave permissions needed by other App consumers intact; the fleet sync in
+   `dot_github` also uses starhaven-bot.
 2. Get the App's private key (`.pem`) from its settings — *Generate a private key* if
    you don't have it saved. GitHub issues it in PKCS#1; WebCrypto needs PKCS#8, so
    convert it once:
@@ -55,7 +54,9 @@ tab.
 ## Notes
 
 - The Worker explicitly dispatches `crawl.yml` at `main`.
-- The private key is shared with the fleet sync in `dot_github`. Rotate it in both
-  places together, deploying each replacement secret before revoking the old key.
+- Before rotating an App key, inventory all consumers, including this Worker and
+  the fleet sync in `dot_github`. Update every consumer of the key and verify it
+  works before revoking the old key. Repository files do not establish which
+  hosted secrets currently contain the same key.
 - The Worker has no `fetch` handler and `workers_dev`/`preview_urls` are off, so it
-  isn't reachable over HTTP — the key can only be exercised by the cron.
+  has no public HTTP endpoint. Scheduled invocations use the key to dispatch the crawl.

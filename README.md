@@ -64,20 +64,21 @@ with its target instead of being described as removed entirely.
 
 ### Serving it
 
-The site is an Astro app on Cloudflare Workers, sized so traffic can't run up
-cost:
+The site is an Astro app on Cloudflare Workers. Its data access keeps broad
+catalog scans out of request handlers:
 
 - **Per-package pages** read one package's rows from **D1** (SQLite at the edge)
   through an indexed query, behind an edge cache.
-- **The home page, search index, and sitemap** (`/packages.json`, ~20k entries)
+- **The home page, search index, and sitemap** (`/packages.json`)
   are precomputed into **Workers KV** by the crawler and served as single lookups
-  — independent of how much traffic arrives.
+  rather than running a D1 catalog scan for each request.
 
-A GitHub Action re-crawls every 30 minutes: it derives the delta since the last
-commit it saw, writes only the new version events and bottle intervals to D1, and
+The crawler uses the schedule in
+[`trigger/wrangler.jsonc`](trigger/wrangler.jsonc). It derives the delta since the
+last commit it saw, writes only the new version events and bottle intervals to D1, and
 republishes the KV blobs. A small
-Cloudflare Worker (`trigger/`) fires that schedule on a reliable cron — GitHub's
-own `schedule:` trigger drops most fires. Deploys ship code, not data, so the site
+Cloudflare Worker (`trigger/`) dispatches that schedule, with a coarse
+GitHub Actions schedule as a fallback. Deploys ship code, not data, so the site
 stays current without a rebuild. Operational procedures
 (staleness triage, reseeding, and cache refreshes) live in
 [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -115,7 +116,7 @@ scripts; `just npm-policy` verifies all three lockfiles.
 just install                                    # install dependencies
 just crawl                                      # build pkgstory.db from a curated demo set
 just crawl --formulae git,wget --casks firefox  # or specific packages
-just crawl --all                                # authoritatively replace the full catalog (~20k packages)
+just crawl --all                                # authoritatively replace the full catalog
 just site-seed-local                            # load pkgstory.db into local D1 + KV
 just site-dev                                   # preview the site
 just check                                      # complete local gate

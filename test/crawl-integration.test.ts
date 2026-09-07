@@ -180,6 +180,18 @@ describe("buildCommitIndex curated paths", () => {
 });
 
 describe("computeDelta (against a real git repo)", () => {
+  it("rejects a cursor from rewritten history before deriving a delta", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const base = tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
+    const cursor = tap.commit("foo 2.0");
+    tap.git("reset", "--hard", base.sha);
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    tap.commit("foo 1.1");
+    expect(() => computeDelta(tap.source, cursor.sha)).toThrow("rebuild and reseed");
+  });
+
   it("parses a version bump since the cursor", () => {
     const tap = new TapRepo();
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
@@ -666,82 +678,87 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("keeps bottle intervals unchanged when an incremental window is replayed", () => {
-    const tap = new TapRepo();
-    const db = openDb(":memory:");
-    const now = T0 + 999000;
-    const bottle = '  bottle do\n    sha256 cellar: :any, arm64_sonoma: "aaa"\n  end\n';
+  it.each([T0 + 2000, T0 - 1000])(
+    "keeps replayed bottle intervals correct with transition time %s",
+    (transitionAt) => {
+      const tap = new TapRepo();
+      const db = openDb(":memory:");
+      const now = T0 + 999000;
+      const bottle = '  bottle do\n    sha256 cellar: :any, arm64_sonoma: "aaa"\n  end\n';
 
-    tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
-    const cursor = tap.commit("foo: bottled");
-    buildCommitIndex(db, tap.source, ["foo"]);
-    buildSnapshots(db, tap.source);
-    buildEvents(db, tap.source);
-    finalizeLatest(db, tap.source.id);
-    setCrawlState(db, tap.source.id, cursor.sha, now);
+      tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
+      const cursor = tap.commit("foo: bottled");
+      buildCommitIndex(db, tap.source, ["foo"]);
+      buildSnapshots(db, tap.source);
+      buildEvents(db, tap.source);
+      finalizeLatest(db, tap.source.id);
+      setCrawlState(db, tap.source.id, cursor.sha, now);
 
-    const transitionAt = T0 + 2000;
-    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
-    const lost = tap.commit("foo: bottle lost", transitionAt);
-    tap.write("Formula/f/foo.rb", formula("foo", "1.1", bottle));
-    const regained = tap.commit("foo: bottle restored", transitionAt);
+      tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+      const lost = tap.commit("foo: bottle lost", transitionAt);
+      tap.write("Formula/f/foo.rb", formula("foo", "1.1", bottle));
+      const regained = tap.commit("foo: bottle restored", transitionAt);
 
-    const intervals = () =>
-      db
-        .prepare(
-          `SELECT tag, started_at, started_commit, ended_at, ended_commit
+      const intervals = () =>
+        db
+          .prepare(
+            `SELECT tag, started_at, started_commit, ended_at, ended_commit
                   , started_version, started_revision, ended_version, ended_revision
              FROM bottle_intervals ORDER BY id`,
-        )
-        .all();
-    const expected = [
-      {
-        tag: "arm64_sonoma",
-        started_at: cursor.at,
-        started_commit: cursor.sha,
-        started_version: "1.0",
-        started_revision: 0,
-        ended_at: lost.at,
-        ended_commit: lost.sha,
-        ended_version: "1.1",
-        ended_revision: 0,
-      },
-      {
-        tag: "arm64_sonoma",
-        started_at: regained.at,
-        started_commit: regained.sha,
-        started_version: "1.1",
-        started_revision: 0,
-        ended_at: null,
-        ended_commit: null,
-        ended_version: null,
-        ended_revision: null,
-      },
-    ];
+          )
+          .all();
+      const expected = [
+        {
+          tag: "arm64_sonoma",
+          started_at: cursor.at,
+          started_commit: cursor.sha,
+          started_version: "1.0",
+          started_revision: 0,
+          ended_at: lost.at,
+          ended_commit: lost.sha,
+          ended_version: "1.1",
+          ended_revision: 0,
+        },
+        {
+          tag: "arm64_sonoma",
+          started_at: regained.at,
+          started_commit: regained.sha,
+          started_version: "1.1",
+          started_revision: 0,
+          ended_at: null,
+          ended_commit: null,
+          ended_version: null,
+          ended_revision: null,
+        },
+      ];
 
-    expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 1 });
-    expect(intervals()).toEqual(expected);
+      expect(crawlSince(db, tap.source, now + 1)).toMatchObject({ status: "ok", events: 1 });
+      expect(intervals()).toEqual(expected);
 
-    setCrawlState(db, tap.source.id, cursor.sha, now + 2);
-    expect(crawlSince(db, tap.source, now + 3)).toMatchObject({ status: "ok", events: 0 });
-    expect(intervals()).toEqual(expected);
-    expect(
-      db
-        .prepare("SELECT COUNT(*) AS count FROM bottle_intervals WHERE ended_at < started_at")
-        .get(),
-    ).toEqual({ count: 0 });
-    expect(
-      db
-        .prepare(
-          `SELECT COUNT(*) AS count FROM (
+      setCrawlState(db, tap.source.id, cursor.sha, now + 2);
+      expect(crawlSince(db, tap.source, now + 3)).toMatchObject({ status: "ok", events: 0 });
+      expect(intervals()).toEqual(expected);
+      expect(
+        db
+          .prepare("SELECT COUNT(*) AS count FROM bottle_intervals WHERE ended_at < started_at")
+          .get(),
+      ).toEqual({ count: transitionAt < cursor.at ? 1 : 0 });
+      expect(
+        db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM (
              SELECT package_id, tag FROM bottle_intervals
               WHERE ended_at IS NULL GROUP BY package_id, tag HAVING COUNT(*) > 1
            )`,
-        )
-        .get(),
-    ).toEqual({ count: 0 });
-    db.close();
-  });
+          )
+          .get(),
+      ).toEqual({ count: 0 });
+      buildSnapshots(db, tap.source);
+      buildEvents(db, tap.source);
+      expect(intervals()).toEqual(expected);
+      db.close();
+    },
+  );
 
   it("keeps full and incremental bottle history identical for versionless formulae", () => {
     const tap = new TapRepo();

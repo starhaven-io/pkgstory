@@ -50,6 +50,19 @@ function parseTimestamp(raw: string | undefined, sha: string): number {
   return value;
 }
 
+/** Incremental history is valid only when the stored cursor still precedes HEAD. */
+export function assertAncestor(repoDir: string, cursor: string, head: string): void {
+  try {
+    execFileSync("git", ["-C", repoDir, "merge-base", "--is-ancestor", cursor, head], {
+      stdio: "ignore",
+    });
+  } catch (cause) {
+    throw new Error("crawl cursor is not an ancestor of HEAD; rebuild and reseed the source", {
+      cause,
+    });
+  }
+}
+
 /** Resolve a Homebrew tap to its local clone, e.g. `brew --repository homebrew/core`. */
 export function repoRoot(tap: string): string {
   return execFileSync("brew", ["--repository", tap], { encoding: "utf8" }).trim();

@@ -38,7 +38,7 @@ export function sqlLit(v: unknown): string {
     .replace(/'/g, "''")}'`;
 }
 
-function d1Exec(mode: D1Mode, sql: string): Array<{ results?: Record<string, unknown>[] }> {
+function d1Exec(mode: D1Mode, sql: string): Array<{ results: Record<string, unknown>[] }> {
   const out = run([`--${mode}`, "--json", "--command", sql]);
   // Tolerate leading banner lines, anchored to line start so a "▲ [WARNING] …"
   // banner's own bracket can't fool it — the JSON array opens at column 0.
@@ -50,11 +50,33 @@ function d1Exec(mode: D1Mode, sql: string): Array<{ results?: Record<string, unk
       `wrangler d1 execute produced no JSON array (has its output format changed?): ${JSON.stringify(out.slice(0, 400))}`,
     );
   }
-  return JSON.parse(out.slice(start)) as Array<{ results?: Record<string, unknown>[] }>;
+  const parsed: unknown = JSON.parse(out.slice(start));
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length === 0 ||
+    parsed.some(
+      (entry) =>
+        entry === null ||
+        typeof entry !== "object" ||
+        entry.success !== true ||
+        !Array.isArray(entry.results) ||
+        entry.results.some(
+          (row: unknown) => row === null || typeof row !== "object" || Array.isArray(row),
+        ),
+    )
+  ) {
+    throw new Error("wrangler d1 execute returned an unsuccessful or malformed result set");
+  }
+  return parsed as Array<{ results: Record<string, unknown>[] }>;
 }
 
 export function d1Select(mode: D1Mode, sql: string): Record<string, unknown>[] {
-  return d1Exec(mode, sql)[0]?.results ?? [];
+  const parsed = d1Exec(mode, sql);
+  const first = parsed[0];
+  if (parsed.length !== 1 || first === undefined) {
+    throw new Error(`wrangler d1 execute returned ${parsed.length} result sets for one statement`);
+  }
+  return first.results;
 }
 
 /**
@@ -69,7 +91,7 @@ export function d1SelectMany(mode: D1Mode, sqls: string[]): Record<string, unkno
       `wrangler d1 execute returned ${parsed.length} result sets for ${sqls.length} statements`,
     );
   }
-  return parsed.map((entry) => entry.results ?? []);
+  return parsed.map((entry) => entry.results);
 }
 
 // Write content to a freshly-created private temp dir (mkdtemp → unique, mode 0700),

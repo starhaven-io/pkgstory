@@ -10,7 +10,6 @@ export default defineConfig({
   // limit) would be CSP-blocked. External /_astro/*.js is also cached immutable.
   vite: { build: { assetsInlineLimit: 0 } },
   adapter: cloudflare({
-    // Prerender in Node so build-time pages can read the SQLite index via node:sqlite.
     prerenderEnvironment: 'node',
     imageService: 'passthrough',
     // Expose the D1 binding to `astro dev` (and SSR) so on-demand pages can query it.

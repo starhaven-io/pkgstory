@@ -14,10 +14,10 @@ const JSON_HEADERS = {
   'access-control-allow-origin': '*',
 };
 
-export function timelinePage(pageParam: string | null): number | null {
+export function timelinePage(pageParam: string | null, pageSize = 1): number | null {
   if (pageParam === null) return 1;
   const page = Number.parseInt(pageParam, 10);
-  return Number.isInteger(page) && page >= 1 && String(page) === pageParam ? page : null;
+  return Number.isSafeInteger(page * pageSize) && page >= 1 && String(page) === pageParam ? page : null;
 }
 
 interface PackageJsonInput {

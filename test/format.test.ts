@@ -10,7 +10,6 @@ import {
   isoDateTime,
   lifecycleState,
   type PackageMeta,
-  plusYear,
   publicContributorName,
   sourceLabel,
   statusOf,
@@ -382,7 +381,6 @@ describe("site display helpers", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-13T23:59:00Z"));
     expect(todayISO()).toBe("2026-08-13");
-    expect(plusYear("2026-08-13")).toBe("2027-08-13");
     expect(isoDate(1_700_000_000)).toBe("2023-11-14");
     expect(isoDateTime(1_700_000_000)).toBe("2023-11-14 22:13 UTC");
     expect(isoDate(8_640_000_000_001)).toBe("unknown");

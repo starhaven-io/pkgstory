@@ -62,7 +62,7 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
       autocapitalize="off"
       spellcheck="false"
     />
-    <div id="results" class="results" hidden></div>
+    <div id="results" class="results" aria-live="polite" hidden></div>
   </section>
 
   {
@@ -159,15 +159,24 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
         x: ['disabled', 'chip-disabled'],
         d: ['deprecated', 'chip-deprecated'],
       };
-      let data: Pkg[] | null = null;
+      let data: Promise<Pkg[]> | null = null;
+      let searchId = 0;
       const esc = (s: string) =>
         s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch] ?? ch);
-      const load = async (): Promise<Pkg[]> => {
-        if (!data) data = await (await fetch('/packages.json')).json();
-        return data ?? [];
+      const load = (): Promise<Pkg[]> => {
+        data ??= fetch('/packages.json')
+          .then(async (response) => {
+            if (!response.ok) throw new Error('Search index unavailable');
+            return (await response.json()) as Pkg[];
+          })
+          .catch((error) => {
+            data = null;
+            throw error;
+          });
+        return data;
       };
-      // Warm the ~1 MB index while the user is still reaching for their first key.
-      input.addEventListener('focus', () => void load(), { once: true });
+      // Warm the catalog while the user is still reaching for their first key.
+      input.addEventListener('focus', () => void load().catch(() => {}), { once: true });
       // INVARIANT: this goes to innerHTML. Every catalog-derived string must pass
       // through esc() or encodeURIComponent; kind and status text come only from
       // the fixed STATUS table. Adding a field means keeping that, or building DOM.
@@ -179,6 +188,7 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
         return `<tr><td><div class="pkg-cell"><a class="pkg-link" href="/${src}/${encodeURIComponent(p.n)}/">${esc(p.n)}</a>${st}</div></td><td class="kind-cell"><span class="chip chip-${kind}">${kind}</span></td><td class="ver">${esc(ver)}</td><td class="num">${p.c}</td></tr>`;
       };
       input.addEventListener('input', async () => {
+        const id = ++searchId;
         const q = input.value.trim().toLowerCase();
         if (!q) {
           results.hidden = true;
@@ -186,7 +196,17 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
           recentEl.hidden = false;
           return;
         }
-        const all = await load();
+        let all: Pkg[];
+        try {
+          all = await load();
+        } catch {
+          if (id !== searchId) return;
+          results.textContent = 'Search is unavailable. Try again shortly.';
+          results.hidden = false;
+          recentEl.hidden = false;
+          return;
+        }
+        if (id !== searchId) return;
         const matches = all.filter((p) => p.n.toLowerCase().includes(q));
         matches.sort((a, b) => {
           const ap = a.n.toLowerCase().startsWith(q);

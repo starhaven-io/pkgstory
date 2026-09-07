@@ -96,6 +96,10 @@ async function crawl(argv: string[]): Promise<void> {
   });
 
   const d1mode = values.d1 === undefined ? null : parseD1Mode(values.d1);
+  if ([values.all, values.since, d1mode !== null].filter(Boolean).length > 1) {
+    console.error("choose only one crawl mode: --all, --since, or --d1");
+    process.exit(2);
+  }
 
   const dbPath = values.db ?? DEFAULT_DB;
   let sources = resolveSources();
@@ -110,23 +114,18 @@ async function crawl(argv: string[]): Promise<void> {
   if (d1mode) {
     console.log(`pkgstory crawl → D1 (${d1mode}) · incremental\n`);
     ensureD1Schema(d1mode); // once per invocation, not per source
-    let seeded = false;
     for (const source of sources) {
       const r = crawlSinceD1(source, d1mode, now);
-      if (r.status !== "no-cursor") seeded = true;
+      if (r.status === "no-cursor") {
+        throw new Error(`${source.id} has no D1 cursor; seed D1 before incremental crawling`);
+      }
       const msg =
-        r.status === "ok"
-          ? `${r.commits} new commits → ${r.events} version events`
-          : r.status === "up-to-date"
-            ? "up to date"
-            : "no cursor — seed D1 first";
+        r.status === "ok" ? `${r.commits} new commits → ${r.events} version events` : "up to date";
       console.log(`  ${source.label.padEnd(18)} ${msg}`);
     }
     // Republish the KV blobs the site serves directly.
-    if (seeded) {
-      const { packages } = refreshSiteCache(d1mode);
-      console.log(`  site cache         ${packages.toLocaleString()} packages → KV`);
-    }
+    const { packages } = refreshSiteCache(d1mode);
+    console.log(`  site cache         ${packages.toLocaleString()} packages → KV`);
     return;
   }
 

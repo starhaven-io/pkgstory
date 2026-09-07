@@ -108,7 +108,7 @@ describe("refreshSiteCache", () => {
       spotlight: [
         {
           source: "homebrew-formula",
-          name: "cached-card",
+          name: "alpha",
           version: "1.0",
           revision: 0,
           title: "Most updates",
@@ -224,8 +224,31 @@ describe("refreshSiteCache", () => {
 
     expect(d1SelectMock).not.toHaveBeenCalled(); // no window-function scans
     const home = putHome();
-    expect(home.spotlight.map((s) => s.name)).toEqual(["cached-card"]);
+    expect(home.spotlight.map((s) => s.name)).toEqual(["alpha"]);
     expect(home.spotlightAt).toBe(spotlightAt);
+  });
+
+  it("refreshes reused cards with current version and lifecycle, dropping absent packages", () => {
+    const spotlightAt = Math.floor(Date.now() / 1000) - 60;
+    const prior = JSON.parse(priorHome(spotlightAt));
+    prior.spotlight[0].x = "x";
+    prior.spotlight.push(story("gone", "Old card"));
+    kvGetMock.mockReturnValue(JSON.stringify(prior));
+    d1SelectManyMock.mockReturnValue([[{ ...catalogRow("alpha", "f"), v: "2.0", r: 3 }], [], []]);
+
+    refreshSiteCache("local");
+
+    expect(d1SelectMock).not.toHaveBeenCalled();
+    expect(putHome().spotlight).toEqual([
+      expect.objectContaining({
+        name: "alpha",
+        version: "2.0",
+        revision: 3,
+        note: "from the prior blob",
+      }),
+    ]);
+    expect(putHome().spotlight[0]).not.toHaveProperty("x");
+    expect(putHome().spotlightAt).toBe(spotlightAt);
   });
 
   it("rebuilds the spotlight once the published one ages out", () => {
