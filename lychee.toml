@@ -9,4 +9,6 @@ max_retries = 3
 
 # gnu.org can time out or block automated link checkers from hosted runners.
 # The AGPL license URL is canonical; skip verifying it.
-exclude = ["^https://www\\.gnu\\.org/"]
+# The health probe answers 503 on purpose while the crawler is stale, so its
+# status says nothing about the link. Skip it rather than accept 503 everywhere.
+exclude = ["^https://www\\.gnu\\.org/", "^https://pkgstory\\.dev/health\\.json$"]
