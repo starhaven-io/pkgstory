@@ -9,9 +9,9 @@
     "node": ">=26.0.0"
   },
   "scripts": {
-    "deploy": "wrangler deploy",
+    "deploy": "WRANGLER_WRITE_LOGS=false wrangler deploy",
     "deploy:dry": "npm run deploy -- --dry-run",
-    "dev": "wrangler dev --test-scheduled",
+    "dev": "WRANGLER_WRITE_LOGS=false wrangler dev --test-scheduled",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
