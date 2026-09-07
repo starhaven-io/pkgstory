@@ -14,7 +14,7 @@ params:
   npm-policy:
     projects: [".", "site", "trigger"]
   link-check:
-    targets: "--config lychee.toml README.md trigger/README.md"
+    targets: "--config lychee.toml README.md SECURITY.md docs/OPERATIONS.md trigger/README.md"
     build-site: true
     site-directory: "site"
     authenticated-github: false
