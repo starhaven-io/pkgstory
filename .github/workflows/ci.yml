@@ -337,9 +337,21 @@ jobs:
       security-events: write # required for zizmor SARIF upload
     uses: starhaven-io/.github/.github/workflows/reusable-zizmor.yml@e748ec16bd1207114a766d1d761a6743a6e3bf3a # v2026.09.09.4
 
+  pinprick:
+    name: pinprick
+    needs: generate-matrix
+    if: needs.generate-matrix.outputs.run_zizmor == 'true'
+    permissions:
+      contents: read
+      security-events: write # required for pinprick SARIF upload
+    uses: starhaven-io/.github/.github/workflows/reusable-pinprick-audit.yml@e748ec16bd1207114a766d1d761a6743a6e3bf3a # v2026.09.09.4
+    with:
+      advanced-security: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      fail-on-findings: true
+
   conclusion:
     name: conclusion
-    needs: [generate-matrix, commits, check, codeql, codecov, zizmor]
+    needs: [generate-matrix, commits, check, codeql, codecov, zizmor, pinprick]
     runs-on: ubuntu-slim
     timeout-minutes: 15
     if: always()
@@ -357,6 +369,7 @@ jobs:
           CODEQL_RESULT: ${{ needs.codeql.result }}
           CODECOV_RESULT: ${{ needs.codecov.result }}
           ZIZMOR_RESULT: ${{ needs.zizmor.result }}
+          PINPRICK_RESULT: ${{ needs.pinprick.result }}
         run: |
           require_result() {
             local name="$1" result="$2" required="$3"
@@ -381,3 +394,4 @@ jobs:
           [[ "${CODECOV_ELIGIBLE}" == true ]] || RUN_CODECOV=false
           require_result codecov "${CODECOV_RESULT}" "${RUN_CODECOV}"
           require_result zizmor "${ZIZMOR_RESULT}" "${RUN_ZIZMOR}"
+          require_result pinprick "${PINPRICK_RESULT}" "${RUN_ZIZMOR}"

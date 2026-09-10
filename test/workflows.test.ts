@@ -76,6 +76,7 @@ describe("CI workflow contracts", () => {
       CODEQL_RESULT: "success",
       CODECOV_RESULT: "success",
       ZIZMOR_RESULT: "success",
+      PINPRICK_RESULT: "success",
     };
     const run = (env: NodeJS.ProcessEnv) =>
       spawnSync("bash", ["-euo", "pipefail", "-c", step("ci.yml", "Result")], { env }).status;
@@ -87,6 +88,7 @@ describe("CI workflow contracts", () => {
       "CODEQL_RESULT",
       "CODECOV_RESULT",
       "ZIZMOR_RESULT",
+      "PINPRICK_RESULT",
     ]) {
       for (const result of ["failure", "cancelled", "skipped", ""]) {
         expect(run({ ...base, [key]: result }), `${key}: ${result}`).not.toBe(0);
@@ -101,6 +103,7 @@ describe("CI workflow contracts", () => {
         CODEQL_RESULT: "skipped",
         RUN_ZIZMOR: "false",
         ZIZMOR_RESULT: "skipped",
+        PINPRICK_RESULT: "skipped",
       }),
     ).toBe(0);
     expect(
@@ -114,6 +117,7 @@ describe("CI workflow contracts", () => {
         CODECOV_RESULT: "skipped",
         RUN_ZIZMOR: "false",
         ZIZMOR_RESULT: "skipped",
+        PINPRICK_RESULT: "skipped",
       }),
     ).toBe(0);
     expect(run({ ...base, RUN_CODEQL: "" })).not.toBe(0);
@@ -128,7 +132,9 @@ describe("CI workflow contracts", () => {
       expect(workflow).toMatch(/^ {4}if: .*github\.ref == 'refs\/heads\/main'$/m);
     }
     const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-    expect(workflow).toContain("needs: [generate-matrix, commits, check, codeql, codecov, zizmor]");
+    expect(workflow).toContain(
+      "needs: [generate-matrix, commits, check, codeql, codecov, zizmor, pinprick]",
+    );
   });
 
   it("keeps rejected dispatches outside production concurrency groups", () => {
