@@ -85,59 +85,57 @@ const deprecatedText = `${name} was deprecated in ${tap}${on}${why}.${
 }`;
 ---
 
-{
-  state !== 'active' && (
-    <aside class:list={['banner', `banner-${state}`]}>
-      <span class="banner-tag">{state}</span>
-      <span class="banner-text">
-        {state === 'renamed' && (
-          <>
-            {name} was renamed in {tap}
-            {renamedTo && <> to {targetHref ? <a href={targetHref}>{renamedTo}</a> : <>{renamedTo}</>}</>} on{' '}
-            {isoDate(removedAt ?? 0)}.{lastVersion && <> The final version under this name was {lastVersion}.</>}
-            {commitUrl && (
-              <>
-                {' '}
-                <a href={commitUrl}>rename commit ↗</a>
-              </>
-            )}
-          </>
-        )}
-        {state === 'migrated' && (
-          <>
-            {name} was migrated from {tap}
-            {migration && (
-              <> to {migration.href ? <a href={migration.href}>{migration.label}</a> : <>{migration.label}</>}</>
-            )}{' '}
-            on {isoDate(removedAt ?? 0)}.
-            {lastVersion && (
-              <>
-                {' '}
-                The final version in {tap} was {lastVersion}.
-              </>
-            )}
-            {commitUrl && (
-              <>
-                {' '}
-                <a href={commitUrl}>migration commit ↗</a>
-              </>
-            )}
-          </>
-        )}
-        {state === 'removed' && (
-          <>
-            {removedText}
-            {commitUrl && (
-              <>
-                {' '}
-                <a href={commitUrl}>removal commit ↗</a>
-              </>
-            )}
-          </>
-        )}
-        {state === 'disabled' && disabledText}
-        {state === 'deprecated' && deprecatedText}
-      </span>
-    </aside>
-  )
-}
+{state !== 'active' && (
+  <aside class:list={['banner', `banner-${state}`]}>
+    <span class="banner-tag">{state}</span>
+    <span class="banner-text">
+      {state === 'renamed' && (
+        <>
+          {name} was renamed in {tap}
+          {renamedTo && <> to {targetHref ? <a href={targetHref}>{renamedTo}</a> : <>{renamedTo}</>}</>} on{' '}
+          {isoDate(removedAt ?? 0)}.{lastVersion && <> The final version under this name was {lastVersion}.</>}
+          {commitUrl && (
+            <>
+              {' '}
+              <a href={commitUrl}>rename commit ↗</a>
+            </>
+          )}
+        </>
+      )}
+      {state === 'migrated' && (
+        <>
+          {name} was migrated from {tap}
+          {migration && (
+            <> to {migration.href ? <a href={migration.href}>{migration.label}</a> : <>{migration.label}</>}</>
+          )}{' '}
+          on {isoDate(removedAt ?? 0)}.
+          {lastVersion && (
+            <>
+              {' '}
+              The final version in {tap} was {lastVersion}.
+            </>
+          )}
+          {commitUrl && (
+            <>
+              {' '}
+              <a href={commitUrl}>migration commit ↗</a>
+            </>
+          )}
+        </>
+      )}
+      {state === 'removed' && (
+        <>
+          {removedText}
+          {commitUrl && (
+            <>
+              {' '}
+              <a href={commitUrl}>removal commit ↗</a>
+            </>
+          )}
+        </>
+      )}
+      {state === 'disabled' && disabledText}
+      {state === 'deprecated' && deprecatedText}
+    </span>
+  </aside>
+)}
