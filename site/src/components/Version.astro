@@ -9,4 +9,7 @@ const { version, revision } = Astro.props;
 const { base, meta } = versionParts(version, revision);
 ---
 
-<span class="ver">{base}{meta && <span class="ver-meta">{meta}</span>}</span>
+<span class="ver">
+  {base}
+  {meta && <span class="ver-meta">{meta}</span>}
+</span>

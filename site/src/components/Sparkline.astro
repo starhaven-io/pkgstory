@@ -31,19 +31,17 @@ const barW = (width - gap * (bins - 1)) / bins;
   role="img"
   aria-label={title ?? 'release cadence'}
 >
-  {
-    counts.map((c, i) => {
-      const h = c === 0 ? 1.5 : Math.max(2, (c / max) * height);
-      return (
-        <rect
-          x={i * (barW + gap)}
-          y={height - h}
-          width={barW}
-          height={h}
-          rx="0.5"
-          class:list={['spark-bar', { 'spark-empty': c === 0 }]}
-        />
-      );
-    })
-  }
+  {counts.map((c, i) => {
+    const h = c === 0 ? 1.5 : Math.max(2, (c / max) * height);
+    return (
+      <rect
+        x={i * (barW + gap)}
+        y={height - h}
+        width={barW}
+        height={h}
+        rx="0.5"
+        class:list={['spark-bar', { 'spark-empty': c === 0 }]}
+      />
+    );
+  })}
 </svg>

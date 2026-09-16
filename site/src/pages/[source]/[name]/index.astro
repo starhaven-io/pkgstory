@@ -129,23 +129,25 @@ const monthFmt = (t: number) =>
   lastCheckedAt={checkedAt}
   canonicalPath={pageHref(page)}
 >
-  <p class="crumb"><a href="/">All packages</a> / {sourceName}</p>
+  <p class="crumb">
+    <a href="/">All packages</a> / {sourceName}
+  </p>
 
   <section class="pkg-overview" aria-labelledby="pkg-title">
     <div>
       <div class="pkg-head">
-        <h2 id="pkg-title" class="pkg-name">{name}</h2>
+        <h2 id="pkg-title" class="pkg-name">
+          {name}
+        </h2>
         <Chip source={source} />
         {status && <StatusChip code={status} />}
       </div>
       <p class="pkg-subtitle">{sourceName} timeline from Homebrew git history.</p>
-      {
-        meta?.removedAt == null && (
-          <p class="track">
-            Track <b>{name}</b> with the <a href={feedHref}>RSS feed</a>.
-          </p>
-        )
-      }
+      {meta?.removedAt == null && (
+        <p class="track">
+          Track <b>{name}</b> with the <a href={feedHref}>RSS feed</a>.
+        </p>
+      )}
     </div>
     <dl class="pkg-facts">
       <div class="fact">
@@ -166,136 +168,128 @@ const monthFmt = (t: number) =>
         <dt>Cadence</dt>
         <dd>{cadence}</dd>
       </div>
-      {
-        source === 'homebrew-formula' && (
-          <div class="fact">
-            <dt>Bottles</dt>
-            <dd title={meta?.latestBottleTags?.map(bottleTagLabel).join(', ')}>
-              {meta?.latestBottleTags == null
-                ? 'unknown'
-                : `${meta.latestBottleTags.length.toLocaleString()} platform${meta.latestBottleTags.length === 1 ? '' : 's'}`}
-            </dd>
-          </div>
-        )
-      }
+      {source === 'homebrew-formula' && (
+        <div class="fact">
+          <dt>Bottles</dt>
+          <dd title={meta?.latestBottleTags?.map(bottleTagLabel).join(', ')}>
+            {meta?.latestBottleTags == null
+              ? 'unknown'
+              : `${meta.latestBottleTags.length.toLocaleString()} platform${meta.latestBottleTags.length === 1 ? '' : 's'}`}
+          </dd>
+        </div>
+      )}
     </dl>
   </section>
 
-  {
-    meta && (
-      <Lifecycle
-        name={name}
-        removedAt={meta.removedAt}
-        removedCommit={meta.removedCommit}
-        renamedTo={meta.renamedTo}
-        migratedTo={meta.migratedTo}
-        deprecateDate={meta.deprecateDate}
-        deprecateReason={meta.deprecateReason}
-        disableDate={meta.disableDate}
-        disableReason={meta.disableReason}
-        repo={repo}
-        lastVersion={latestShipped}
-      />
-    )
-  }
+  {meta && (
+    <Lifecycle
+      name={name}
+      removedAt={meta.removedAt}
+      removedCommit={meta.removedCommit}
+      renamedTo={meta.renamedTo}
+      migratedTo={meta.migratedTo}
+      deprecateDate={meta.deprecateDate}
+      deprecateReason={meta.deprecateReason}
+      disableDate={meta.disableDate}
+      disableReason={meta.disableReason}
+      repo={repo}
+      lastVersion={latestShipped}
+    />
+  )}
 
-  {
-    dates.length > 1 && (
-      <div class="spark-panel">
-        <div class="spark-head">
-          <h2>Update cadence</h2>
-          <p>
-            {monthFmt(shownFirst)} to {monthFmt(shownLatest)}
-          </p>
-        </div>
-        <Sparkline
-          dates={dates}
-          from={shownFirst}
-          to={shownLatest}
-          bins={Math.min(60, Math.max(12, events.length))}
-          width={880}
-          height={46}
-          title={`${name} update history`}
-        />
+  {dates.length > 1 && (
+    <div class="spark-panel">
+      <div class="spark-head">
+        <h2>Update cadence</h2>
+        <p>
+          {monthFmt(shownFirst)} to {monthFmt(shownLatest)}
+        </p>
       </div>
-    )
-  }
+      <Sparkline
+        dates={dates}
+        from={shownFirst}
+        to={shownLatest}
+        bins={Math.min(60, Math.max(12, events.length))}
+        width={880}
+        height={46}
+        title={`${name} update history`}
+      />
+    </div>
+  )}
 
-  {
-    source === 'homebrew-formula' && totalBottleIntervals > 0 && (
-      <section>
-        <div class="section-head">
-          <h2>Bottle availability</h2>
-          <p>
-            {totalBottlePages > 1
-              ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleIntervals.toLocaleString()} availability spans`
-              : `${totalBottleIntervals.toLocaleString()} availability spans`}
-          </p>
-        </div>
-        <div class="table-scroll">
-          <table class="bottle-availability">
-            <thead>
-              <tr>
-                <th>Platform</th>
-                <th>From</th>
-                <th>Until</th>
-                <th>First bottled commit</th>
-                <th>Removal commit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bottleRows.map(({ interval, platform, platformRowSpan, striped }) => (
-                <tr class={striped ? 'bottle-platform-striped' : undefined}>
-                  {platformRowSpan > 0 && (
-                    <td class="bottle-platform" rowspan={platformRowSpan}>
-                      {platform}
-                    </td>
-                  )}
-                  <td class="date">{isoDate(interval.startedAt)}</td>
-                  <td class="date">{interval.endedAt == null ? 'present' : isoDate(interval.endedAt)}</td>
-                  <td>
+  {source === 'homebrew-formula' && totalBottleIntervals > 0 && (
+    <section>
+      <div class="section-head">
+        <h2>Bottle availability</h2>
+        <p>
+          {totalBottlePages > 1
+            ? `Showing ${bottleRangeStart.toLocaleString()}–${bottleRangeEnd.toLocaleString()} of ${totalBottleIntervals.toLocaleString()} availability spans`
+            : `${totalBottleIntervals.toLocaleString()} availability spans`}
+        </p>
+      </div>
+      <div class="table-scroll">
+        <table class="bottle-availability">
+          <thead>
+            <tr>
+              <th>Platform</th>
+              <th>From</th>
+              <th>Until</th>
+              <th>First bottled commit</th>
+              <th>Removal commit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bottleRows.map(({ interval, platform, platformRowSpan, striped }) => (
+              <tr class={striped ? 'bottle-platform-striped' : undefined}>
+                {platformRowSpan > 0 && (
+                  <td class="bottle-platform" rowspan={platformRowSpan}>
+                    {platform}
+                  </td>
+                )}
+                <td class="date">{isoDate(interval.startedAt)}</td>
+                <td class="date">{interval.endedAt == null ? 'present' : isoDate(interval.endedAt)}</td>
+                <td>
+                  <a
+                    class="commit-link"
+                    href={`https://github.com/${repo}/commit/${interval.startedCommit}`}
+                    title={interval.startedSubject ?? undefined}
+                  >
+                    {interval.startedCommit.slice(0, 9)}
+                  </a>
+                </td>
+                <td>
+                  {interval.endedCommit ? (
                     <a
                       class="commit-link"
-                      href={`https://github.com/${repo}/commit/${interval.startedCommit}`}
-                      title={interval.startedSubject ?? undefined}
+                      href={`https://github.com/${repo}/commit/${interval.endedCommit}`}
+                      title={interval.endedSubject ?? undefined}
                     >
-                      {interval.startedCommit.slice(0, 9)}
+                      {interval.endedCommit.slice(0, 9)}
                     </a>
-                  </td>
-                  <td>
-                    {interval.endedCommit ? (
-                      <a
-                        class="commit-link"
-                        href={`https://github.com/${repo}/commit/${interval.endedCommit}`}
-                        title={interval.endedSubject ?? undefined}
-                      >
-                        {interval.endedCommit.slice(0, 9)}
-                      </a>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {totalBottlePages > 1 && (
-          <nav class="pager" aria-label="Bottle availability pages">
-            {bottlePage > 1 ? <a href={bottlePageHref(bottlePage - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
-            <span class="pager-status">
-              Page {bottlePage} of {totalBottlePages.toLocaleString()}
-            </span>
-            {bottlePage < totalBottlePages ? (
-              <a href={bottlePageHref(bottlePage + 1)}>Older &rarr;</a>
-            ) : (
-              <span aria-hidden="true" />
-            )}
-          </nav>
-        )}
-      </section>
-    )
-  }
+                  ) : (
+                    '—'
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {totalBottlePages > 1 && (
+        <nav class="pager" aria-label="Bottle availability pages">
+          {bottlePage > 1 ? <a href={bottlePageHref(bottlePage - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+          <span class="pager-status">
+            Page {bottlePage} of {totalBottlePages.toLocaleString()}
+          </span>
+          {bottlePage < totalBottlePages ? (
+            <a href={bottlePageHref(bottlePage + 1)}>Older &rarr;</a>
+          ) : (
+            <span aria-hidden="true" />
+          )}
+        </nav>
+      )}
+    </section>
+  )}
 
   <Contributors contributors={packageContributors} sourceName={sourceName} />
 
@@ -303,11 +297,9 @@ const monthFmt = (t: number) =>
     <div class="section-head">
       <h2>Version timeline</h2>
       <p>
-        {
-          totalPages > 1
-            ? `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
-            : `${totalEvents.toLocaleString()} version-changing commits`
-        }
+        {totalPages > 1
+          ? `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
+          : `${totalEvents.toLocaleString()} version-changing commits`}
       </p>
     </div>
     <div class="table-scroll">
@@ -345,16 +337,14 @@ const monthFmt = (t: number) =>
         </tbody>
       </table>
     </div>
-    {
-      totalPages > 1 && (
-        <nav class="pager" aria-label="Timeline pages">
-          {page > 1 ? <a href={pageHref(page - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
-          <span class="pager-status">
-            Page {page} of {totalPages.toLocaleString()}
-          </span>
-          {page < totalPages ? <a href={pageHref(page + 1)}>Older &rarr;</a> : <span aria-hidden="true" />}
-        </nav>
-      )
-    }
+    {totalPages > 1 && (
+      <nav class="pager" aria-label="Timeline pages">
+        {page > 1 ? <a href={pageHref(page - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+        <span class="pager-status">
+          Page {page} of {totalPages.toLocaleString()}
+        </span>
+        {page < totalPages ? <a href={pageHref(page + 1)}>Older &rarr;</a> : <span aria-hidden="true" />}
+      </nav>
+    )}
   </section>
 </Base>

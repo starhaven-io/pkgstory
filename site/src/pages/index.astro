@@ -26,9 +26,12 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
   <section class="home-intro" aria-labelledby="home-title">
     <div class="intro-copy">
       <p class="intro-kicker">Homebrew version history</p>
-      <h2 id="home-title" class="intro-title">Search package histories</h2>
+      <h2 id="home-title" class="intro-title">
+        Search package histories
+      </h2>
       <p class="scope">
-        Tracking <b>Homebrew</b> formulae and casks across version changes, lifecycle states, removals, migrations, and renames.
+        Tracking <b>Homebrew</b> formulae and casks across version changes, lifecycle states, removals, migrations, and
+        renames.
       </p>
     </div>
     <dl class="metric-strip">
@@ -52,7 +55,9 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
   </section>
 
   <section class="search-panel" aria-labelledby="search-title">
-    <label id="search-title" class="search-label" for="q">Search packages</label>
+    <label id="search-title" class="search-label" for="q">
+      Search packages
+    </label>
     <input
       id="q"
       class="search"
@@ -65,37 +70,32 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
     <div id="results" class="results" aria-live="polite" hidden></div>
   </section>
 
-  {
-    spotlight.length > 0 && (
-      <section class="spotlight" aria-labelledby="spotlight-title">
-        <div class="section-head">
-          <h2 id="spotlight-title">Interesting histories</h2>
-        </div>
-        <div class="spotlight-grid">
-          {spotlight.map((p) => (
-            <a class="spotlight-card" href={packagePath(p.source, p.name)}>
-              <span class="spotlight-kicker">{p.title}</span>
-              <span class="spotlight-topline">
-                <span class="spotlight-name">{p.name}</span>
-                {p.x && <StatusChip code={p.x} />}
+  {spotlight.length > 0 && (
+    <section class="spotlight" aria-labelledby="spotlight-title">
+      <div class="section-head">
+        <h2 id="spotlight-title">Interesting histories</h2>
+      </div>
+      <div class="spotlight-grid">
+        {spotlight.map((p) => (
+          <a class="spotlight-card" href={packagePath(p.source, p.name)}>
+            <span class="spotlight-kicker">{p.title}</span>
+            <span class="spotlight-topline">
+              <span class="spotlight-name">{p.name}</span>
+              {p.x && <StatusChip code={p.x} />}
+            </span>
+            <span class="spotlight-stat">{p.stat}</span>
+            <span class="spotlight-note">{p.note}</span>
+            <span class="spotlight-meta">
+              <span class="spotlight-current" title={p.version ? displayVersion(p.version, p.revision) : 'no version'}>
+                {p.version ? <Version version={p.version} revision={p.revision} /> : 'no version'}
               </span>
-              <span class="spotlight-stat">{p.stat}</span>
-              <span class="spotlight-note">{p.note}</span>
-              <span class="spotlight-meta">
-                <span
-                  class="spotlight-current"
-                  title={p.version ? displayVersion(p.version, p.revision) : 'no version'}
-                >
-                  {p.version ? <Version version={p.version} revision={p.revision} /> : 'no version'}
-                </span>
-                <span class="spotlight-context">{p.context}</span>
-              </span>
-            </a>
-          ))}
-        </div>
-      </section>
-    )
-  }
+              <span class="spotlight-context">{p.context}</span>
+            </span>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
 
   <section id="recent">
     <div class="section-head">
@@ -113,27 +113,25 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
           </tr>
         </thead>
         <tbody>
-          {
-            recent.map((c) => (
-              <tr>
-                <td class="date">{isoDate(c.introducedAt)}</td>
-                <td>
-                  <div class="pkg-cell">
-                    <a class="pkg-link" href={packagePath(c.source, c.name)}>
-                      {c.name}
-                    </a>
-                    {c.x && <StatusChip code={c.x} />}
-                  </div>
-                </td>
-                <td>
-                  <Version version={c.version} revision={c.revision} />
-                </td>
-                <td class="kind-cell">
-                  <Chip source={c.source} />
-                </td>
-              </tr>
-            ))
-          }
+          {recent.map((c) => (
+            <tr>
+              <td class="date">{isoDate(c.introducedAt)}</td>
+              <td>
+                <div class="pkg-cell">
+                  <a class="pkg-link" href={packagePath(c.source, c.name)}>
+                    {c.name}
+                  </a>
+                  {c.x && <StatusChip code={c.x} />}
+                </div>
+              </td>
+              <td>
+                <Version version={c.version} revision={c.revision} />
+              </td>
+              <td class="kind-cell">
+                <Chip source={c.source} />
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>

@@ -21,19 +21,43 @@ const commitLabel = (count: number) => `${count.toLocaleString()} ${count === 1 
 const versionLabel = (count: number) => `${count.toLocaleString()} version ${count === 1 ? 'change' : 'changes'}`;
 ---
 
-{
-  contributors.length > 0 && (
-    <section aria-labelledby="contributors-title">
-      <div class="section-head">
-        <h2 id="contributors-title">Contributors</h2>
-        <p>{summary}</p>
+{contributors.length > 0 && (
+  <section aria-labelledby="contributors-title">
+    <div class="section-head">
+      <h2 id="contributors-title">Contributors</h2>
+      <p>{summary}</p>
+    </div>
+    <p class="contributors-note">
+      Authors and co-authors of {sourceName} file changes in Homebrew history, not the upstream project.
+    </p>
+    {shown.length > 0 && (
+      <div class="contributor-grid">
+        {shown.map((contributor) => (
+          <article class="contributor-card">
+            <h3>
+              {contributor.githubLogin ? (
+                <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
+                  {contributor.displayName}
+                </a>
+              ) : (
+                contributor.displayName
+              )}
+            </h3>
+            <p>
+              {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
+            </p>
+            <small>
+              {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
+            </small>
+          </article>
+        ))}
       </div>
-      <p class="contributors-note">
-        Authors and co-authors of {sourceName} file changes in Homebrew history, not the upstream project.
-      </p>
-      {shown.length > 0 && (
+    )}
+    {more.length > 0 && (
+      <details class="contributors-more">
+        <summary>Show {more.length.toLocaleString()} more</summary>
         <div class="contributor-grid">
-          {shown.map((contributor) => (
+          {more.map((contributor) => (
             <article class="contributor-card">
               <h3>
                 {contributor.githubLogin ? (
@@ -53,62 +77,36 @@ const versionLabel = (count: number) => `${count.toLocaleString()} version ${cou
             </article>
           ))}
         </div>
-      )}
-      {more.length > 0 && (
-        <details class="contributors-more">
-          <summary>Show {more.length.toLocaleString()} more</summary>
-          <div class="contributor-grid">
-            {more.map((contributor) => (
-              <article class="contributor-card">
-                <h3>
-                  {contributor.githubLogin ? (
-                    <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
-                      {contributor.displayName}
-                    </a>
-                  ) : (
-                    contributor.displayName
-                  )}
-                </h3>
-                <p>
-                  {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
-                </p>
-                <small>
-                  {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
-                </small>
-              </article>
-            ))}
-          </div>
-        </details>
-      )}
-      {automation.length > 0 && (
-        <details class="contributors-more automation">
-          <summary>Automation</summary>
-          <div class="contributor-grid">
-            {automation.map((contributor) => (
-              <article class="contributor-card">
-                <h3>
-                  {contributor.githubLogin ? (
-                    <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
-                      {contributor.displayName}
-                    </a>
-                  ) : (
-                    contributor.displayName
-                  )}
-                </h3>
-                <p>
-                  {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
-                </p>
-                <small>
-                  {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
-                </small>
-              </article>
-            ))}
-          </div>
-        </details>
-      )}
-    </section>
-  )
-}
+      </details>
+    )}
+    {automation.length > 0 && (
+      <details class="contributors-more automation">
+        <summary>Automation</summary>
+        <div class="contributor-grid">
+          {automation.map((contributor) => (
+            <article class="contributor-card">
+              <h3>
+                {contributor.githubLogin ? (
+                  <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
+                    {contributor.displayName}
+                  </a>
+                ) : (
+                  contributor.displayName
+                )}
+              </h3>
+              <p>
+                {commitLabel(contributor.touchCount)} · {versionLabel(contributor.versionCount)}
+              </p>
+              <small>
+                {isoDate(contributor.firstAt)} – {isoDate(contributor.lastAt)}
+              </small>
+            </article>
+          ))}
+        </div>
+      </details>
+    )}
+  </section>
+)}
 
 <style>
   .contributors-note {
