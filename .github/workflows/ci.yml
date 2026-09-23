@@ -184,7 +184,7 @@ jobs:
 
       - name: Install typos
         if: matrix.check == 'lint'
-        run: cargo install typos-cli --locked --version 1.50.1
+        run: cargo install typos-cli --locked --version 1.50.2
 
       - name: Typos
         if: matrix.check == 'lint'
