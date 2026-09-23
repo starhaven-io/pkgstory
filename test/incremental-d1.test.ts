@@ -1,19 +1,20 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { crawlSinceD1 } from "../src/crawl/incremental.ts";
-import { d1Apply, d1ApplyCommand, d1Select } from "../src/db/d1remote.ts";
+import { d1Apply, d1Select } from "../src/db/d1remote.ts";
 import { openDb, setCrawlState } from "../src/db/db.ts";
+import { exportSlice } from "../src/db/export.ts";
 import { cleanupFixtures, formula, T0, TapRepo } from "./helpers/tap.ts";
 
 // Real git fixture, scripted wrangler: the delta derivation runs for real, so
 // these assert on the exact SQL batch the crawl would ship.
 vi.mock("../src/db/d1remote.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/db/d1remote.ts")>();
-  return { ...actual, d1Select: vi.fn(() => []), d1Apply: vi.fn(), d1ApplyCommand: vi.fn() };
+  return { ...actual, d1Select: vi.fn(() => []), d1Apply: vi.fn() };
 });
 
 const d1SelectMock = vi.mocked(d1Select);
 const d1ApplyMock = vi.mocked(d1Apply);
-const d1ApplyCommandMock = vi.mocked(d1ApplyCommand);
 
 afterAll(cleanupFixtures);
 
@@ -21,10 +22,12 @@ interface D1State {
   cursor: string | null;
   seeded: boolean;
   baselines: Record<string, unknown>[];
+  moved?: boolean;
 }
 
 function scriptD1(state: D1State): void {
   d1SelectMock.mockImplementation((_mode, sql) => {
+    if (sql.startsWith("UPDATE crawl_state")) return state.moved ? [] : [{ source: "x" }];
     if (sql.includes("FROM crawl_state")) {
       return state.cursor === null ? [] : [{ last_sha: state.cursor }];
     }
@@ -32,6 +35,19 @@ function scriptD1(state: D1State): void {
     if (sql.includes("FROM packages") && sql.includes("WHERE source")) return state.baselines;
     throw new Error(`unexpected d1Select in test: ${sql}`);
   });
+}
+
+// An empty database with exactly the read-model schema a reseed creates in D1.
+function d1Database(): DatabaseSync {
+  const crawl = openDb(":memory:");
+  let schema = "";
+  exportSlice(crawl, (chunk) => {
+    schema += chunk;
+  });
+  crawl.close();
+  const db = new DatabaseSync(":memory:");
+  db.exec(schema);
+  return db;
 }
 
 function appliedSql(): string {
@@ -85,11 +101,20 @@ describe("crawlSinceD1", () => {
     const r = crawlSinceD1(tap.source, "local", 1751000000);
     expect(r.status).toBe("up-to-date");
     expect(d1ApplyMock).not.toHaveBeenCalled();
-    expect(d1ApplyCommandMock).toHaveBeenCalledOnce();
-    const sql = d1ApplyCommandMock.mock.calls[0]?.[1] ?? "";
-    expect(sql).toContain("INSERT INTO crawl_state");
-    expect(sql).toContain("1751000000");
-    expect(statements(sql)).toHaveLength(1); // heartbeat only
+    const sql = d1SelectMock.mock.calls.at(-1)?.[1] ?? "";
+    expect(sql).toBe(
+      `UPDATE crawl_state SET last_crawled_at = 1751000000 WHERE source = 'homebrew-formula' AND last_sha = '${head.sha}' RETURNING source`,
+    );
+  });
+
+  it("refuses to heartbeat a cursor another writer moved", () => {
+    const tap = new TapRepo();
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const head = tap.commit("foo 1.0");
+    scriptD1({ cursor: head.sha, seeded: true, baselines: [], moved: true });
+
+    expect(() => crawlSinceD1(tap.source, "local", 1751000000)).toThrow(/cursor moved/);
+    expect(d1ApplyMock).not.toHaveBeenCalled();
   });
 
   it("ships events, latest, lifecycle, contributions, and the cursor strictly last", () => {
@@ -143,8 +168,10 @@ describe("crawlSinceD1", () => {
     // Cursor last is observable defense in depth for local/mock executors; remote
     // Wrangler file imports are themselves atomic.
     const all = statements(sql);
-    expect(all.at(-1)).toContain("INSERT INTO crawl_state");
-    expect(all.at(-1)).toContain(`'${bump.sha}'`);
+    expect(all[0]).toContain("INSERT INTO crawl_state");
+    expect(all[0]).toContain(`last_sha = '${cursor.sha}'`);
+    expect(all.at(-1)).toContain(`UPDATE crawl_state SET last_sha = '${bump.sha}'`);
+    expect(all.at(-1)).toContain(`AND last_sha = '${cursor.sha}'`);
   });
 
   it("writes no contributor rows before the full historical seed exists", () => {
@@ -196,8 +223,9 @@ describe("crawlSinceD1", () => {
     const r = crawlSinceD1(tap.source, "local", 1751000000);
     expect(r).toMatchObject({ status: "ok", events: 0 });
     const all = statements(appliedSql());
-    expect(all).toHaveLength(1); // only the cursor upsert
-    expect(all[0]).toContain(`'${head.sha}'`);
+    expect(all).toHaveLength(2); // only the cursor guard and the cursor advance
+    expect(all[0]).toContain(`'${cursor.sha}', NULL WHERE NOT EXISTS`);
+    expect(all[1]).toContain(`SET last_sha = '${head.sha}'`);
   });
 
   it("ships bottle loss and regain transitions without version events", () => {
@@ -264,6 +292,38 @@ describe("crawlSinceD1", () => {
     expect(sql).toContain("UPDATE packages SET latest_bottled = 1");
     expect(sql).toContain(`latest_bottle_tags = '["arm64_tahoe"]'`);
     expect(statements(sql).at(-1)).toContain(`'${regained.sha}'`);
+  });
+
+  it("applies nothing when another writer moves the cursor mid-crawl", () => {
+    const tap = new TapRepo();
+    const db = d1Database();
+    tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
+    const cursor = tap.commit("foo 1.0");
+    tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
+    const bump = tap.commit("foo 1.1");
+    setCrawlState(db, tap.source.id, cursor.sha, T0);
+    d1SelectMock.mockImplementation((_mode, sql) => db.prepare(sql).all());
+    const events = () => db.prepare("SELECT version FROM version_events ORDER BY id").all();
+    const lastSha = () =>
+      db.prepare("SELECT last_sha FROM crawl_state WHERE source = ?").get(tap.source.id);
+
+    // A reseed lands between the crawl's cursor read and its import.
+    d1ApplyMock.mockImplementationOnce((_mode, sql) => {
+      setCrawlState(db, tap.source.id, bump.sha, T0 + 1);
+      db.exec(sql);
+    });
+    expect(() => crawlSinceD1(tap.source, "local", T0 + 2)).toThrow(/NOT NULL/);
+    expect(events()).toEqual([]);
+    expect(lastSha()).toEqual({ last_sha: bump.sha });
+
+    setCrawlState(db, tap.source.id, cursor.sha, T0 + 3);
+    d1ApplyMock.mockImplementationOnce((_mode, sql) => {
+      db.exec(sql);
+    });
+    crawlSinceD1(tap.source, "local", T0 + 4);
+    expect(events()).toEqual([{ version: "1.1" }]);
+    expect(lastSha()).toEqual({ last_sha: bump.sha });
+    db.close();
   });
 
   it.each([true, false])(

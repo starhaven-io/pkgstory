@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
-import { type D1Mode, d1Apply, d1ApplyCommand, d1Select, sqlLit } from "../db/d1remote.ts";
+import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
 import { assertAncestor, batchCat, headSha, logSince, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
@@ -563,9 +563,18 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       .length > 0;
 
   const delta = computeDelta(source, lastSha);
-  const cursorSql = `INSERT INTO crawl_state (source, last_sha, last_crawled_at) VALUES (${sqlLit(source.id)}, ${sqlLit(delta.head)}, ${sqlLit(now)}) ON CONFLICT (source) DO UPDATE SET last_sha = excluded.last_sha, last_crawled_at = excluded.last_crawled_at;`;
+  // Every write is conditional on the cursor read above: another writer (a reseed or an
+  // overlapping crawl) may have moved it, and this delta only extends that cursor.
+  const cursorIs = `source = ${sqlLit(source.id)} AND last_sha = ${sqlLit(lastSha)}`;
   if (delta.head === lastSha) {
-    d1ApplyCommand(mode, cursorSql); // one statement; no blocking D1 import needed
+    // One statement through the query API; no blocking D1 import needed.
+    const touched = d1Select(
+      mode,
+      `UPDATE crawl_state SET last_crawled_at = ${sqlLit(now)} WHERE ${cursorIs} RETURNING source`,
+    );
+    if (touched.length === 0) {
+      throw new Error(`${source.id} D1 cursor moved during the crawl; another writer is active`);
+    }
     return { status: "up-to-date", events: 0, commits: 0, head: delta.head };
   }
 
@@ -607,7 +616,12 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     }
   }
 
-  const stmts: string[] = [];
+  // SQLite has no conditional RAISE outside triggers: this row's NULL heartbeat violates
+  // NOT NULL only when the read cursor is gone, failing the atomic import before any
+  // delta row lands.
+  const stmts: string[] = [
+    `INSERT INTO crawl_state (source, last_sha, last_crawled_at) SELECT ${sqlLit(source.id)}, ${sqlLit(lastSha)}, NULL WHERE NOT EXISTS (SELECT 1 FROM crawl_state WHERE ${cursorIs});`,
+  ];
   let events = 0;
   for (const { name, touches, history, lifecycle, removed } of delta.packages) {
     const base = baseline.get(name);
@@ -719,7 +733,9 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
       `UPDATE contributor_seeds SET seeded_at_sha = ${sqlLit(delta.head)} WHERE source = ${sqlLit(source.id)};`,
     );
   }
-  stmts.push(cursorSql);
+  stmts.push(
+    `UPDATE crawl_state SET last_sha = ${sqlLit(delta.head)}, last_crawled_at = ${sqlLit(now)} WHERE ${cursorIs};`,
+  );
   // Wrangler sends --file imports through D1's atomic import API. Keep the cursor last
   // as an additional, observable invariant and so local/mock executors remain safe.
   d1Apply(mode, `${stmts.join("\n")}\n`);
