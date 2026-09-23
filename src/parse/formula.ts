@@ -1,3 +1,5 @@
+import { continuedStatement } from "./ruby.ts";
+
 export type VersionSource = "version-stanza" | "url" | "subject" | "none";
 
 export interface ParsedFormula {
@@ -61,7 +63,7 @@ export function parseFormula(src: string): ParsedFormula {
   for (const candidate of modernUrls) {
     const url = candidate.match;
     if (!url?.[2]) continue;
-    const tag = urlStanza(candidate.source, url.index ?? 0).match(TAG_OPT);
+    const tag = continuedStatement(candidate.source, url.index ?? 0).match(TAG_OPT);
     if (tag?.[2]) {
       const v = cleanVersion(tag[2]);
       if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
@@ -114,21 +116,6 @@ function parseRevision(raw: string | undefined): number {
     throw new RangeError(`formula revision is outside JavaScript's safe integer range: ${raw}`);
   }
   return Number(exact);
-}
-
-// A git URL's tag may be on the same line or on continuation lines. Ruby permits
-// unusual alignment here, so follow the comma chain rather than trusting indent.
-function urlStanza(src: string, start: number): string {
-  const lines = src.slice(start).split("\n");
-  const stanza = [lines[0] ?? ""];
-  let continuation = stanza[0]?.trimEnd().endsWith(",") ?? false;
-  for (const line of lines.slice(1)) {
-    if (!continuation) break;
-    stanza.push(line);
-    if (/^\s*(?:#.*)?$/.test(line)) continue;
-    continuation = line.trimEnd().endsWith(",");
-  }
-  return stanza.join("\n");
 }
 
 export function parseBottleTags(src: string): string[] {
