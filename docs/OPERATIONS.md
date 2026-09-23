@@ -19,6 +19,8 @@ interrupts an active D1 write.
 - Every crawl, including an up-to-date one, advances that source's
   `crawl_state.last_crawled_at` heartbeat after that source succeeds. A missing D1
   cursor fails the run and requires seeding; it is not a successful empty crawl.
+- A failing source does not block the other source or the KV refresh; the run
+  still fails, and the failed source's cursor and heartbeat stay where they were.
 - <https://pkgstory.dev/health.json> reports each expected source and serves
   HTTP 503 when either source is missing or more than two hours stale. Its
   top-level fields report the worst source.
