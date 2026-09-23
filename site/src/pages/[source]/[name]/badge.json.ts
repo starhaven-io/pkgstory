@@ -27,7 +27,11 @@ const JSON_HEADERS = {
   'access-control-allow-origin': '*',
 };
 
-const notFound = () => new Response(JSON.stringify({ error: 'not found' }), { status: 404, headers: JSON_HEADERS });
+const notFound = () =>
+  new Response(JSON.stringify({ error: 'not found' }), {
+    status: 404,
+    headers: { ...JSON_HEADERS, 'cache-control': 'public, max-age=60, s-maxage=300' },
+  });
 
 export const GET: APIRoute = async ({ params }) => {
   const source = decodeRouteParam(params.source ?? '');

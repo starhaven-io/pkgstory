@@ -15,7 +15,9 @@ import {
   packageMeta,
   timeline,
 } from "../site/src/lib/d1.ts";
+import { GET as badgeGet } from "../site/src/pages/[source]/[name]/badge.json.ts";
 import { GET as rssGet } from "../site/src/pages/[source]/[name]/rss.xml.ts";
+import { GET as healthGet } from "../site/src/pages/health.json.ts";
 import { GET as sitemapGet, HEAD as sitemapHead } from "../site/src/pages/sitemap.xml.ts";
 import { env, resetCloudflareEnv } from "./helpers/cloudflare-workers.ts";
 
@@ -397,5 +399,31 @@ describe("site Worker bindings", () => {
 
     expect(config).toMatch(/"binding":\s*"DB"/);
     expect(config).toMatch(/"binding":\s*"CACHE"/);
+  });
+});
+
+describe("edge cache contract", () => {
+  it("enables the Workers Cache that applies each route's s-maxage", async () => {
+    const config = await readFile(new URL("../site/wrangler.jsonc", import.meta.url), "utf8");
+
+    expect(config).toMatch(/"cache":\s*\{\s*"enabled":\s*true/);
+  });
+
+  it("never lets the edge cache a health probe", async () => {
+    env.DB = fakeDb(() => ({ all: [] })).db;
+
+    const response = await healthGet({} as never);
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("gives badge misses the same short shared cache as other misses", async () => {
+    env.DB = fakeDb(() => ({ all: [], first: null })).db;
+
+    const response = await badgeGet({
+      params: { source: "homebrew-formula", name: "missing" },
+    } as never);
+    expect(response.status).toBe(404);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=60, s-maxage=300");
   });
 });

@@ -133,7 +133,7 @@ export function packageJsonPayload({
 export function packageJsonNotFound(): Response {
   return new Response(JSON.stringify({ error: 'not found' }), {
     status: 404,
-    headers: JSON_HEADERS,
+    headers: { ...JSON_HEADERS, 'cache-control': 'public, max-age=60, s-maxage=300' },
   });
 }
 
