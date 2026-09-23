@@ -114,18 +114,31 @@ async function crawl(argv: string[]): Promise<void> {
   if (d1mode) {
     console.log(`pkgstory crawl → D1 (${d1mode}) · incremental\n`);
     ensureD1Schema(d1mode); // once per invocation, not per source
+    // Each source's delta is its own atomic D1 import, so one tap's failure must not
+    // hold back the other tap or the cache publication that serves it.
+    const failed: string[] = [];
     for (const source of sources) {
-      const r = crawlSinceD1(source, d1mode, now);
-      if (r.status === "no-cursor") {
-        throw new Error(`${source.id} has no D1 cursor; seed D1 before incremental crawling`);
+      try {
+        const r = crawlSinceD1(source, d1mode, now);
+        if (r.status === "no-cursor") {
+          throw new Error(`${source.id} has no D1 cursor; seed D1 before incremental crawling`);
+        }
+        const msg =
+          r.status === "ok"
+            ? `${r.commits} new commits → ${r.events} version events`
+            : "up to date";
+        console.log(`  ${source.label.padEnd(18)} ${msg}`);
+      } catch (error) {
+        console.error(`  ${source.label.padEnd(18)} failed:`, error);
+        failed.push(source.id);
       }
-      const msg =
-        r.status === "ok" ? `${r.commits} new commits → ${r.events} version events` : "up to date";
-      console.log(`  ${source.label.padEnd(18)} ${msg}`);
     }
-    // Republish the KV blobs the site serves directly.
-    const { packages } = refreshSiteCache(d1mode);
-    console.log(`  site cache         ${packages.toLocaleString()} packages → KV`);
+    if (failed.length < sources.length) {
+      // Republish the KV blobs the site serves directly.
+      const { packages } = refreshSiteCache(d1mode);
+      console.log(`  site cache         ${packages.toLocaleString()} packages → KV`);
+    }
+    if (failed.length > 0) throw new Error(`D1 crawl failed for ${failed.join(", ")}`);
     return;
   }
 

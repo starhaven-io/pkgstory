@@ -278,9 +278,35 @@ describe("importable CLI dispatch", () => {
     }) as never);
     await expect(main(["crawl", "--d1", "local"])).rejects.toThrow("exit 1");
     expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("failed"),
       expect.objectContaining({ message: expect.stringContaining("no D1 cursor") }),
     );
     expect(refreshSiteCacheMock).not.toHaveBeenCalled();
+  });
+
+  it("crawls the remaining source and publishes cache when one D1 source fails", async () => {
+    resolveSourcesMock.mockReturnValue([formulaSource, caskSource]);
+    refreshSiteCacheMock.mockReturnValue({ packages: 1 });
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+
+    for (const failing of [formulaSource, caskSource]) {
+      crawlSinceD1Mock.mockReset();
+      refreshSiteCacheMock.mockClear();
+      crawlSinceD1Mock.mockImplementation((source) => {
+        if (source.id === failing.id) throw new RangeError("unsupported formula revision");
+        return { status: "ok", events: 1, commits: 1, head: "d".repeat(40) };
+      });
+
+      await expect(main(["crawl", "--d1", "remote"])).rejects.toThrow("exit 1");
+      expect(crawlSinceD1Mock).toHaveBeenCalledTimes(2);
+      expect(refreshSiteCacheMock).toHaveBeenCalledOnce();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({ message: `D1 crawl failed for ${failing.id}` }),
+      );
+    }
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("rejects conflicting crawl modes before opening storage", async () => {
