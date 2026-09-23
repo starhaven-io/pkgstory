@@ -378,6 +378,26 @@ end`;
     });
   });
 
+  it("follows a stanza's arguments onto continuation lines", () => {
+    // Casks/a/archi.rb in homebrew/cask
+    const archi = `  disable! date:    "2025-11-18",
+           because: "the developer intentionally makes distribution difficult for package managers"
+
+  depends_on :macos`;
+    expect(parseLifecycle(archi).disable).toEqual({
+      date: "2025-11-18",
+      reason: "the developer intentionally makes distribution difficult for package managers",
+    });
+
+    // A scheduled date on the continuation line must not read as already in effect.
+    const scheduled = `  disable! because: :unmaintained,
+           date:    "2099-01-01"`;
+    expect(parseLifecycle(scheduled).disable).toEqual({
+      date: "2099-01-01",
+      reason: "is not maintained upstream",
+    });
+  });
+
   it("maps a symbol reason to brew's predicate phrasing", () => {
     expect(
       parseLifecycle('  disable! date: "2024-12-31", because: :repo_archived').disable,

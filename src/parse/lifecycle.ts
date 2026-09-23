@@ -1,3 +1,5 @@
+import { continuedStatement } from "./ruby.ts";
+
 export interface Stanza {
   date: string | null; // "YYYY-MM-DD" as authored — may be a future, scheduled date
   reason: string | null; // predicate phrasing, reads after "… because it"
@@ -13,8 +15,8 @@ export interface Lifecycle {
 // stanza once that date has passed — and a `because:` that is a quoted string or a
 // symbol (:repo_archived, :discontinued, …). Both stanzas are kept verbatim; which is
 // in effect is a read-time decision against today's date, not the parser's job.
-const DISABLE = /^\s*disable!(.*)$/m;
-const DEPRECATE = /^\s*deprecate!(.*)$/m;
+const DISABLE = /^\s*disable!/m;
+const DEPRECATE = /^\s*deprecate!/m;
 const DATE = /\bdate:\s*"([^"]+)"/;
 const BECAUSE_STR = /\bbecause:\s*"((?:[^"\\]|\\.)*)"/;
 const BECAUSE_SYM = /\bbecause:\s*:([a-z0-9_]+)/i;
@@ -45,12 +47,13 @@ function argsOf(args: string): Stanza {
   return { date, reason: sym ? (REASON_PHRASES[sym] ?? `is ${sym.replace(/_/g, " ")}`) : null };
 }
 
+function stanza(src: string, keyword: RegExp): Stanza | null {
+  const match = src.match(keyword);
+  if (match?.index === undefined) return null;
+  return argsOf(continuedStatement(src, match.index + match[0].length));
+}
+
 /** Both deprecate!/disable! stanzas of a formula or cask blob (date + reason each). */
 export function parseLifecycle(src: string): Lifecycle {
-  const dep = src.match(DEPRECATE);
-  const dis = src.match(DISABLE);
-  return {
-    deprecate: dep ? argsOf(dep[1] ?? "") : null,
-    disable: dis ? argsOf(dis[1] ?? "") : null,
-  };
+  return { deprecate: stanza(src, DEPRECATE), disable: stanza(src, DISABLE) };
 }
