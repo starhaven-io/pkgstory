@@ -112,11 +112,6 @@ export function d1Apply(mode: D1Mode, sql: string): void {
   withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--file", file]));
 }
 
-/** Execute one bounded write without entering Wrangler's database-import path. */
-export function d1ApplyCommand(mode: D1Mode, sql: string): void {
-  d1Exec(mode, sql);
-}
-
 /**
  * Bring an already-seeded D1 database up to the current read-model schema.
  * Callers run this once per process before crawling into or reading D1 —

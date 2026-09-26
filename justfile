@@ -78,7 +78,7 @@ site-seed-remote db="pkgstory.db": site-install
     # Wrangler applies the remote SQL file atomically and restores the old database on
     # failure. Seed only from a `crawl --all` database: an incremental-only one exports
     # no contributors at all.
-    read -rp "Atomically reseed the DEPLOYED pkgstory D1 from {{db}}? [y/N] " reply
+    read -rp "Atomically reseed the DEPLOYED pkgstory D1 from {{db}} (crawl.yml disabled, no crawl running)? [y/N] " reply
     [[ "${reply}" == [yY] ]] || { echo "aborted"; exit 1; }
     # wrangler offers its browser login only when stdin and stdout are both TTYs, and
     # every remote call below reads wrangler through a pipe. `whoami` never prompts, so

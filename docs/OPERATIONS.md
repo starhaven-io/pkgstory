@@ -45,13 +45,25 @@ The next successful crawl derives everything since the stored cursor. The
 remote SQL file is an atomic D1 import, and the cursor is also written last as
 an observable defense-in-depth invariant.
 
+Every D1 write is conditional on the cursor the crawl read. A crawl that overlaps
+another writer applies nothing and fails with `D1 cursor moved` or, from the
+import, `NOT NULL constraint failed: crawl_state.last_crawled_at`; the next run
+continues from the new cursor.
+
 ## Reseeding the deployed D1/KV
 
-A reseed replaces the complete D1 site slice from a local full-crawl database:
+A reseed replaces the complete D1 site slice from a local full-crawl database.
+Stop every other D1 writer before seeding: disabling `crawl.yml` stops trigger
+dispatches (the Worker logs errors meanwhile), the fallback schedule, and pushes.
+Wait until no crawl run is queued or in progress, and do not run
+`crawl --d1 remote` by hand until the workflow is enabled again.
 
 ```sh
 just crawl --all
+gh workflow disable crawl.yml
+gh run list --workflow crawl.yml --limit 5
 just site-seed-remote
+gh workflow enable crawl.yml
 ```
 
 `crawl --all` pins one tap commit per source and rebuilds against a private copy

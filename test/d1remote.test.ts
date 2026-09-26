@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   d1Apply,
-  d1ApplyCommand,
   d1Select,
   d1SelectMany,
   ensureD1BottleSchema,
@@ -159,18 +158,6 @@ describe("d1Apply", () => {
     expect(args).toContain("--remote");
     expect(args).toContain("--file");
     expect(args).not.toContain("--command");
-  });
-});
-
-describe("d1ApplyCommand", () => {
-  it("uses the command path for a single remote write", () => {
-    execFileSyncMock.mockReturnValueOnce('[{"results":[],"success":true}]');
-    d1ApplyCommand("remote", "UPDATE crawl_state SET last_crawled_at = 1");
-
-    const args = execFileSyncMock.mock.calls.at(-1)?.[1] as string[];
-    expect(args).toContain("--remote");
-    expect(args).toContain("--command");
-    expect(args).not.toContain("--file");
   });
 });
 
