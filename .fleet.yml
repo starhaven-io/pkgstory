@@ -17,6 +17,7 @@ params:
       group: "npm-dependencies"
       directories: ["/", "/site", "/trigger"]
   npm-policy:
+    strict-allow-scripts: true
     projects: [".", "site", "trigger"]
   link-check:
     targets: "--config lychee.toml README.md SECURITY.md docs/OPERATIONS.md trigger/README.md"
