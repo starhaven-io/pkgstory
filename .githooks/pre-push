@@ -47,10 +47,4 @@ if ! command -v just >/dev/null 2>&1; then
     exit 127
 fi
 
-# Git exports worktree paths to hooks; fixture repositories must discover their own.
-git_env_names=$(git rev-parse --local-env-vars) || exit 1
-for git_env in $git_env_names; do
-    unset "$git_env"
-done
-
 just check

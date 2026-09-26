@@ -18,7 +18,11 @@ it("keeps fixture Git operations out of the repository invoking pre-push", () =>
   const just = join(bin, "just");
   writeFileSync(
     just,
-    '#!/bin/sh\nset -eu\ntest "$1" = check\ngit init --bare --quiet "$PKGSTORY_HOOK_FOREIGN_REPO"\n',
+    `#!/usr/bin/env node
+import ${JSON.stringify(new URL("./setup.ts", import.meta.url).href)};
+import { execFileSync } from "node:child_process";
+execFileSync("git", ["init", "--bare", "--quiet", process.env.PKGSTORY_HOOK_FOREIGN_REPO]);
+`,
   );
   chmodSync(just, 0o755);
   const gitDir = join(tap.dir, ".git");
