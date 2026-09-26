@@ -10,6 +10,7 @@ export default defineConfig({
     },
   },
   test: {
+    setupFiles: ["./test/setup.ts"],
     coverage: {
       include: ["src/**/*.ts", "site/src/lib/**/*.ts", "trigger/src/**/*.ts"],
       provider: "v8",
