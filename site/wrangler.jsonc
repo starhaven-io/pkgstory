@@ -7,6 +7,11 @@
   // The pkgstory.dev custom domain is attached out-of-band (like macosdb): wrangler
   // deploys the worker only, so CI needs no zone-scoped token. Don't add a `routes`
   // entry — managing the domain here requires Zone:Workers Routes the org token lacks.
+  // Workers Cache honours each route's Cache-Control s-maxage, so hits skip the Worker
+  // and D1. The key includes the query string and Worker version: a deploy starts cold.
+  "cache": {
+    "enabled": true,
+  },
   "assets": {
     "binding": "ASSETS",
     "directory": "./dist/client",

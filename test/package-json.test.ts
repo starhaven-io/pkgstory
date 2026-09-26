@@ -157,6 +157,7 @@ describe("package JSON route contract", () => {
     const missing = packageJsonNotFound();
     expect(missing.status).toBe(404);
     expect(missing.headers.get("access-control-allow-origin")).toBe("*");
+    expect(missing.headers.get("cache-control")).toBe("public, max-age=60, s-maxage=300");
     expect(await missing.json()).toEqual({ error: "not found" });
   });
 });

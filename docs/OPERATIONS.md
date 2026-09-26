@@ -21,6 +21,10 @@ interrupts an active D1 write.
   cursor fails the run and requires seeding; it is not a successful empty crawl.
 - A failing source does not block the other source or the KV refresh; the run
   still fails, and the failed source's cursor and heartbeat stay where they were.
+- The Workers Cache serves each route for up to its `s-maxage`: ten to fifteen
+  minutes for pages, JSON, and feeds, an hour for badges and the sitemap. A crawl's changes can
+  take that long to appear. `/health.json` is never cached, and each site deploy
+  starts with a cold cache.
 - <https://pkgstory.dev/health.json> reports each expected source and serves
   HTTP 503 when either source is missing or more than two hours stale. Its
   top-level fields report the worst source.
