@@ -170,36 +170,22 @@ jobs:
         if: matrix.check == 'lint'
         run: npm run lint
 
-      - name: Restore typos cache
-        id: typos-cache
+      - name: Install typos-cli
         if: matrix.check == 'lint'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/bin/typos
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-          key: ${{ runner.os }}-${{ runner.arch }}-typos-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: ${{ runner.os }}-${{ runner.arch }}-typos-
-
-      - name: Install typos
-        if: matrix.check == 'lint'
-        run: cargo install typos-cli --locked --version 1.50.2
+        env:
+          TYPOS_SHA256: "abcb3e257c7c2abeff4d903f7fe68071357637605bdb283ce2251f44bc70dc09"
+        run: |
+          archive="${RUNNER_TEMP}/typos.tar.gz"
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --output "${archive}" \
+            "https://github.com/crate-ci/typos/releases/download/v1.50.2/typos-v1.50.2-x86_64-unknown-linux-musl.tar.gz"
+          echo "${TYPOS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar --extract --gzip --file "${archive}" --directory "${RUNNER_TEMP}" ./typos
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       - name: Typos
         if: matrix.check == 'lint'
         run: typos
-
-      - name: Save typos cache
-        if: matrix.check == 'lint' && github.event_name == 'push' && steps.typos-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/bin/typos
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
-          key: ${{ runner.os }}-${{ runner.arch }}-typos-${{ hashFiles('.github/workflows/ci.yml') }}
-
 
       - name: Test
         if: matrix.check == 'test'
