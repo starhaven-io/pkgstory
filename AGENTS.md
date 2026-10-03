@@ -75,13 +75,18 @@ The index has three persisted derivation layers:
 - L0 `commit_index`: one git history pass per source, bucketed by file basename
   so historical relocations do not require `--follow`.
 - L1 `snapshots`: parse the blob at each touched commit into lean package state:
-  `version`, `revision`, `version_src`, and latest live lifecycle metadata.
-- L2 `version_events`: walk snapshots oldest to newest and emit a row only when
-  `(version, revision)` changes.
+  `version`, `revision`, `version_src`, formula bottle tags, and latest live
+  lifecycle metadata.
+- L2: walk snapshots in history order. `version_events` keeps one canonical row
+  per `(version, revision)`; `version_changes` records every transition,
+  including reverts; formula bottle state becomes `bottle_events` and
+  per-platform `bottle_intervals`; commit authors roll up into per-package
+  contributor summaries.
 
 Version derivation precedence is explicit `version` stanza, then git `tag:`,
 then mined `url`, then commit-subject fallback (`<name> <version>`). The
-`version_src` column records which source won.
+`version_src` column records which source won: `version-stanza`, `url` (also
+used when `tag:` wins), `subject`, or `none`.
 
 Lifecycle and removal state is denormalized onto `packages`. `disable!` outranks
 `deprecate!`; removals are reconciled against `git ls-tree HEAD` and preserve the
@@ -91,9 +96,8 @@ Absent packages are further classified as renamed or migrated from the tap-root
 `formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files, read
 at HEAD (the same ref as the `ls-tree` check). Same-tap `renamed_to` outranks
 cross-tap `migrated_to` when a name appears in both. The incremental D1 crawl only
-reclassifies packages touched in the current window, so rows removed before this
-support existed stay plain-removed until a full crawl plus export/import reseed
-backfills them.
+reclassifies packages touched in the current window; reclassifying untouched rows
+takes a full crawl plus export/import reseed.
 
 ## Safety / do-not-touch rules
 
