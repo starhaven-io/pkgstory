@@ -1,5 +1,6 @@
 ---
 import type { ContributorSummary } from '../lib/format.ts';
+import { githubContributorUrl } from '../lib/public-contributor.ts';
 import { isoDate } from '../lib/format.ts';
 
 interface Props {
@@ -35,10 +36,8 @@ const versionLabel = (count: number) => `${count.toLocaleString()} version ${cou
         {shown.map((contributor) => (
           <article class="contributor-card">
             <h3>
-              {contributor.githubLogin ? (
-                <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
-                  {contributor.displayName}
-                </a>
+              {githubContributorUrl(contributor.githubLogin) ? (
+                <a href={githubContributorUrl(contributor.githubLogin)}>{contributor.displayName}</a>
               ) : (
                 contributor.displayName
               )}
@@ -60,10 +59,8 @@ const versionLabel = (count: number) => `${count.toLocaleString()} version ${cou
           {more.map((contributor) => (
             <article class="contributor-card">
               <h3>
-                {contributor.githubLogin ? (
-                  <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
-                    {contributor.displayName}
-                  </a>
+                {githubContributorUrl(contributor.githubLogin) ? (
+                  <a href={githubContributorUrl(contributor.githubLogin)}>{contributor.displayName}</a>
                 ) : (
                   contributor.displayName
                 )}
@@ -86,10 +83,8 @@ const versionLabel = (count: number) => `${count.toLocaleString()} version ${cou
           {automation.map((contributor) => (
             <article class="contributor-card">
               <h3>
-                {contributor.githubLogin ? (
-                  <a href={`https://github.com/${encodeURIComponent(contributor.githubLogin)}`}>
-                    {contributor.displayName}
-                  </a>
+                {githubContributorUrl(contributor.githubLogin) ? (
+                  <a href={githubContributorUrl(contributor.githubLogin)}>{contributor.displayName}</a>
                 ) : (
                   contributor.displayName
                 )}

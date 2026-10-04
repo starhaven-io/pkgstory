@@ -16,6 +16,7 @@ import {
   todayISO,
   versionParts,
 } from "../site/src/lib/format.ts";
+import { githubContributorUrl } from "../site/src/lib/public-contributor.ts";
 
 const meta = (overrides: Partial<PackageMeta> = {}): PackageMeta => ({
   latestVersion: "1.0",
@@ -385,5 +386,15 @@ describe("site display helpers", () => {
     expect(isoDateTime(1_700_000_000)).toBe("2023-11-14 22:13 UTC");
     expect(isoDate(8_640_000_000_001)).toBe("unknown");
     expect(isoDateTime(Number.POSITIVE_INFINITY)).toBe("unknown");
+  });
+});
+
+describe("contributor links", () => {
+  it("links app bots to their app page and people to their profile", () => {
+    expect(githubContributorUrl("renovate[bot]")).toBe("https://github.com/apps/renovate");
+    expect(githubContributorUrl("octocat")).toBe("https://github.com/octocat");
+    for (const login of [null, "", "[bot]", "../settings", "a/b", "-invalid"]) {
+      expect(githubContributorUrl(login)).toBeUndefined();
+    }
   });
 });
