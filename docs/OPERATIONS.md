@@ -35,6 +35,14 @@ A failed `crawl.yml` run files or appends to a GitHub Actions-authored
 `Crawl workflow failing` issue, with a link to the failed run. The next
 successful run closes any such open issues automatically.
 
+The independent `check-crawl-dispatch.yml` schedule looks for a bot-created
+`starhaven-bot` dispatch created on `main` in the past two hours. It maintains a
+separate `Hourly crawl dispatches are missing` issue; a fallback crawl or a rerun
+of an old dispatch cannot close it. An unreadable run list reports unknown
+health and keeps the alert open. Recovery requires a recent qualifying dispatch,
+including queued, running, failed or cancelled crawls. Crawl success is tracked
+by the separate crawl-failure issue.
+
 Triage in this order:
 
 1. Check `/health.json` to identify which source is stale and since when.

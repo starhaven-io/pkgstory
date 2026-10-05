@@ -1,0 +1,36 @@
+name: Check crawl dispatch
+
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: check-crawl-dispatch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Verify hourly dispatch health
+    if: github.repository == 'starhaven-io/pkgstory' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # read the crawl run history
+      issues: write # maintain the dedicated dispatch health issue
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 26
+          package-manager-cache: false
+      - name: Check dispatch freshness
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: node scripts/check-crawl-dispatch.ts
