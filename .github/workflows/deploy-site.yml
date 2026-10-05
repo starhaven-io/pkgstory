@@ -14,6 +14,9 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+env:
+  ASTRO_TELEMETRY_DISABLED: "1"
+
 permissions: {}
 
 concurrency:
