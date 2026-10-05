@@ -11,3 +11,11 @@ export function publicContributorName(name: string, githubLogin: string | null):
   }
   return normalized || githubLogin || 'Unknown contributor';
 }
+
+export function githubContributorUrl(login: string | null): string | undefined {
+  if (!login) return undefined;
+  const bot = login.endsWith('[bot]');
+  const name = bot ? login.slice(0, -5) : login;
+  if (!/^[a-z\d](?:[a-z\d-]*[a-z\d])?$/i.test(name)) return undefined;
+  return `https://github.com/${bot ? 'apps/' : ''}${name}`;
+}
