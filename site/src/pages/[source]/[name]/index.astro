@@ -48,12 +48,13 @@ if (page === null || bottlePage === null) return Astro.rewrite('/404');
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta, packageContributors, bottleRanges, allChangeDates] = await Promise.all([
+const [events, meta, packageContributors, bottleRanges, allChangeDates, checkedBySource] = await Promise.all([
   timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
   source === 'homebrew-formula' ? bottleIntervals(db, source, name) : Promise.resolve([]),
   changeDates(db, source, name),
+  lastCheckedBySource(db),
 ]);
 
 // Unknown package — or a page past the end of the timeline.
@@ -93,7 +94,7 @@ const bottlePageHref = (p: number) => packageHref(page, p);
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
 
-const checkedAt = (await lastCheckedBySource(db)).get(source) ?? null;
+const checkedAt = checkedBySource.get(source) ?? null;
 const repo = source === 'homebrew-cask' ? 'homebrew/homebrew-cask' : 'homebrew/homebrew-core';
 const feedHref = `/${source}/${encodedName}/rss.xml`;
 const sourceName = sourceLabel(source);
