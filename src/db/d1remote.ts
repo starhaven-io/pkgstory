@@ -109,7 +109,7 @@ function withTempFile(name: string, content: string, fn: (path: string) => void)
 }
 
 export function d1Apply(mode: D1Mode, sql: string): void {
-  withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--file", file]));
+  withTempFile("delta.sql", sql, (file) => run([`--${mode}`, "--yes", "--file", file]));
 }
 
 /**

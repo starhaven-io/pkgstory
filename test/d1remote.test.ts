@@ -147,6 +147,7 @@ describe("d1Apply", () => {
     const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
     expect(args.slice(0, 3)).toEqual(["d1", "execute", "pkgstory"]);
     expect(args).toContain("--local");
+    expect(args).toContain("--yes");
     expect(seenContent).toBe("UPDATE t SET x = 1;\n");
     expect(() => readFileSync(seenPath)).toThrow(); // private temp dir cleaned up
   });
@@ -157,6 +158,7 @@ describe("d1Apply", () => {
     const args = execFileSyncMock.mock.calls[0]?.[1] as string[];
     expect(args).toContain("--remote");
     expect(args).toContain("--file");
+    expect(args).toContain("--yes");
     expect(args).not.toContain("--command");
   });
 });
