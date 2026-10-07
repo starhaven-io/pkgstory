@@ -43,6 +43,12 @@ health and keeps the alert open. Recovery requires a recent qualifying dispatch,
 including queued, running, failed or cancelled crawls. Crawl success is tracked
 by the separate crawl-failure issue.
 
+The check fetches unfiltered workflow-run pages, newest first, until it finds a
+qualifying dispatch, passes the two-hour window, or exhausts the list. It checks
+actor, branch, event, workflow, and age locally: filtered API queries have
+transiently omitted qualifying runs. Job logs report whether dispatches are
+healthy, missing, or unreadable, including errors reading or validating the list.
+
 Triage in this order:
 
 1. Check `/health.json` to identify which source is stale and since when.

@@ -53,32 +53,42 @@ export function checkDispatch(repository: string, gh: GitHub = github, now = new
     "Scheduled fallback crawls and reruns of older dispatches do not establish recovery. " +
     "Check the trigger Worker and its GitHub App credentials. This check will close the issue when dispatches recover.";
   try {
-    const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const pages: unknown = JSON.parse(
-      gh([
-        "api",
-        "--paginate",
-        "--slurp",
-        "--method",
-        "GET",
-        `repos/${repository}/actions/workflows/crawl.yml/runs`,
-        "-f",
-        "branch=main",
-        "-f",
-        "event=workflow_dispatch",
-        "-f",
-        "actor=starhaven-bot[bot]",
-        "-f",
-        `created=>=${since}`,
-        "-f",
-        "per_page=100",
-      ]),
+    for (let page = 1; ; page++) {
+      const result: unknown = JSON.parse(
+        gh([
+          "api",
+          "--method",
+          "GET",
+          `repos/${repository}/actions/workflows/crawl.yml/runs`,
+          "-f",
+          "per_page=100",
+          "-f",
+          `page=${page}`,
+        ]),
+      );
+      healthy = dispatchHealthy([result], now);
+      const runs = (result as { workflow_runs: Run[] }).workflow_runs;
+      // Unfiltered runs are newest first; keep paging through ties at the cutoff.
+      if (
+        healthy ||
+        runs.length < 100 ||
+        runs.some((run) => Date.parse(run.created_at ?? "") < now.getTime() - MAX_AGE_MS)
+      )
+        break;
+    }
+  } catch (error) {
+    console.error(
+      "Could not read crawl workflow runs:",
+      error instanceof Error ? error.message : String(error),
     );
-    healthy = dispatchHealthy(pages, now);
-  } catch {
     body =
       "The dispatch check could not read or validate the crawl workflow run list. " +
       "Dispatch health is unknown. Check GitHub API access and rerun this check; a fallback crawl does not resolve it.";
+  }
+  if (healthy) {
+    console.log("A recent starhaven-bot crawl dispatch on main confirms dispatch health.");
+  } else {
+    console.error(body);
   }
   const pages: unknown = JSON.parse(
     gh([
