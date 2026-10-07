@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { checkDispatch, dispatchHealthy } from "../scripts/check-crawl-dispatch.ts";
 
 const now = new Date("2026-10-04T08:00:00Z");
@@ -14,6 +14,188 @@ const run = {
 const pages = (value = run) => [{ workflow_runs: [value] }];
 
 describe("crawl dispatch monitoring", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    { created_at: "2026-10-04T07:00:00Z", healthy: true },
+    { created_at: "2026-10-01T07:00:00Z", healthy: false },
+  ])("checks bot freshness locally across authors: $healthy", ({ created_at, healthy }) => {
+    const mutations: string[][] = [];
+    const queries: string[][] = [];
+    expect(
+      checkDispatch(
+        "starhaven-io/pkgstory",
+        (args) => {
+          if (args[0] !== "api") {
+            mutations.push(args);
+            return "";
+          }
+          if (!args.some((arg) => arg.endsWith("/runs"))) return "[[]]";
+          queries.push(args);
+          return JSON.stringify({
+            workflow_runs: [
+              { ...run, actor: { login: "maintainer" } },
+              { ...run, created_at },
+            ],
+          });
+        },
+        now,
+      ),
+    ).toBe(healthy);
+    expect(queries).toEqual([
+      [
+        "api",
+        "--method",
+        "GET",
+        "repos/starhaven-io/pkgstory/actions/workflows/crawl.yml/runs",
+        "-f",
+        "per_page=100",
+        "-f",
+        "page=1",
+      ],
+    ]);
+    expect(mutations.map((args) => args.slice(0, 2))).toEqual(healthy ? [] : [["issue", "create"]]);
+    if (healthy) {
+      expect(console.log).toHaveBeenCalledWith(expect.stringContaining("confirms dispatch health"));
+      expect(console.error).not.toHaveBeenCalled();
+    } else {
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining("No starhaven-bot crawl dispatch was created"),
+      );
+      expect(console.log).not.toHaveBeenCalled();
+    }
+  });
+
+  it.each(["2026-10-04T07:00:00Z", "2026-10-04T06:00:00Z"])(
+    "finds a qualifying dispatch after a full page of other runs at %s",
+    (created_at) => {
+      const queries: string[][] = [];
+      const mutations: string[][] = [];
+      expect(
+        checkDispatch(
+          "starhaven-io/pkgstory",
+          (args) => {
+            if (args[0] !== "api") {
+              mutations.push(args);
+              return "";
+            }
+            if (!args.some((arg) => arg.endsWith("/runs"))) return "[[]]";
+            queries.push(args);
+            return JSON.stringify({
+              workflow_runs:
+                queries.length === 1
+                  ? Array.from({ length: 100 }, () => ({
+                      ...run,
+                      actor: { login: "maintainer" },
+                      created_at,
+                    }))
+                  : [{ ...run, created_at }],
+            });
+          },
+          now,
+        ),
+      ).toBe(true);
+      expect(queries.map((args) => args.at(-1))).toEqual(["page=1", "page=2"]);
+      expect(mutations).toEqual([]);
+    },
+  );
+
+  it("stops after a qualifying dispatch on a full page", () => {
+    let requests = 0;
+    const mutations: string[][] = [];
+    expect(
+      checkDispatch(
+        "starhaven-io/pkgstory",
+        (args) => {
+          if (args[0] !== "api") {
+            mutations.push(args);
+            return "";
+          }
+          if (!args.some((arg) => arg.endsWith("/runs"))) return "[[]]";
+          return JSON.stringify({
+            workflow_runs:
+              ++requests === 1
+                ? [
+                    run,
+                    ...Array.from({ length: 99 }, () => ({
+                      ...run,
+                      actor: { login: "maintainer" },
+                    })),
+                  ]
+                : [],
+          });
+        },
+        now,
+      ),
+    ).toBe(true);
+    expect(requests).toBe(1);
+    expect(mutations).toEqual([]);
+  });
+
+  it("stops after a full page crosses the two-hour window", () => {
+    let requests = 0;
+    const bodies: string[] = [];
+    expect(
+      checkDispatch(
+        "starhaven-io/pkgstory",
+        (args, input) => {
+          if (args[0] !== "api") {
+            bodies.push(input ?? "");
+            return "";
+          }
+          if (!args.some((arg) => arg.endsWith("/runs"))) return "[[]]";
+          if (++requests > 1) throw new Error("Unexpected page after the time window");
+          return JSON.stringify({
+            workflow_runs: [
+              ...Array.from({ length: 99 }, () => ({ ...run, actor: { login: "maintainer" } })),
+              { ...run, created_at: "2026-10-04T05:59:59Z" },
+            ],
+          });
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(requests).toBe(1);
+    expect(bodies).toEqual([
+      expect.stringContaining("No starhaven-bot crawl dispatch was created"),
+    ]);
+  });
+
+  it("reports unknown health when a later page cannot be read", () => {
+    let requests = 0;
+    const bodies: string[] = [];
+    expect(
+      checkDispatch(
+        "starhaven-io/pkgstory",
+        (args, input) => {
+          if (args[0] !== "api") {
+            bodies.push(input ?? "");
+            return "";
+          }
+          if (!args.some((arg) => arg.endsWith("/runs"))) return "[[]]";
+          if (++requests > 1) throw new Error("Second page unavailable");
+          return JSON.stringify({
+            workflow_runs: Array.from({ length: 100 }, () => ({
+              ...run,
+              actor: { login: "maintainer" },
+            })),
+          });
+        },
+        now,
+      ),
+    ).toBe(false);
+    expect(requests).toBe(2);
+    expect(bodies).toEqual([expect.stringContaining("health is unknown")]);
+    expect(console.error).toHaveBeenCalledWith(
+      "Could not read crawl workflow runs:",
+      "Second page unavailable",
+    );
+  });
+
   it("finds a recent qualifying run across pages", () => {
     expect(dispatchHealthy([{ workflow_runs: [] }, ...pages()], now)).toBe(true);
   });
@@ -61,6 +243,8 @@ describe("crawl dispatch monitoring", () => {
     ).toBe(false);
     expect(calls.at(-1)).toContain("Hourly crawl dispatches are missing");
     expect(bodies[0]).toContain("health is unknown");
+    expect(console.error).toHaveBeenCalledWith("Could not read crawl workflow runs:", "denied");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("health is unknown"));
   });
   it("closes only its own bot issue after recovery", () => {
     const mutations: string[][] = [];
@@ -83,7 +267,7 @@ describe("crawl dispatch monitoring", () => {
           }
           expect(args).not.toContain("status=success");
           return args.some((arg) => arg.endsWith("/runs"))
-            ? JSON.stringify(pages())
+            ? JSON.stringify(pages()[0])
             : JSON.stringify([issues]);
         },
         now,
@@ -102,7 +286,7 @@ describe("crawl dispatch monitoring", () => {
             mutations.push(args);
             return "";
           }
-          if (args.some((arg) => arg.endsWith("/runs"))) return JSON.stringify(pages());
+          if (args.some((arg) => arg.endsWith("/runs"))) return JSON.stringify(pages()[0]);
           throw new Error("issue list unavailable");
         },
         now,
@@ -120,7 +304,7 @@ describe("crawl dispatch monitoring", () => {
           body = input ?? "";
           return "";
         }
-        return args.some((arg) => arg.endsWith("/runs")) ? '[{"workflow_runs":[]}]' : "[[]]";
+        return args.some((arg) => arg.endsWith("/runs")) ? '{"workflow_runs":[]}' : "[[]]";
       },
       now,
     );
@@ -140,7 +324,7 @@ describe("crawl dispatch monitoring", () => {
             return "";
           }
           return args.some((arg) => arg.endsWith("/runs"))
-            ? '[{"workflow_runs":[]}]'
+            ? '{"workflow_runs":[]}'
             : JSON.stringify([[issue]]);
         },
         now,
