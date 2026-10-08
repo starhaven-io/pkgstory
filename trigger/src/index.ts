@@ -1,14 +1,12 @@
-// Reliable cron for the crawl: GitHub's own `schedule:` drops most fires under load.
-// Each tick dispatches the crawl workflow authenticated as the starhaven-bot App.
-
 const OWNER = "starhaven-io";
 const REPO = "pkgstory";
 const API = "https://api.github.com";
-const UA = "pkgstory-crawl-trigger"; // GitHub 403s API requests with no User-Agent
+const UA = "pkgstory-trigger"; // GitHub 403s API requests with no User-Agent
 
 export interface Env {
   APP_ID: string;
   APP_PRIVATE_KEY: string; // PKCS#8 PEM
+  WORKFLOW: "crawl.yml" | "check-crawl-dispatch.yml";
 }
 
 function b64url(bytes: Uint8Array): string {
@@ -74,7 +72,10 @@ async function ghJson<T>(
   return res.json() as Promise<T>;
 }
 
-async function dispatchCrawl(env: Env): Promise<void> {
+async function dispatchWorkflow(env: Env): Promise<void> {
+  if (env.WORKFLOW !== "crawl.yml" && env.WORKFLOW !== "check-crawl-dispatch.yml") {
+    throw new Error("Unsupported workflow target");
+  }
   const jwt = await appJwt(env.APP_ID, env.APP_PRIVATE_KEY);
   const inst = await ghJson<{ id: number }>(
     `/repos/${OWNER}/${REPO}/installation`,
@@ -93,7 +94,7 @@ async function dispatchCrawl(env: Env): Promise<void> {
   );
 
   const res = await ghFetch(
-    `/repos/${OWNER}/${REPO}/actions/workflows/crawl.yml/dispatches`,
+    `/repos/${OWNER}/${REPO}/actions/workflows/${env.WORKFLOW}/dispatches`,
     token,
     {
       method: "POST",
@@ -106,9 +107,9 @@ async function dispatchCrawl(env: Env): Promise<void> {
 
 async function tick(env: Env): Promise<void> {
   try {
-    await dispatchCrawl(env);
+    await dispatchWorkflow(env);
   } catch (e) {
-    console.error(`crawl dispatch failed: ${e}`);
+    console.error(`${env.WORKFLOW} dispatch failed: ${e}`);
     throw e;
   }
 }

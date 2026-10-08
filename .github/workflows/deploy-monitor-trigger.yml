@@ -1,4 +1,4 @@
-name: Deploy Trigger
+name: Deploy Monitor Trigger
 
 on:
   push:
@@ -6,11 +6,11 @@ on:
       - main
     paths:
       - "trigger/src/**"
-      - "trigger/wrangler.jsonc"
+      - "trigger/wrangler.monitor.jsonc"
       - "trigger/package.json"
       - "trigger/package-lock.json"
       - "trigger/tsconfig.json"
-      - ".github/workflows/deploy-trigger.yml"
+      - ".github/workflows/deploy-monitor-trigger.yml"
       - "scripts/check-npm-install-policy.mjs"
   workflow_dispatch:
 
@@ -21,7 +21,7 @@ defaults:
 permissions: {}
 
 concurrency:
-  group: ${{ github.ref == 'refs/heads/main' && 'deploy-trigger' || format('rejected-deploy-trigger-{0}', github.run_id) }}
+  group: ${{ github.ref == 'refs/heads/main' && 'deploy-monitor-trigger' || format('rejected-deploy-monitor-trigger-{0}', github.run_id) }}
   cancel-in-progress: true
 
 jobs:
@@ -49,12 +49,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: trigger
-        # Fail if an unreviewed dependency install script is introduced.
         run: npm ci --strict-allow-scripts
 
       - name: Deploy to Cloudflare Workers
         working-directory: trigger
-        run: npm run deploy
+        run: npm run deploy:monitor
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

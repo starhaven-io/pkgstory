@@ -1,0 +1,17 @@
+{
+  "name": "pkgstory-monitor-trigger",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "APP_ID": "3331849",
+    "WORKFLOW": "check-crawl-dispatch.yml"
+  },
+  "triggers": {
+    "crons": ["11 * * * *"]
+  }
+}

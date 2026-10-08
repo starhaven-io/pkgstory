@@ -9,7 +9,8 @@
   },
   "vars": {
     // starhaven-bot's App ID — not a secret (the private key is).
-    "APP_ID": "3331849"
+    "APP_ID": "3331849",
+    "WORKFLOW": "crawl.yml"
   },
   // Reliable where GitHub's `schedule:` isn't; crawl.yml keeps a coarse fallback.
   "triggers": {
