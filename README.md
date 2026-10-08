@@ -77,8 +77,9 @@ The crawler uses the schedule in
 [`trigger/wrangler.jsonc`](trigger/wrangler.jsonc). It derives the delta since the
 last commit it saw, writes only the new version events and bottle intervals to D1, and
 republishes the KV blobs. A small
-Cloudflare Worker (`trigger/`) dispatches that schedule, with a coarse
-GitHub Actions schedule as a fallback. Deploys ship code, not data, so the site
+Cloudflare Worker (`trigger/`) dispatches that schedule. A separately deployed
+Worker schedules hourly dispatch-health checks; both workflows keep GitHub
+Actions schedules as fallbacks. Deploys ship code, not data, so the site
 stays current without a rebuild. Operational procedures
 (staleness triage, reseeding, and cache refreshes) live in
 [docs/OPERATIONS.md](docs/OPERATIONS.md).

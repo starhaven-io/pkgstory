@@ -23,6 +23,7 @@ describe("CI workflow contracts", () => {
     try {
       for (const file of [
         "trigger/src/index.ts",
+        "trigger/wrangler.monitor.jsonc",
         "site/src/pages/health.json.ts",
         ".github/workflows/crawl.yml",
         "scripts/check-npm-install-policy.mjs",
@@ -55,6 +56,7 @@ describe("CI workflow contracts", () => {
         );
         expect(checks, file).toContain("lint");
         expect(checks, file).toContain("test");
+        if (file.startsWith("trigger/")) expect(checks, file).toContain("trigger");
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -124,7 +126,12 @@ describe("CI workflow contracts", () => {
   });
 
   it("requires main for every privileged manual job", () => {
-    for (const file of ["crawl.yml", "deploy-site.yml", "deploy-trigger.yml"]) {
+    for (const file of [
+      "crawl.yml",
+      "deploy-site.yml",
+      "deploy-trigger.yml",
+      "deploy-monitor-trigger.yml",
+    ]) {
       const workflow = readFileSync(
         new URL(`../.github/workflows/${file}`, import.meta.url),
         "utf8",
@@ -142,6 +149,7 @@ describe("CI workflow contracts", () => {
       ["crawl.yml", "crawl", "rejected-crawl"],
       ["deploy-site.yml", "deploy-site", "rejected-deploy"],
       ["deploy-trigger.yml", "deploy-trigger", "rejected-deploy-trigger"],
+      ["deploy-monitor-trigger.yml", "deploy-monitor-trigger", "rejected-deploy-monitor-trigger"],
     ]) {
       const workflow = readFileSync(
         new URL(`../.github/workflows/${file}`, import.meta.url),
@@ -157,6 +165,23 @@ describe("CI workflow contracts", () => {
         expect(push).toContain(`      - ".github/workflows/${file}"`);
         expect(push).toContain('      - "scripts/check-npm-install-policy.mjs"');
       }
+    }
+  });
+
+  it("deploys each trigger configuration through its own workflow", () => {
+    for (const [file, config, command] of [
+      ["deploy-trigger.yml", "wrangler.jsonc", "npm run deploy"],
+      ["deploy-monitor-trigger.yml", "wrangler.monitor.jsonc", "npm run deploy:monitor"],
+    ]) {
+      const workflow = readFileSync(
+        new URL(`../.github/workflows/${file}`, import.meta.url),
+        "utf8",
+      );
+      const paths = workflow.split("  workflow_dispatch:")[0];
+      expect(paths).toContain(`      - "trigger/${config}"`);
+      expect(paths).toContain('      - "trigger/src/**"');
+      expect(workflow).toContain(`        run: ${command}\n`);
+      expect(workflow).toContain("    environment: cloudflare\n");
     }
   });
 });

@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import trigger, { type Env } from "../trigger/src/index.ts";
 
@@ -12,6 +13,21 @@ interface ScheduledHandler {
 
 let privateKeyPem = "";
 let publicKey: CryptoKey;
+
+const triggers = [
+  {
+    config: "wrangler.jsonc",
+    name: "pkgstory-crawl-trigger",
+    workflow: "crawl.yml",
+    cron: "*/30 * * * *",
+  },
+  {
+    config: "wrangler.monitor.jsonc",
+    name: "pkgstory-monitor-trigger",
+    workflow: "check-crawl-dispatch.yml",
+    cron: "11 * * * *",
+  },
+] as const;
 
 beforeAll(async () => {
   const keys = await crypto.subtle.generateKey(
@@ -52,8 +68,17 @@ async function runScheduled(env: Env): Promise<void> {
   await pending;
 }
 
-describe("crawl trigger Worker", () => {
-  it("mints an installation token and dispatches the crawl event", async () => {
+describe.each(triggers)("$name Worker", ({ config, name, workflow, cron }) => {
+  it("has its own schedule and no public endpoint", () => {
+    const text = readFileSync(new URL(`../trigger/${config}`, import.meta.url), "utf8");
+    expect(text).toContain(`"name": "${name}"`);
+    expect(text).toContain(`"WORKFLOW": "${workflow}"`);
+    expect(text).toContain(`"crons": ["${cron}"]`);
+    expect(text).toContain('"workers_dev": false');
+    expect(text).toContain('"preview_urls": false');
+  });
+
+  it("mints an installation token and dispatches its configured workflow", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-14T00:00:00Z"));
     const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -74,12 +99,12 @@ describe("crawl trigger Worker", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem });
+    await runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem, WORKFLOW: workflow });
 
     expect(requests.map((request) => request.url)).toEqual([
       "https://api.github.com/repos/starhaven-io/pkgstory/installation",
       "https://api.github.com/app/installations/42/access_tokens",
-      "https://api.github.com/repos/starhaven-io/pkgstory/actions/workflows/crawl.yml/dispatches",
+      `https://api.github.com/repos/starhaven-io/pkgstory/actions/workflows/${workflow}/dispatches`,
     ]);
     const jwt = String(
       (requests[0]?.init.headers as Record<string, string> | undefined)?.Authorization,
@@ -116,7 +141,7 @@ describe("crawl trigger Worker", () => {
     expect(requests[2]?.init).toMatchObject({ method: "POST" });
     expect(requests[2]?.init.headers).toMatchObject({
       Authorization: "Bearer installation-token",
-      "User-Agent": "pkgstory-crawl-trigger",
+      "User-Agent": "pkgstory-trigger",
     });
     expect(JSON.parse(String(requests[2]?.init.body))).toEqual({ ref: "main" });
   });
@@ -128,11 +153,11 @@ describe("crawl trigger Worker", () => {
     );
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem })).rejects.toThrow(
-      "installation lookup failed: 503 Unavailable — unavailable",
-    );
+    await expect(
+      runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem, WORKFLOW: workflow }),
+    ).rejects.toThrow("installation lookup failed: 503 Unavailable — unavailable");
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("crawl dispatch failed: Error: installation lookup failed"),
+      expect.stringContaining(`${workflow} dispatch failed: Error: installation lookup failed`),
     );
   });
 
@@ -152,11 +177,28 @@ describe("crawl trigger Worker", () => {
     );
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem })).rejects.toThrow(
-      "workflow_dispatch failed: 422 Unprocessable Content — invalid event",
-    );
+    await expect(
+      runScheduled({ APP_ID: "12345", APP_PRIVATE_KEY: privateKeyPem, WORKFLOW: workflow }),
+    ).rejects.toThrow("workflow_dispatch failed: 422 Unprocessable Content — invalid event");
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining("crawl dispatch failed: Error: workflow_dispatch failed"),
+      expect.stringContaining(`${workflow} dispatch failed: Error: workflow_dispatch failed`),
     );
   });
 });
+
+it.each([undefined, "", "deploy-site.yml"])(
+  "rejects unsupported workflow target %s",
+  async (workflow) => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      runScheduled({
+        APP_ID: "12345",
+        APP_PRIVATE_KEY: privateKeyPem,
+        WORKFLOW: workflow as Env["WORKFLOW"],
+      }),
+    ).rejects.toThrow("Unsupported workflow target");
+    expect(fetchMock).not.toHaveBeenCalled();
+  },
+);

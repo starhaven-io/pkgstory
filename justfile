@@ -117,7 +117,7 @@ site-preview:
 lychee: site-build
     lychee --config lychee.toml README.md SECURITY.md docs/OPERATIONS.md trigger/README.md
 
-# Trigger (crawl cron Worker)
+# Triggers (crawl and monitor cron Workers)
 
 # Install trigger Worker dependencies
 trigger-install:
@@ -131,13 +131,21 @@ trigger-dev:
 trigger-typecheck:
     cd trigger && npm run typecheck
 
-# Verify the trigger Worker deployment without publishing
+# Verify both trigger Worker deployments without publishing
 trigger-deploy-dry:
     cd trigger && WRANGLER_SEND_METRICS=false npm run deploy:dry
 
 # Deploy the trigger Worker to Cloudflare
 trigger-deploy:
     cd trigger && WRANGLER_SEND_METRICS=false npm run deploy
+
+# Run the monitor trigger Worker locally
+trigger-monitor-dev:
+    cd trigger && npm run dev:monitor
+
+# Deploy the monitor trigger Worker to Cloudflare
+trigger-monitor-deploy:
+    cd trigger && WRANGLER_SEND_METRICS=false npm run deploy:monitor
 
 # Check
 

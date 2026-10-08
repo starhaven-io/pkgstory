@@ -4,7 +4,9 @@ Runbook for the deployed pkgstory pipeline (crawler → D1/KV → site).
 
 ## Code deployment
 
-Main-branch changes to `site/` or `trigger/` redeploy the corresponding Worker.
+Main-branch changes to `site/` redeploy the site Worker. The two trigger Workers
+have separate deployment workflows: each configuration redeploys its own Worker,
+while shared trigger source and dependency changes redeploy both.
 Each deployment also runs when its workflow or the shared npm-policy checker
 changes. Deployment and crawl dispatches require `main`; rejected refs use
 separate concurrency groups so they cannot cancel or replace pending production
@@ -35,8 +37,10 @@ A failed `crawl.yml` run files or appends to a GitHub Actions-authored
 `Crawl workflow failing` issue, with a link to the failed run. The next
 successful run closes any such open issues automatically.
 
-The independent `check-crawl-dispatch.yml` schedule looks for a bot-created
-`starhaven-bot` dispatch created on `main` in the past two hours. It maintains a
+The separate `pkgstory-monitor-trigger` Cloudflare Worker dispatches
+`check-crawl-dispatch.yml` hourly at :11 UTC. The workflow retains its hourly
+GitHub schedule as a fallback. It looks for a bot-created `starhaven-bot` dispatch
+created on `main` in the past two hours. It maintains a
 separate `Hourly crawl dispatches are missing` issue; a fallback crawl or a rerun
 of an old dispatch cannot close it. An unreadable run list reports unknown
 health and keeps the alert open. Recovery requires a recent qualifying dispatch,
@@ -49,6 +53,19 @@ actor, branch, event, workflow, and age locally: filtered API queries have
 transiently omitted qualifying runs. Job logs report whether dispatches are
 healthy, missing, or unreadable, including errors reading or validating the list.
 
+The monitor Worker has its own cron, secret binding, and deployment workflow;
+it runs even when the crawl Worker is disabled or its configuration is broken.
+Both still depend on Cloudflare and the starhaven-bot App's access to GitHub.
+The GitHub fallback uses `GITHUB_TOKEN` and can still alert on missing crawl
+dispatches during Cloudflare cron or App access failures, but its scheduling
+delays can postpone alerts by hours. An external `/health.json` monitor is needed
+for timely detection of stale crawls and coverage during GitHub outages; verify
+it using the [external control checklist](#external-control-checklist). There is
+no separate alert when the monitor Worker stops dispatching; checks quietly fall
+back to GitHub's schedule. See
+[trigger setup and verification](../trigger/README.md) for provisioning the new
+Worker's secret and confirming successive scheduled dispatches.
+
 Triage in this order:
 
 1. Check `/health.json` to identify which source is stale and since when.
@@ -58,6 +75,9 @@ Triage in this order:
 3. Inspect trigger Worker logs with `cd trigger && npx wrangler tail`.
    Dispatch failures are logged and rethrown, so they appear as errored
    invocations in Cloudflare observability.
+4. If dispatch checks themselves are missing, inspect the monitor Worker with
+   `cd trigger && npx wrangler tail --config wrangler.monitor.jsonc`. Confirm its
+   cron is enabled and its separate `APP_PRIVATE_KEY` secret is configured.
 
 The next successful crawl derives everything since the stored cursor. The
 remote SQL file is an atomic D1 import, and the cursor is also written last as

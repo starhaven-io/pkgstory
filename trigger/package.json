@@ -1,7 +1,7 @@
 {
   "name": "pkgstory-crawl-trigger",
   "version": "0.1.0",
-  "description": "Cloudflare Worker cron that reliably dispatches the pkgstory crawl workflow.",
+  "description": "Cloudflare Workers that schedule pkgstory crawls and dispatch monitoring.",
   "license": "AGPL-3.0-only",
   "private": true,
   "type": "module",
@@ -10,8 +10,10 @@
   },
   "scripts": {
     "deploy": "WRANGLER_WRITE_LOGS=false wrangler deploy",
-    "deploy:dry": "npm run deploy -- --dry-run",
+    "deploy:monitor": "WRANGLER_WRITE_LOGS=false wrangler deploy --config wrangler.monitor.jsonc",
+    "deploy:dry": "npm run deploy -- --dry-run && npm run deploy:monitor -- --dry-run",
     "dev": "WRANGLER_WRITE_LOGS=false wrangler dev --test-scheduled",
+    "dev:monitor": "WRANGLER_WRITE_LOGS=false wrangler dev --config wrangler.monitor.jsonc --test-scheduled",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

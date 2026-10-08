@@ -2,6 +2,7 @@ name: Check crawl dispatch
 
 on:
   schedule:
+    # Fallback for the separate Cloudflare monitor trigger.
     - cron: "41 * * * *"
   workflow_dispatch:
 
