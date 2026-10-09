@@ -25,5 +25,8 @@
     "esbuild": false,
     "fsevents": false,
     "workerd": false
+  },
+  "overrides": {
+    "sharp": "^0.35.5"
   }
 }
