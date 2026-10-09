@@ -66,7 +66,9 @@ copy the crawl Worker's secret.
    without prompting when stdin is redirected as above. Leave deployment to the
    Deploy Monitor Trigger workflow after the reviewed changes merge to `main`;
    that installs the code and cron. An existing crawl Worker needs no secret
-   change when adding the monitor.
+   change when adding the monitor. To provision a new crawl Worker, set its
+   PKCS#8 key the same way with `--config wrangler.jsonc` and let Deploy Trigger
+   install it.
 
 Configure the monitor's secret before merging changes that activate its
 automatic deployment. Without it, scheduled invocations fail. Secrets persist
