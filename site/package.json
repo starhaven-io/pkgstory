@@ -18,14 +18,14 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@astrojs/cloudflare": "^14.3.3",
+    "@astrojs/cloudflare": "^14.3.4",
     "@astrojs/rss": "^4.0.19",
-    "astro": "^7.3.5"
+    "astro": "^7.3.6"
   },
   "devDependencies": {
     "prettier": "^3.9.9",
     "prettier-plugin-astro": "^1.1.0",
-    "wrangler": "4.147.0"
+    "wrangler": "4.148.0"
   },
   "allowScripts": {
     "esbuild": false,
