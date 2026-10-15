@@ -48,8 +48,8 @@ describe("exportSlice round-trip", () => {
       VALUES ('github:alice', 'Alice', 'alice', 0, 1700000100);
       INSERT INTO package_contributors (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 2, 2, 1700000000, 1700000100);
-      INSERT INTO crawl_state (source, last_sha, last_crawled_at)
-      VALUES ('homebrew-formula', '${"b".repeat(40)}', 1700000300);
+      INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
+      VALUES ('homebrew-formula', '${"b".repeat(40)}', 1700000300, 2);
       INSERT INTO contributor_seeds (source, seeded_at_sha) VALUES ('homebrew-formula', '${"b".repeat(40)}');
     `);
 
@@ -150,8 +150,8 @@ describe("exportSlice contributors", () => {
       INSERT INTO package_contributors
         (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 1, 0, 1700000000, 1700000100);
-      INSERT INTO crawl_state (source, last_sha, last_crawled_at)
-      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200);
+      INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
+      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, 2);
     `);
 
     let sql = "";
@@ -184,8 +184,8 @@ describe("exportSlice contributors", () => {
       INSERT INTO package_contributors
         (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 3, 2, 1700000000, 1700000100);
-      INSERT INTO crawl_state (source, last_sha, last_crawled_at)
-      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200);
+      INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
+      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, 2);
       INSERT INTO contributor_seeds (source, seeded_at_sha)
       VALUES ('homebrew-formula', '${"a".repeat(40)}');
     `);

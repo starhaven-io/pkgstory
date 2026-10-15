@@ -26,7 +26,7 @@ function commitLine(
   subject: string,
   coauthors = "",
 ): string {
-  return `${C}${sha}${F}${at}${F}${email}${F}${author}${F}${coauthors}${F}${subject}`;
+  return `${C}${sha}${F}${F}${at}${F}${email}${F}${author}${F}${coauthors}${F}${subject}`;
 }
 
 const SHA_A = "a".repeat(40);
@@ -106,6 +106,7 @@ describe("parseLog", () => {
     expect(commits).toHaveLength(2);
     expect(commits[0]).toEqual({
       sha: SHA_A,
+      parents: [],
       committedAt: 1700000000,
       author: {
         name: "BrewTestBot",
@@ -118,7 +119,7 @@ describe("parseLog", () => {
         },
       ],
       subject: "git 2.54.0",
-      files: [{ status: "M", blobSha: BLOB_2, path: "Formula/g/git.rb" }],
+      files: [{ status: "M", parentBlobSha: BLOB_1, blobSha: BLOB_2, path: "Formula/g/git.rb" }],
     });
     expect(commits[1]?.files[0]?.blobSha).toBe(BLOB_1);
   });
@@ -132,8 +133,8 @@ describe("parseLog", () => {
 
     const [commit] = parseLog(out);
     expect(commit?.files).toEqual([
-      { status: "A", blobSha: BLOB_1, path: "Formula/g/git.rb" },
-      { status: "D", blobSha: ZEROS, path: "Formula/git.rb" },
+      { status: "A", parentBlobSha: ZEROS, blobSha: BLOB_1, path: "Formula/g/git.rb" },
+      { status: "D", parentBlobSha: BLOB_1, blobSha: ZEROS, path: "Formula/git.rb" },
     ]);
   });
 
@@ -145,6 +146,7 @@ describe("parseLog", () => {
 
     expect(parseLog(out)[0]?.files[0]).toEqual({
       status: "D",
+      parentBlobSha: BLOB_1,
       blobSha: ZEROS,
       path: "Formula/t/terraform.rb",
     });
@@ -157,7 +159,7 @@ describe("parseLog", () => {
 
   it("rejects malformed or non-representable commit timestamps", () => {
     const line = (timestamp: string) =>
-      `${C}${SHA_A}${F}${timestamp}${F}a@example.com${F}Alice${F}${F}subject`;
+      `${C}${SHA_A}${F}${F}${timestamp}${F}a@example.com${F}Alice${F}${F}subject`;
     expect(() => parseLog(line("not-a-time"))).toThrow(/invalid commit timestamp/);
     expect(() => parseLog(line("8640000000001"))).toThrow(/outside JavaScript's Date range/);
     expect(() => parseLog(line("9007199254740992"))).toThrow(/outside JavaScript's Date range/);

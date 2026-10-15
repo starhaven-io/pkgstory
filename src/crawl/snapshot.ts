@@ -10,6 +10,9 @@ interface CommitRow {
   name: string;
   commit_sha: string;
   blob_sha: string;
+  parent_blob_sha: string | null;
+  is_mainline: number;
+  version_subject: string | null;
   committed_at: number;
   history_order: number;
   subject: string;
@@ -38,7 +41,7 @@ export function buildSnapshots(
   ).c;
 
   const select = db.prepare(
-    `SELECT ci.id, ci.package_id, p.name, ci.commit_sha, ci.blob_sha, ci.committed_at,
+    `SELECT ci.id, ci.package_id, p.name, ci.commit_sha, ci.blob_sha, ci.parent_blob_sha, ci.is_mainline, ci.version_subject, ci.committed_at,
             ci.history_order, ci.subject, ci.status
        FROM commit_index ci JOIN packages p ON p.id = ci.package_id
       WHERE p.source = ? AND ci.id > ?
@@ -47,15 +50,16 @@ export function buildSnapshots(
   );
   const insert = db.prepare(
     `INSERT INTO snapshots
-       (package_id, commit_sha, committed_at, version, revision, version_src, bottled, bottle_tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       (package_id, commit_sha, committed_at, version, revision, version_src, bottled, bottle_tags, version_changed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (package_id, commit_sha) DO UPDATE SET
        committed_at = excluded.committed_at,
        version = excluded.version,
        revision = excluded.revision,
        version_src = excluded.version_src,
        bottled = excluded.bottled,
-       bottle_tags = excluded.bottle_tags`,
+       bottle_tags = excluded.bottle_tags,
+       version_changed = excluded.version_changed`,
   );
 
   let lastId = 0;
@@ -75,13 +79,16 @@ export function buildSnapshots(
     const live = rows.filter((r) => r.status !== "D" && !/^0+$/.test(r.blob_sha));
     const blobs = batchCat(
       source.repoDir,
-      live.map((r) => r.blob_sha),
+      live.flatMap((r) => [
+        r.blob_sha,
+        ...(r.parent_blob_sha && !/^0+$/.test(r.parent_blob_sha) ? [r.parent_blob_sha] : []),
+      ]),
     );
 
     db.exec("BEGIN");
     for (const row of rows) {
       if (row.status === "D" || /^0+$/.test(row.blob_sha)) {
-        insert.run(row.package_id, row.commit_sha, row.committed_at, null, 0, "none", 0, "[]");
+        insert.run(row.package_id, row.commit_sha, row.committed_at, null, 0, "none", 0, "[]", 0);
         written += 1;
         continue;
       }
@@ -92,8 +99,14 @@ export function buildSnapshots(
       const { version, revision, versionSrc, bottled, bottleTags } = extractVersion(
         source.kind,
         row.name,
-        row.subject,
+        row.version_subject ?? row.subject,
         blob,
+      );
+      const parent = extractVersion(
+        source.kind,
+        row.name,
+        "",
+        blobs.get(row.parent_blob_sha ?? "") ?? "",
       );
       insert.run(
         row.package_id,
@@ -104,11 +117,12 @@ export function buildSnapshots(
         versionSrc,
         bottled ? 1 : 0,
         JSON.stringify(bottleTags),
+        version !== null && (parent.version !== version || parent.revision !== revision) ? 1 : 0,
       );
       written += 1;
 
       const seen = lifecycle.get(row.package_id);
-      if (!seen || row.history_order > seen.historyOrder) {
+      if (row.is_mainline && (!seen || row.history_order > seen.historyOrder)) {
         lifecycle.set(row.package_id, {
           historyOrder: row.history_order,
           info: parseLifecycle(blob),

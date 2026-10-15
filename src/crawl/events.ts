@@ -10,6 +10,7 @@ interface SnapRow {
   history_order: number;
   commit_sha: string;
   subject: string;
+  version_subject: string;
 }
 
 /**
@@ -50,10 +51,18 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
   );
   const snaps = db.prepare(
     `SELECT s.version, s.revision, s.bottled, s.bottle_tags, s.committed_at,
-            ci.history_order, s.commit_sha, ci.subject
+            ci.history_order, s.commit_sha, ci.subject,
+            CASE WHEN ci.is_merge = 1 THEN
+              COALESCE((SELECT branch.subject FROM commit_index branch JOIN snapshots bs
+                       ON bs.package_id = branch.package_id AND bs.commit_sha = branch.commit_sha
+                      WHERE branch.package_id = ci.package_id AND branch.integrated_sha = ci.commit_sha
+                        AND branch.is_merge = 0 AND bs.version_changed = 1
+                        AND bs.version = s.version AND bs.revision = s.revision
+                      ORDER BY branch.history_order DESC LIMIT 1), ci.subject)
+              ELSE ci.subject END AS version_subject
        FROM snapshots s JOIN commit_index ci
          ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha
-      WHERE s.package_id = ?
+      WHERE s.package_id = ? AND ci.is_mainline = 1
       ORDER BY ci.history_order ASC`,
   );
   let events = 0;
@@ -135,7 +144,7 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
             row.revision,
             row.committed_at,
             row.history_order,
-            row.subject,
+            row.version_subject,
           );
           const r = insert.run(
             pkg.id,
@@ -143,7 +152,7 @@ export function buildEvents(db: DatabaseSync, source: Source): number {
             row.revision,
             row.committed_at,
             row.commit_sha,
-            row.subject,
+            row.version_subject,
           );
           events += Number(r.changes);
         }

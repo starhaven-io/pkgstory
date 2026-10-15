@@ -2,11 +2,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { type ContributorAttribution, commitAttributions } from "../contributors.ts";
 import { type D1Mode, d1Apply, d1Select, sqlLit } from "../db/d1remote.ts";
 import { getLastSha, setCrawlState } from "../db/db.ts";
-import { assertAncestor, batchCat, headSha, logSince, presentPackages } from "../git.ts";
+import { assertAncestor, batchCat, headSha, presentPackages } from "../git.ts";
 import { extractVersion } from "../parse/extract.ts";
 import { type Lifecycle, parseLifecycle } from "../parse/lifecycle.ts";
+import { HISTORY_MODEL } from "../sources/history.ts";
 import type { Source } from "../sources/index.ts";
 import { contributorWriter, rebuildPackageContributors } from "./contributors.ts";
+import { integratedLogSince, integratedSubject, integratedVersionSubject } from "./history.ts";
 
 export interface SinceResult {
   status: "ok" | "no-cursor" | "up-to-date";
@@ -23,6 +25,7 @@ export interface DeltaTouch {
   at: number;
   sha: string;
   subject: string;
+  versionSubject?: string;
 }
 
 export interface DeltaEvent extends Omit<DeltaTouch, "version"> {
@@ -40,7 +43,7 @@ function isVersionedTouch(touch: DeltaTouch): touch is DeltaEvent {
 
 export interface PackageDelta {
   name: string;
-  touches: DeltaTouch[]; // topology-ordered package states; deletions carry an empty tag set
+  touches: DeltaTouch[]; // mainline package states; deletions carry an empty tag set
   history: HistoryTouch[]; // one row per touching commit, including non-version changes
   // Both deprecate!/disable! stanzas from the latest live blob in the window. null
   // means the window had no live blob (only a deletion) — leave the columns as they are.
@@ -58,6 +61,17 @@ export interface PackageDelta {
 export interface HistoryTouch {
   at: number;
   blobSha: string;
+  parentBlobSha: string;
+  mainline: boolean;
+  merge: boolean;
+  versionSubject: string;
+  integratedSha: string;
+  version: string | null;
+  revision: number;
+  versionChanged: boolean;
+  versionSrc: string;
+  bottled: boolean;
+  bottleTags: string[];
   sha: string;
   subject: string;
   status: string;
@@ -83,32 +97,52 @@ export function computeDelta(source: Source, lastSha: string): Delta {
   if (head === lastSha) return { head, commits: 0, packages: [] };
 
   assertAncestor(source.repoDir, lastSha, head);
-  const commits = logSince(source.repoDir, lastSha, head); // oldest-first
+  const groups = integratedLogSince(source, lastSha, head);
   const raw = new Map<string, RawTouch[]>();
   const shas: string[] = [];
+  let commits = 0;
   let anyDeleted = false;
-  for (const commit of commits) {
-    const contributors = commitAttributions(commit);
-    for (const file of commit.files) {
-      const name = source.packageOf(file.path);
-      if (!name) continue;
-      const deleted = file.status === "D" || /^0+$/.test(file.blobSha);
-      let list = raw.get(name);
-      if (!list) {
-        list = [];
-        raw.set(name, list);
+  for (const group of groups) {
+    for (const commit of [...group.merged, group.commit]) {
+      commits += 1;
+      const mainline = commit === group.commit;
+      if (!mainline && commit.parents.length > 1) continue;
+      const contributors = commitAttributions(commit);
+      for (const file of commit.files) {
+        const name = source.packageOf(file.path);
+        if (!name) continue;
+        const deleted = file.status === "D" || /^0+$/.test(file.blobSha);
+        let list = raw.get(name);
+        if (!list) {
+          list = [];
+          raw.set(name, list);
+        }
+        list.push({
+          at: commit.committedAt,
+          blobSha: file.blobSha,
+          parentBlobSha: file.parentBlobSha,
+          mainline,
+          merge: commit.parents.length > 1,
+          versionSubject: mainline ? integratedVersionSubject(group, file, source) : commit.subject,
+          integratedSha: group.commit.sha,
+          version: null,
+          revision: 0,
+          versionChanged: false,
+          versionSrc: "none",
+          bottled: false,
+          bottleTags: [],
+          sha: commit.sha,
+          subject: mainline ? integratedSubject(group, file) : commit.subject,
+          status: file.status,
+          deleted,
+          contributors,
+        });
+        if (mainline && deleted) anyDeleted = true;
+        if (!deleted) {
+          shas.push(file.blobSha);
+          if (!/^0+$/.test(file.parentBlobSha)) shas.push(file.parentBlobSha);
+        }
       }
-      list.push({
-        at: commit.committedAt,
-        blobSha: file.blobSha,
-        sha: commit.sha,
-        subject: commit.subject,
-        status: file.status,
-        deleted,
-        contributors,
-      });
-      if (deleted) anyDeleted = true;
-      else shas.push(file.blobSha);
     }
   }
 
@@ -134,6 +168,7 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       if (!prior || (prior.deleted && !t.deleted)) historyBySha.set(t.sha, t);
       // touches are oldest-first, so these settle on the last of each kind.
       if (t.deleted) {
+        if (!t.mainline) continue;
         lastDeletion = t;
         if (!parsed.has(t.sha))
           parsed.set(t.sha, {
@@ -147,15 +182,16 @@ export function computeDelta(source: Source, lastSha: string): Delta {
           });
         continue;
       }
-      latestLive = t;
+      if (t.mainline) latestLive = t;
       const blob = blobs.get(t.blobSha);
       if (blob === undefined) throw new Error(`blob ${t.blobSha} was not returned by git cat-file`);
-      const { version, revision, bottled, bottleTags } = extractVersion(
-        source.kind,
-        name,
-        t.subject,
-        blob,
-      );
+      const extracted = extractVersion(source.kind, name, t.versionSubject, blob);
+      const { version, revision, bottled, bottleTags } = extracted;
+      Object.assign(t, extracted);
+      const parent = extractVersion(source.kind, name, "", blobs.get(t.parentBlobSha) ?? "");
+      t.versionChanged =
+        version !== null && (parent.version !== version || parent.revision !== revision);
+      if (!t.mainline) continue;
       parsed.set(t.sha, {
         version,
         revision,
@@ -167,6 +203,20 @@ export function computeDelta(source: Source, lastSha: string): Delta {
       });
     }
 
+    const history = [...historyBySha.values()];
+    for (const touch of parsed.values()) {
+      const introduction = history.findLast(
+        (candidate) =>
+          !candidate.merge &&
+          candidate.integratedSha === touch.sha &&
+          candidate.versionChanged &&
+          candidate.version === touch.version &&
+          candidate.revision === touch.revision,
+      );
+      if (introduction && introduction.subject !== touch.subject) {
+        touch.versionSubject = introduction.subject;
+      }
+    }
     const isPresent = present ? present.has(name) : true;
     const replacement = replacements?.get(name);
     const removed =
@@ -183,12 +233,12 @@ export function computeDelta(source: Source, lastSha: string): Delta {
     packages.push({
       name,
       touches: [...parsed.values()],
-      history: [...historyBySha.values()],
+      history,
       lifecycle,
       removed,
     });
   }
-  return { head, commits: commits.length, packages };
+  return { head, commits, packages };
 }
 
 /** Emit version changes plus formula-wide and per-tag bottle transitions. */
@@ -216,7 +266,7 @@ export function foldPackage(
   const bottleTransitions: BottleTransition[] = [];
   for (const t of touches) {
     if (isVersionedTouch(t) && (t.version !== lastVersion || t.revision !== lastRevision)) {
-      events.push(t);
+      events.push(t.versionSubject === undefined ? t : { ...t, subject: t.versionSubject });
       lastVersion = t.version;
       lastRevision = t.revision;
     }
@@ -273,9 +323,20 @@ export function aggregateContributions(
   history: HistoryTouch[],
   versionEvents: DeltaEvent[],
 ): ContributionAggregate[] {
-  const versionShas = new Set(versionEvents.map((event) => event.sha));
+  const events = new Map(versionEvents.map((event) => [event.sha, event]));
+  const candidates = history.filter((touch) => {
+    const event = events.get(touch.integratedSha);
+    return (
+      event &&
+      touch.versionChanged &&
+      touch.version === event.version &&
+      touch.revision === event.revision
+    );
+  });
+  const versionShas = new Set(candidates.filter((touch) => !touch.merge).map((touch) => touch.sha));
   const aggregates = new Map<string, ContributionAggregate>();
   for (const touch of history) {
+    if (touch.merge) continue;
     for (const contributor of touch.contributors) {
       const existing = aggregates.get(contributor.key);
       if (existing) {
@@ -403,8 +464,12 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   );
   const insertCommit = db.prepare(
     `INSERT OR IGNORE INTO commit_index
-       (package_id, commit_sha, blob_sha, committed_at, history_order, author, subject, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (package_id, commit_sha, blob_sha, parent_blob_sha, is_mainline, is_merge, integrated_sha, version_subject, committed_at, history_order, author, subject, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const insertSnapshot = db.prepare(
+    `INSERT OR IGNORE INTO snapshots (package_id, commit_sha, committed_at, version, revision, version_src, bottled, bottle_tags, version_changed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const latestHistoryOrder = db.prepare(
     "SELECT COALESCE(MAX(history_order), -1) AS value FROM commit_index WHERE package_id = ?",
@@ -415,6 +480,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
   const changedPackageIds: number[] = [];
   db.exec("BEGIN");
   for (const { name, touches, history, lifecycle, removed } of delta.packages) {
+    if (!touches.length && !getPkg.get(source.id, name)) continue;
     const newPackage = Number(upsertPkg.run(source.id, name).changes) > 0;
     const pkg = getPkg.get(source.id, name) as unknown as PkgRow;
     changedPackageIds.push(pkg.id);
@@ -428,13 +494,30 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
         pkg.id,
         touch.sha,
         touch.blobSha,
+        touch.parentBlobSha,
+        touch.mainline ? 1 : 0,
+        touch.merge ? 1 : 0,
+        touch.integratedSha,
+        touch.versionSubject,
         touch.at,
         historyOrder,
         author?.displayName ?? null,
         touch.subject,
         touch.status,
       );
-      contributors.linkAttributions(pkg.id, touch.sha, touch.at, touch.contributors);
+      if (!touch.merge)
+        contributors.linkAttributions(pkg.id, touch.sha, touch.at, touch.contributors);
+      insertSnapshot.run(
+        pkg.id,
+        touch.sha,
+        touch.at,
+        touch.version,
+        touch.revision,
+        touch.versionSrc,
+        touch.bottled ? 1 : 0,
+        JSON.stringify(touch.bottleTags),
+        touch.versionChanged ? 1 : 0,
+      );
     }
     const folded = foldPackage(
       pkg.latest_version,
@@ -511,7 +594,7 @@ export function crawlSince(db: DatabaseSync, source: Source, now: number): Since
       );
     if (removed)
       setRemoved.run(removed.at, removed.commit, removed.renamedTo, removed.migratedTo, pkg.id);
-    else clearRemoved.run(pkg.id);
+    else if (touches.length) clearRemoved.run(pkg.id);
   }
   rebuildPackageContributors(db, changedPackageIds);
   db.prepare("UPDATE contributor_seeds SET seeded_at_sha = ? WHERE source = ?").run(
@@ -554,10 +637,17 @@ interface Baseline {
 export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceResult {
   const cur = d1Select(
     mode,
-    `SELECT last_sha FROM crawl_state WHERE source = ${sqlLit(source.id)}`,
+    // SELECT * also reads legacy cursors that predate history_model, so they
+    // receive the actionable reseed error below instead of a missing-column error.
+    `SELECT * FROM crawl_state WHERE source = ${sqlLit(source.id)}`,
   );
-  const lastSha = (cur[0]?.last_sha as string | undefined) ?? null;
-  if (!lastSha) return { status: "no-cursor", events: 0, commits: 0 };
+  if (!cur[0]) return { status: "no-cursor", events: 0, commits: 0 };
+  const lastSha = (cur[0].mainline_sha as string | undefined) ?? null;
+  if (Number(cur[0].history_model) !== HISTORY_MODEL || cur[0].last_sha != null || !lastSha) {
+    throw new Error(
+      "crawl history uses an incompatible history model; rebuild and reseed the source",
+    );
+  }
   const contributorSeeded =
     d1Select(mode, `SELECT 1 FROM contributor_seeds WHERE source = ${sqlLit(source.id)} LIMIT 1`)
       .length > 0;
@@ -565,7 +655,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   const delta = computeDelta(source, lastSha);
   // Every write is conditional on the cursor read above: another writer (a reseed or an
   // overlapping crawl) may have moved it, and this delta only extends that cursor.
-  const cursorIs = `source = ${sqlLit(source.id)} AND last_sha = ${sqlLit(lastSha)}`;
+  const cursorIs = `source = ${sqlLit(source.id)} AND last_sha IS NULL AND history_model = ${HISTORY_MODEL} AND mainline_sha = ${sqlLit(lastSha)}`;
   if (delta.head === lastSha) {
     // One statement through the query API; no blocking D1 import needed.
     const touched = d1Select(
@@ -620,11 +710,12 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
   // NOT NULL only when the read cursor is gone, failing the atomic import before any
   // delta row lands.
   const stmts: string[] = [
-    `INSERT INTO crawl_state (source, last_sha, last_crawled_at) SELECT ${sqlLit(source.id)}, ${sqlLit(lastSha)}, NULL WHERE NOT EXISTS (SELECT 1 FROM crawl_state WHERE ${cursorIs});`,
+    `INSERT INTO crawl_state (source, mainline_sha, last_crawled_at) SELECT ${sqlLit(source.id)}, ${sqlLit(lastSha)}, NULL WHERE NOT EXISTS (SELECT 1 FROM crawl_state WHERE ${cursorIs});`,
   ];
   let events = 0;
   for (const { name, touches, history, lifecycle, removed } of delta.packages) {
     const base = baseline.get(name);
+    if (!base && !touches.length) continue;
     const folded = foldPackage(
       base?.version ?? null,
       base?.revision ?? 0,
@@ -652,7 +743,8 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
         removed.commit !== (base?.removedCommit ?? null) ||
         removed.renamedTo !== (base?.renamedTo ?? null) ||
         removed.migratedTo !== (base?.migratedTo ?? null)
-      : baseRemoved != null || base?.renamedTo != null || base?.migratedTo != null;
+      : touches.length > 0 &&
+        (baseRemoved != null || base?.renamedTo != null || base?.migratedTo != null);
 
     if (
       contributions.length === 0 &&
@@ -734,7 +826,7 @@ export function crawlSinceD1(source: Source, mode: D1Mode, now: number): SinceRe
     );
   }
   stmts.push(
-    `UPDATE crawl_state SET last_sha = ${sqlLit(delta.head)}, last_crawled_at = ${sqlLit(now)} WHERE ${cursorIs};`,
+    `UPDATE crawl_state SET mainline_sha = ${sqlLit(delta.head)}, last_crawled_at = ${sqlLit(now)} WHERE ${cursorIs};`,
   );
   // Wrangler sends --file imports through D1's atomic import API. Keep the cursor last
   // as an additional, observable invariant and so local/mock executors remain safe.

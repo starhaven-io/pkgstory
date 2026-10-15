@@ -54,7 +54,7 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 ## Repository structure
 
 - `src/cli.ts`: CLI entry point for `pkgstory crawl`.
-- `src/git.ts`: git plumbing, including `logRaw` and `batchCat`.
+- `src/git.ts`: git plumbing, including `streamLog`, `logSince`, and `batchCat`.
 - `src/sources/index.ts`: source definitions and path-to-package mapping.
 - `src/parse/`: Homebrew formula/cask parsing, lifecycle parsing, and commit
   subject fallback logic.
@@ -73,7 +73,9 @@ the repo outside `site/`, Prettier covers `site/`, and typos runs repo-wide.
 The index has three persisted derivation layers:
 
 - L0 `commit_index`: one git history pass per source, bucketed by file basename
-  so historical relocations do not require `--follow`.
+  so historical relocations do not require `--follow`. Mainline rows (first
+  parent, plus the corrections in `src/sources/history.ts`) drive package state;
+  branch rows only carry attribution. Ancestry changes bump `HISTORY_MODEL`.
 - L1 `snapshots`: parse the blob at each touched commit into lean package state:
   `version`, `revision`, `version_src`, formula bottle tags, and latest live
   lifecycle metadata.

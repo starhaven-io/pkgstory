@@ -114,7 +114,7 @@ beforeEach(() => {
   resolveSourcesMock.mockReturnValue([formulaSource]);
   headShaMock.mockReturnValue("a".repeat(40));
   reconcileRemovalsMock.mockReturnValue(0);
-  buildCommitIndexMock.mockReturnValue(0);
+  buildCommitIndexMock.mockResolvedValue(0);
   buildSnapshotsMock.mockReturnValue(0);
   buildEventsMock.mockReturnValue(0);
   buildPackageContributorsMock.mockReturnValue(0);

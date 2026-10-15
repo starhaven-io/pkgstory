@@ -1,4 +1,5 @@
 import { headFile, repoExists, repoRoot } from "../git.ts";
+import { CASK_HISTORY_PARENTS, CORE_HISTORY_PARENTS, type HistoryParents } from "./history.ts";
 
 export type SourceId = "homebrew-formula" | "homebrew-cask";
 export type PackageKind = "formula" | "cask";
@@ -15,6 +16,8 @@ export interface Source {
   dir: string;
   kind: PackageKind;
   repoDir: string;
+  /** Reviewed pull merges whose second parent is the published upstream history. */
+  historyParents?: HistoryParents;
   /**
    * Current sharded path plus bounded historical shard layouts and the
    * pre-sharding flat path, so a curated crawl sees the whole in-repo history.
@@ -32,6 +35,7 @@ interface SourceDef {
   tap: string;
   dir: string;
   kind: PackageKind;
+  historyParents?: HistoryParents;
 }
 
 const DEFS: SourceDef[] = [
@@ -41,8 +45,16 @@ const DEFS: SourceDef[] = [
     tap: "homebrew/core",
     dir: "Formula",
     kind: "formula",
+    historyParents: CORE_HISTORY_PARENTS,
   },
-  { id: "homebrew-cask", label: "Homebrew cask", tap: "homebrew/cask", dir: "Casks", kind: "cask" },
+  {
+    id: "homebrew-cask",
+    label: "Homebrew cask",
+    tap: "homebrew/cask",
+    dir: "Casks",
+    kind: "cask",
+    historyParents: CASK_HISTORY_PARENTS,
+  },
 ];
 
 export const SOURCE_IDS: readonly SourceId[] = DEFS.map((source) => source.id);

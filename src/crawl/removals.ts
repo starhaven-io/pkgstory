@@ -42,10 +42,10 @@ export function reconcileRemovals(db: DatabaseSync, source: Source, ref = "HEAD"
   db.prepare(
     `UPDATE packages
             SET removed_at = (SELECT committed_at FROM commit_index ci
-                               WHERE ci.package_id = packages.id
+                               WHERE ci.package_id = packages.id AND ci.is_mainline = 1
                                ORDER BY history_order DESC LIMIT 1),
                 removed_commit = (SELECT commit_sha FROM commit_index ci
-                                   WHERE ci.package_id = packages.id
+                                   WHERE ci.package_id = packages.id AND ci.is_mainline = 1
                                    ORDER BY history_order DESC LIMIT 1)
           WHERE source = ? AND name NOT IN (SELECT name FROM _present)`,
   ).run(source.id);

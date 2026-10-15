@@ -10,6 +10,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
+import { HISTORY_MODEL } from "../sources/history.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -188,6 +189,14 @@ function migrate(db: DatabaseSync, priorVersionChangeColumns: Set<string>): void
       "ALTER TABLE snapshots ADD COLUMN bottled INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE snapshots ADD COLUMN bottle_tags TEXT NOT NULL DEFAULT '[]'",
       "ALTER TABLE commit_index ADD COLUMN history_order INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE commit_index ADD COLUMN parent_blob_sha TEXT",
+      "ALTER TABLE commit_index ADD COLUMN is_mainline INTEGER NOT NULL DEFAULT 1",
+      "ALTER TABLE commit_index ADD COLUMN integrated_sha TEXT",
+      "ALTER TABLE commit_index ADD COLUMN is_merge INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE commit_index ADD COLUMN version_subject TEXT",
+      "ALTER TABLE snapshots ADD COLUMN version_changed INTEGER NOT NULL DEFAULT 1",
+      "ALTER TABLE crawl_state ADD COLUMN mainline_sha TEXT",
+      "ALTER TABLE crawl_state ADD COLUMN history_model INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE bottle_intervals ADD COLUMN started_version TEXT",
       "ALTER TABLE bottle_intervals ADD COLUMN started_revision INTEGER NOT NULL DEFAULT 0",
       "ALTER TABLE bottle_intervals ADD COLUMN ended_version TEXT",
@@ -208,6 +217,9 @@ function migrate(db: DatabaseSync, priorVersionChangeColumns: Set<string>): void
     }
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_commit_pkg_order ON commit_index (package_id, history_order DESC)",
+    );
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_commit_pkg_integration ON commit_index (package_id, integrated_sha, history_order DESC)",
     );
     if (addedVersionChangeHistoryOrder) {
       db.exec(
@@ -316,10 +328,10 @@ export function finalizeLatest(db: DatabaseSync, source: string): void {
   // version must come from the newest snapshot rather than the newest event.
   db.prepare(
     `UPDATE packages
-        SET latest_version  = (SELECT s.version FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1),
-            latest_revision = COALESCE((SELECT s.revision FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1), 0),
-            latest_bottled  = (SELECT s.bottled FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id ORDER BY ci.history_order DESC LIMIT 1),
-            latest_bottle_tags = (SELECT s.bottle_tags FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id ORDER BY ci.history_order DESC LIMIT 1),
+        SET latest_version  = (SELECT s.version FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND ci.is_mainline = 1 AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1),
+            latest_revision = COALESCE((SELECT s.revision FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND ci.is_mainline = 1 AND s.version IS NOT NULL ORDER BY ci.history_order DESC LIMIT 1), 0),
+            latest_bottled  = (SELECT s.bottled FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND ci.is_mainline = 1 ORDER BY ci.history_order DESC LIMIT 1),
+            latest_bottle_tags = (SELECT s.bottle_tags FROM snapshots s JOIN commit_index ci ON ci.package_id = s.package_id AND ci.commit_sha = s.commit_sha WHERE s.package_id = packages.id AND ci.is_mainline = 1 ORDER BY ci.history_order DESC LIMIT 1),
             event_count     = (SELECT COUNT(*) FROM version_events ve WHERE ve.package_id = packages.id),
             bottle_event_count = (SELECT COUNT(*) FROM bottle_events be WHERE be.package_id = packages.id),
             bottle_interval_count = (SELECT COUNT(*) FROM bottle_intervals bi WHERE bi.package_id = packages.id)
@@ -338,15 +350,22 @@ export function finalizeLatest(db: DatabaseSync, source: string): void {
 }
 
 export function getLastSha(db: DatabaseSync, source: string): string | null {
-  const row = db.prepare("SELECT last_sha FROM crawl_state WHERE source = ?").get(source) as
-    | { last_sha: string | null }
+  const row = db
+    .prepare("SELECT last_sha, mainline_sha, history_model FROM crawl_state WHERE source = ?")
+    .get(source) as
+    | { last_sha: string | null; mainline_sha: string | null; history_model: number }
     | undefined;
-  return row?.last_sha ?? null;
+  if (row && (row.history_model !== HISTORY_MODEL || row.last_sha !== null || !row.mainline_sha)) {
+    throw new Error(
+      "crawl history uses an incompatible history model; rebuild and reseed the source",
+    );
+  }
+  return row?.mainline_sha ?? null;
 }
 
 export function setCrawlState(db: DatabaseSync, source: string, sha: string, at: number): void {
   db.prepare(
-    `INSERT INTO crawl_state (source, last_sha, last_crawled_at) VALUES (?, ?, ?)
-     ON CONFLICT (source) DO UPDATE SET last_sha = excluded.last_sha, last_crawled_at = excluded.last_crawled_at`,
+    `INSERT INTO crawl_state (source, last_sha, mainline_sha, last_crawled_at, history_model) VALUES (?, NULL, ?, ?, ${HISTORY_MODEL})
+     ON CONFLICT (source) DO UPDATE SET last_sha = NULL, mainline_sha = excluded.mainline_sha, last_crawled_at = excluded.last_crawled_at, history_model = excluded.history_model`,
   ).run(source, sha, at);
 }

@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 
 export interface RawFile {
   status: string; // A, M, D, …
+  parentBlobSha: string;
   blobSha: string; // post-image blob sha ("000…" when deleted)
   path: string;
 }
@@ -14,6 +15,7 @@ export interface GitIdentity {
 
 export interface RawCommit {
   sha: string;
+  parents: string[];
   committedAt: number; // unix seconds
   author: GitIdentity;
   coauthors: GitIdentity[];
@@ -28,7 +30,7 @@ export interface RawCommit {
 const COMMIT = "\x1ecommit\x1e";
 const FIELD = "\0";
 const IDENTITY = "\x1d";
-const FORMAT = `${COMMIT}%H%x00%ct%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
+const FORMAT = `${COMMIT}%H%x00%P%x00%ct%x00%aE%x00%aN%x00%(trailers:key=Co-authored-by,valueonly,separator=%x1d,unfold)%x00%s`;
 const MAX_DATE_SECONDS = 8_640_000_000_000;
 
 function parseIdentity(value: string): GitIdentity | null {
@@ -77,31 +79,18 @@ export function repoExists(dir: string): boolean {
   }
 }
 
-/**
- * One `git log --raw` pass. With pathspecs the diff is scoped to those files (fast
- * path, used for a curated package set). Pass [] to walk the whole tree — the
- * production L0, where every package is bucketed by basename downstream, which is
- * what makes the index immune to Homebrew's historical file relocations.
- */
-export function logRaw(repoDir: string, pathspecs: string[], ref = "HEAD"): RawCommit[] {
-  const args = [
-    "-C",
-    repoDir,
-    "log",
-    "--topo-order",
-    "--raw",
-    "--no-renames",
-    "--no-abbrev", // full 40-char blob shas — `--raw` abbreviates by default
-    "--date=unix",
-    `--format=${FORMAT}`,
-    ref,
-  ];
-  if (pathspecs.length) args.push("--", ...pathspecs);
-  const out = execFileSync("git", args, {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024 * 512,
-  });
-  return parseLog(out);
+function parseRawFile(line: string): RawFile | null {
+  if (!line.startsWith(":")) return null;
+  // :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>
+  const tab = line.indexOf("\t");
+  if (tab === -1) return null;
+  const meta = line.slice(1, tab).split(/\s+/);
+  return {
+    status: meta[4] ?? "",
+    parentBlobSha: meta[2] ?? "",
+    blobSha: meta[3] ?? "",
+    path: line.slice(tab + 1),
+  };
 }
 
 /**
@@ -121,25 +110,19 @@ function logFolder(onCommit: (commit: RawCommit) => void): {
         const parts = line.slice(COMMIT.length).split(FIELD);
         cur = {
           sha: parts[0] ?? "",
-          committedAt: parseTimestamp(parts[1], parts[0] ?? ""),
-          author: { name: parts[3] ?? "", email: parts[2] ?? "" },
-          coauthors: (parts[4] ?? "")
+          parents: parts[1] ? parts[1].split(" ") : [],
+          committedAt: parseTimestamp(parts[2], parts[0] ?? ""),
+          author: { name: parts[4] ?? "", email: parts[3] ?? "" },
+          coauthors: (parts[5] ?? "")
             .split(IDENTITY)
             .map(parseIdentity)
             .filter((identity): identity is GitIdentity => identity !== null),
-          subject: parts.slice(5).join(FIELD),
+          subject: parts.slice(6).join(FIELD),
           files: [],
         };
-      } else if (line.startsWith(":") && cur) {
-        // :<srcmode> <dstmode> <srcsha> <dstsha> <status>\t<path>
-        const tab = line.indexOf("\t");
-        if (tab === -1) return;
-        const meta = line.slice(1, tab).split(/\s+/);
-        cur.files.push({
-          status: meta[4] ?? "",
-          blobSha: meta[3] ?? "",
-          path: line.slice(tab + 1),
-        });
+      } else if (cur) {
+        const file = parseRawFile(line);
+        if (file) cur.files.push(file);
       }
     },
     end(): void {
@@ -155,6 +138,38 @@ export function parseLog(out: string): RawCommit[] {
   for (const line of out.split("\n")) folder.line(line);
   folder.end();
   return commits;
+}
+
+/** Recompute a reviewed pull merge relative to its published upstream parent. */
+export function diffFiles(
+  repoDir: string,
+  parent: string,
+  commit: string,
+  pathspecs: string[] = [],
+): RawFile[] {
+  const out = execFileSync(
+    "git",
+    [
+      "-C",
+      repoDir,
+      "diff-tree",
+      "--raw",
+      "-r",
+      "--no-commit-id",
+      "--no-renames",
+      "--no-abbrev",
+      "--no-ext-diff",
+      parent,
+      commit,
+      "--",
+      ...pathspecs,
+    ],
+    { encoding: "utf8", maxBuffer: 128 * 1024 * 1024 },
+  );
+  return out.split("\n").flatMap((line) => {
+    const file = parseRawFile(line);
+    return file ? [file] : [];
+  });
 }
 
 /**
@@ -261,6 +276,7 @@ export function logSince(repoDir: string, sinceSha: string, head = "HEAD"): RawC
       "log",
       "--topo-order",
       "--raw",
+      "--diff-merges=first-parent",
       "--no-renames",
       "--no-abbrev",
       "--reverse",
@@ -282,6 +298,8 @@ export async function streamLog(
   repoDir: string,
   onCommit: (commit: RawCommit) => void,
   ref = "HEAD",
+  oldestFirst = false,
+  pathspecs: string[] = [],
 ): Promise<void> {
   const child = spawn(
     "git",
@@ -291,11 +309,15 @@ export async function streamLog(
       "log",
       "--topo-order",
       "--raw",
+      "--diff-merges=first-parent",
+      ...(oldestFirst ? ["--reverse"] : []),
+      ...(pathspecs.length ? ["--full-history", "--sparse"] : []),
       "--no-renames",
       "--no-abbrev",
       "--date=unix",
       `--format=${FORMAT}`,
       ref,
+      ...(pathspecs.length ? ["--", ...pathspecs] : []),
     ],
     { stdio: ["ignore", "pipe", "pipe"] },
   );

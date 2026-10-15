@@ -114,14 +114,18 @@ const INSERT_AGGREGATES = `INSERT INTO package_contributors
 SELECT cc.package_id,
        cc.contributor_key,
        COUNT(DISTINCT cc.commit_sha),
-       COUNT(DISTINCT CASE WHEN vc.commit_sha IS NOT NULL THEN cc.commit_sha END),
+       COUNT(DISTINCT CASE WHEN vc.commit_sha IS NOT NULL
+         AND s.version_changed = 1 AND s.version = vc.version AND s.revision = vc.revision
+         AND ci.is_merge = 0 THEN cc.commit_sha END),
        MIN(ci.committed_at),
        MAX(ci.committed_at)
   FROM commit_contributors cc
   JOIN commit_index ci
     ON ci.package_id = cc.package_id AND ci.commit_sha = cc.commit_sha
+  LEFT JOIN snapshots s
+    ON s.package_id = ci.package_id AND s.commit_sha = ci.commit_sha
   LEFT JOIN version_changes vc
-    ON vc.package_id = cc.package_id AND vc.commit_sha = cc.commit_sha`;
+    ON vc.package_id = cc.package_id AND vc.commit_sha = COALESCE(ci.integrated_sha, ci.commit_sha)`;
 
 export function rebuildPackageContributors(db: DatabaseSync, packageIds: number[]): number {
   const remove = db.prepare("DELETE FROM package_contributors WHERE package_id = ?");

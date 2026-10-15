@@ -152,7 +152,7 @@ describe("buildCommitIndexAll", () => {
 });
 
 describe("buildCommitIndex curated paths", () => {
-  it("finds a cask that historically occupied a noncanonical one-character shard", () => {
+  it("finds a cask that historically occupied a noncanonical one-character shard", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const source = makeSource(
@@ -169,7 +169,7 @@ describe("buildCommitIndex curated paths", () => {
     tap.write("Casks/c/kuaitie.rb", 'cask "kuaitie" do\n  version "3.5.0"\nend\n');
     tap.commit("add kuaitie in historical shard");
 
-    expect(buildCommitIndex(db, source, ["kuaitie"])).toBe(1);
+    expect(await buildCommitIndex(db, source, ["kuaitie"])).toBe(1);
     expect(
       db
         .prepare("SELECT p.name FROM commit_index ci JOIN packages p ON p.id = ci.package_id")
@@ -397,12 +397,12 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     expect(
       preserved
         .prepare(
-          `SELECT p.latest_version, cs.last_sha
+          `SELECT p.latest_version, cs.mainline_sha
              FROM packages p JOIN crawl_state cs ON cs.source = p.source
             WHERE p.name = 'foo'`,
         )
         .get(),
-    ).toEqual({ latest_version: "1.0", last_sha: seeded.sha });
+    ).toEqual({ latest_version: "1.0", mainline_sha: seeded.sha });
     preserved.close();
     expect(readdirSync(dbDir).filter((name) => name.startsWith(".pkgstory-staging-"))).toEqual([]);
   });
@@ -435,7 +435,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     checked.close();
   });
 
-  it("folds new commits into events, latest, lifecycle, and removal state", () => {
+  it("folds new commits into events, latest, lifecycle, and removal state", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
@@ -445,7 +445,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.commit("foo 1.0");
     tap.write("Formula/f/foo.rb", formula("foo", "1.1"));
     tap.commit("foo 1.1");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -511,7 +511,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("records bottle gains, losses, and regains without counting rebuilds", () => {
+  it("records bottle gains, losses, and regains without counting rebuilds", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
@@ -525,7 +525,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle("bbb")));
     tap.commit("foo: rebuild bottle");
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -571,7 +571,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("tracks independent platform intervals and closes them when bottles disappear", () => {
+  it("tracks independent platform intervals and closes them when bottles disappear", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
@@ -582,7 +582,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.commit("foo 1.0");
     tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle(["arm64_sonoma", "sonoma"])));
     const firstBottled = tap.commit("foo: bottle Sonoma");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -642,7 +642,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("does not create legacy intervals for empty bottle blocks", () => {
+  it("does not create legacy intervals for empty bottle blocks", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const bottle = '  bottle do\n    sha1 "aaa" => :yosemite\n  end\n';
@@ -654,7 +654,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.write("Formula/f/foo.rb", formula("foo", "1.0", `  revision 1\n\n${bottle}`));
     const rebottled = tap.commit("foo: bottle 1.0_1", T0 + 5000);
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -680,7 +680,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 
   it.each([T0 + 2000, T0 - 1000])(
     "keeps replayed bottle intervals correct with transition time %s",
-    (transitionAt) => {
+    async (transitionAt) => {
       const tap = new TapRepo();
       const db = openDb(":memory:");
       const now = T0 + 999000;
@@ -688,7 +688,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 
       tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
       const cursor = tap.commit("foo: bottled");
-      buildCommitIndex(db, tap.source, ["foo"]);
+      await buildCommitIndex(db, tap.source, ["foo"]);
       buildSnapshots(db, tap.source);
       buildEvents(db, tap.source);
       finalizeLatest(db, tap.source.id);
@@ -760,14 +760,14 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     },
   );
 
-  it("keeps full and incremental bottle history identical for versionless formulae", () => {
+  it("keeps full and incremental bottle history identical for versionless formulae", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
 
     tap.write("Formula/f/foo.rb", versionlessFormula());
     tap.commit("foo: new formula");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -831,7 +831,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("records a formula that is bottled in its first historical snapshot", () => {
+  it("records a formula that is bottled in its first historical snapshot", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const bottle =
@@ -839,7 +839,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0", bottle));
     const introduced = tap.commit("foo 1.0");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -856,13 +856,13 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("rolls back an authoritative event rebuild when a snapshot is malformed", () => {
+  it("rolls back an authoritative event rebuild when a snapshot is malformed", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     tap.commit("foo 1.0");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     db.prepare("UPDATE snapshots SET bottle_tags = 'not-json'").run();
@@ -872,7 +872,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("orders same-second commits by parent order, not insertion order", () => {
+  it("orders same-second commits by parent order, not insertion order", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -885,7 +885,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.write("Formula/f/foo.rb", formula("foo", "1.2"));
     tap.commit("foo 1.2", tied);
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -905,7 +905,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     const introduced = tap.commit("foo 1.0");
-    buildCommitIndex(incremental, tap.source, ["foo"]);
+    await buildCommitIndex(incremental, tap.source, ["foo"]);
     buildSnapshots(incremental, tap.source);
     buildEvents(incremental, tap.source);
     finalizeLatest(incremental, tap.source.id);
@@ -977,7 +977,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     full.close();
   });
 
-  it("reports a downgraded version with the revert time", () => {
+  it("reports a downgraded version with the revert time", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -988,7 +988,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     const reverted = tap.commit("foo: revert to 1.0");
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -1008,7 +1008,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("keeps incremental and full current state identical after a downgrade", () => {
+  it("keeps incremental and full current state identical after a downgrade", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
@@ -1017,7 +1017,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.commit("foo 1.0");
     tap.write("Formula/f/foo.rb", formula("foo", "2.0"));
     tap.commit("foo 2.0");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -1048,7 +1048,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("selects the child snapshot when a same-second commit downgrades", () => {
+  it("selects the child snapshot when a same-second commit downgrades", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -1060,7 +1060,7 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     tap.commit("foo: revert to 1.0", tied);
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -1078,14 +1078,14 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("keeps same-second ordering intact when an L2 rebuild follows incremental crawls", () => {
+  it("keeps same-second ordering intact when an L2 rebuild follows incremental crawls", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     tap.commit("foo 1.0");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -1124,14 +1124,14 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
     db.close();
   });
 
-  it("clears rename metadata when an incrementally removed package is re-added", () => {
+  it("clears rename metadata when an incrementally removed package is re-added", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
     const now = T0 + 999000;
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     tap.commit("foo 1.0");
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     finalizeLatest(db, tap.source.id);
@@ -1167,14 +1167,14 @@ describe("crawlSince (seed → incremental cycle on one db)", () => {
 });
 
 describe("formula contributors", () => {
-  it("re-crawling does not leave a commit linked under a stale contributor key", () => {
+  it("re-crawling does not leave a commit linked under a stale contributor key", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
     tap.write("Formula/f/foo.rb", formula("foo", "1.0"));
     tap.commit("foo 1.0", undefined, "BrewTestBot <ops@brew.sh>");
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildPackageContributors(db, tap.source, ["foo"]);
 
     // Stand in for a change to how contributor_key is derived: the same commit,
@@ -1185,7 +1185,7 @@ describe("formula contributors", () => {
     );
     db.exec("UPDATE commit_contributors SET contributor_key = 'stale:brewtestbot'");
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildPackageContributors(db, tap.source, ["foo"]);
 
     expect(
@@ -1201,7 +1201,7 @@ describe("formula contributors", () => {
     db.close();
   });
 
-  it("aggregates authors, co-authors, bots, and metadata-only incremental touches", () => {
+  it("aggregates authors, co-authors, bots, and metadata-only incremental touches", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -1214,7 +1214,7 @@ describe("formula contributors", () => {
       "BrewTestBot <1589480+BrewTestBot@users.noreply.github.com>",
     );
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     buildSnapshots(db, tap.source);
     buildEvents(db, tap.source);
     buildPackageContributors(db, tap.source, ["foo"]);
@@ -1295,7 +1295,7 @@ describe("formula contributors", () => {
 });
 
 describe("reconcileRemovals (full-crawl path)", () => {
-  it("flags packages absent at HEAD and reinstates re-added ones", () => {
+  it("flags packages absent at HEAD and reinstates re-added ones", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -1305,7 +1305,7 @@ describe("reconcileRemovals (full-crawl path)", () => {
     tap.git("rm", "-q", "Formula/f/foo.rb");
     const rm = tap.commit("foo: delete");
 
-    buildCommitIndex(db, tap.source, ["foo", "bar"]);
+    await buildCommitIndex(db, tap.source, ["foo", "bar"]);
     expect(reconcileRemovals(db, tap.source)).toBe(1);
 
     const foo = db
@@ -1328,7 +1328,7 @@ describe("reconcileRemovals (full-crawl path)", () => {
     db.close();
   });
 
-  it("records the child removal commit when package touches share a second", () => {
+  it("records the child removal commit when package touches share a second", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -1340,7 +1340,7 @@ describe("reconcileRemovals (full-crawl path)", () => {
     tap.git("rm", "-q", "Formula/f/foo.rb");
     const removal = tap.commit("foo: delete", tied);
 
-    buildCommitIndex(db, tap.source, ["foo"]);
+    await buildCommitIndex(db, tap.source, ["foo"]);
     expect(reconcileRemovals(db, tap.source)).toBe(1);
     expect(
       db.prepare("SELECT removed_at, removed_commit FROM packages WHERE name = 'foo'").get(),
@@ -1348,7 +1348,7 @@ describe("reconcileRemovals (full-crawl path)", () => {
     db.close();
   });
 
-  it("persists root rename and migration metadata for absent packages", () => {
+  it("persists root rename and migration metadata for absent packages", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
 
@@ -1366,7 +1366,7 @@ describe("reconcileRemovals (full-crawl path)", () => {
     tap.write("tap_migrations.json", JSON.stringify(metadata.tap_migrations));
     tap.commit("rename foo and migrate oldapp");
 
-    buildCommitIndex(db, tap.source, ["foo", "oldapp", "bar"]);
+    await buildCommitIndex(db, tap.source, ["foo", "oldapp", "bar"]);
     expect(reconcileRemovals(db, tap.source)).toBe(2);
 
     const rows = db
