@@ -37,9 +37,10 @@ three-layer index, drawn so the expensive extraction happens exactly once:
 - **L0 — commit index.** One streaming pass over git history records every
   commit that touched a package file, keyed by basename so Homebrew's historical
   file relocations don't matter. It stores each commit's `blob_sha`, committer
-  timestamp, and topological position, so downstream derivation follows Git
-  history rather than potentially backdated author timestamps and never needs to
-  re-walk history.
+  timestamp, and integration order. Package state follows first-parent history,
+  using each merge's resolved tree, with a few
+  [reviewed historical corrections](docs/HISTORY.md); branch commits keep their
+  authors but never roll back published state.
 - **L1 — snapshots.** The blob at each commit, parsed for `version`, `revision`,
   exact formula bottle tags, and the package's current `deprecate!`/`disable!`
   lifecycle. Richer fields (dependencies, patches) can layer in later by
@@ -53,8 +54,9 @@ three-layer index, drawn so the expensive extraction happens exactly once:
   gap is at most seven days, while retaining the exact commit-level intervals
   in D1.
   Commit authors and explicit co-authors collapse into per-package contribution
-  summaries; automation is classified separately, dedicated email fields are
-  hashed, and email-shaped display names are redacted before export.
+  summaries; merge commits add none. Automation is classified separately,
+  dedicated email fields are hashed, and email-shaped display names are redacted
+  before export.
 
 A `git ls-tree` pass over the crawl's pinned Git revision reconciles which packages
 still exist in the tap. For absent packages, pkgstory consults that revision's tap-root

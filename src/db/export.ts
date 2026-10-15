@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { publicDisplayName } from "../contributors.ts";
+import { HISTORY_MODEL } from "../sources/history.ts";
 import { sqlLit as lit } from "./d1remote.ts";
 
 // The D1 read-slice: only what the site queries. commit_index/snapshots are
@@ -107,7 +108,9 @@ CREATE TABLE contributor_seeds (
 CREATE TABLE crawl_state (
   source          TEXT PRIMARY KEY,
   last_sha        TEXT,
-  last_crawled_at INTEGER NOT NULL
+  mainline_sha    TEXT,
+  last_crawled_at INTEGER NOT NULL,
+  history_model INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_events_pkg_time ON version_events (package_id, introduced_at DESC);
 CREATE INDEX idx_events_time ON version_events (introduced_at DESC);
@@ -191,7 +194,7 @@ const REQUIRED_EXPORT_COLUMNS = {
     "last_at",
   ],
   contributor_seeds: ["source", "seeded_at_sha"],
-  crawl_state: ["source", "last_sha", "last_crawled_at"],
+  crawl_state: ["source", "last_sha", "mainline_sha", "last_crawled_at", "history_model"],
 } as const;
 
 function assertExportSchema(db: DatabaseSync): void {
@@ -209,6 +212,17 @@ function assertExportSchema(db: DatabaseSync): void {
   if (missing.length > 0) {
     throw new Error(
       `crawl database schema is stale (missing ${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", …" : ""}); run \`pkgstory crawl --all\` before export`,
+    );
+  }
+  if (
+    db
+      .prepare(
+        `SELECT 1 FROM crawl_state WHERE history_model != ${HISTORY_MODEL} OR last_sha IS NOT NULL OR mainline_sha IS NULL LIMIT 1`,
+      )
+      .get()
+  ) {
+    throw new Error(
+      "crawl history predates mainline state derivation; run `pkgstory crawl --all` before export",
     );
   }
 }
@@ -351,9 +365,10 @@ export function exportSlice(db: DatabaseSync, write: (chunk: string) => void): v
     db,
     write,
     "crawl_state",
-    "source,last_sha,last_crawled_at",
-    "SELECT source, last_sha, last_crawled_at FROM crawl_state",
-    (r) => `${lit(r.source)},${lit(r.last_sha)},${lit(r.last_crawled_at)}`,
+    "source,last_sha,mainline_sha,last_crawled_at,history_model",
+    "SELECT source, last_sha, mainline_sha, last_crawled_at, history_model FROM crawl_state",
+    (r) =>
+      `${lit(r.source)},${lit(r.last_sha)},${lit(r.mainline_sha)},${lit(r.last_crawled_at)},${lit(r.history_model)}`,
   );
   // The marker lands last as a defense in depth invariant for local/mock importers.
   dumpTable(

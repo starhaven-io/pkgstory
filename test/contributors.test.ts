@@ -114,6 +114,7 @@ describe("contributor identities", () => {
 
   it("keeps the primary role when a co-author repeats the author", () => {
     const commit: RawCommit = {
+      parents: [],
       sha: "a".repeat(40),
       committedAt: 1700000000,
       author: { name: "Alice", email: "alice@example.com" },

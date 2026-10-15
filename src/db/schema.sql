@@ -42,9 +42,14 @@ CREATE TABLE IF NOT EXISTS commit_index (
   package_id   INTEGER NOT NULL REFERENCES packages (id),
   commit_sha   TEXT NOT NULL,
   blob_sha     TEXT NOT NULL,
+  parent_blob_sha TEXT,
+  is_mainline INTEGER NOT NULL DEFAULT 1,
+  is_merge INTEGER NOT NULL DEFAULT 0,
+  version_subject TEXT,
+  integrated_sha TEXT,
   committed_at INTEGER NOT NULL,
-  -- Total order from git's topological walk. State derivation follows this rather
-  -- than timestamps, which may be backdated or otherwise non-monotonic.
+  -- Integration order; only selected mainline rows drive published package state.
+  -- Side-branch rows retain original authorship and commit identities.
   history_order INTEGER NOT NULL DEFAULT 0,
   author       TEXT,
   subject      TEXT,
@@ -83,6 +88,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
   version_src  TEXT,
   bottled      INTEGER NOT NULL DEFAULT 0,
   bottle_tags  TEXT NOT NULL DEFAULT '[]',
+  version_changed INTEGER NOT NULL DEFAULT 1,
   UNIQUE (package_id, commit_sha)
 );
 
@@ -153,12 +159,14 @@ CREATE TABLE IF NOT EXISTS contributor_seeds (
   seeded_at_sha TEXT NOT NULL
 );
 
--- Per-source crawl cursor + heartbeat: last_sha drives `crawl --since`
--- (git log last_sha..HEAD), last_crawled_at powers the "last checked" display.
+-- Per-source cursor + heartbeat. The legacy last_sha stays NULL so older
+-- incremental crawlers cannot write into a seed built with mainline semantics.
 CREATE TABLE IF NOT EXISTS crawl_state (
   source          TEXT PRIMARY KEY,
   last_sha        TEXT,
-  last_crawled_at INTEGER NOT NULL
+  mainline_sha    TEXT,
+  last_crawled_at INTEGER NOT NULL,
+  history_model INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_pkg_time ON version_events (package_id, introduced_at DESC);

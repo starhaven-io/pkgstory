@@ -139,6 +139,10 @@ Caveats:
   crawl and remote reseed. A cursor outside the current Git ancestry also requires
   rebuilding and reseeding. Existing D1 event and interval rows are precomputed;
   an incremental crawl cannot rewrite their historical boundaries.
+- A `HISTORY_MODEL` bump requires a full crawl of both sources into a new
+  database file, then a remote reseed; keep the previous seed for recovery.
+  Incremental crawls and export reject any other model, and older crawlers find
+  no cursor in a new seed.
 - The `version_changes` table preserves reverts for RSS and recent updates.
   Its online migration backfills canonical introductions only; run a full crawl
   and reseed once after deploying it to recover older revert transitions.

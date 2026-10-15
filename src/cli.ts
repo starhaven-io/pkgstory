@@ -189,7 +189,7 @@ async function crawl(argv: string[]): Promise<void> {
         const names = override ?? DEMO[source.id];
         if (names.length === 0) continue;
         const ref = headSha(source.repoDir);
-        const commits = buildCommitIndex(db, source, names, ref);
+        const commits = await buildCommitIndex(db, source, names, ref);
         const snaps = buildSnapshots(db, source);
         const events = buildEvents(db, source);
         const contributors = buildPackageContributors(db, source, names, ref);

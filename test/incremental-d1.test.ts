@@ -29,7 +29,7 @@ function scriptD1(state: D1State): void {
   d1SelectMock.mockImplementation((_mode, sql) => {
     if (sql.startsWith("UPDATE crawl_state")) return state.moved ? [] : [{ source: "x" }];
     if (sql.includes("FROM crawl_state")) {
-      return state.cursor === null ? [] : [{ last_sha: state.cursor }];
+      return state.cursor === null ? [] : [{ mainline_sha: state.cursor, history_model: 2 }];
     }
     if (sql.includes("FROM contributor_seeds")) return state.seeded ? [{ "1": 1 }] : [];
     if (sql.includes("FROM packages") && sql.includes("WHERE source")) return state.baselines;
@@ -103,7 +103,7 @@ describe("crawlSinceD1", () => {
     expect(d1ApplyMock).not.toHaveBeenCalled();
     const sql = d1SelectMock.mock.calls.at(-1)?.[1] ?? "";
     expect(sql).toBe(
-      `UPDATE crawl_state SET last_crawled_at = 1751000000 WHERE source = 'homebrew-formula' AND last_sha = '${head.sha}' RETURNING source`,
+      `UPDATE crawl_state SET last_crawled_at = 1751000000 WHERE source = 'homebrew-formula' AND last_sha IS NULL AND history_model = 2 AND mainline_sha = '${head.sha}' RETURNING source`,
     );
   });
 
@@ -169,9 +169,9 @@ describe("crawlSinceD1", () => {
     // Wrangler file imports are themselves atomic.
     const all = statements(sql);
     expect(all[0]).toContain("INSERT INTO crawl_state");
-    expect(all[0]).toContain(`last_sha = '${cursor.sha}'`);
-    expect(all.at(-1)).toContain(`UPDATE crawl_state SET last_sha = '${bump.sha}'`);
-    expect(all.at(-1)).toContain(`AND last_sha = '${cursor.sha}'`);
+    expect(all[0]).toContain(`mainline_sha = '${cursor.sha}'`);
+    expect(all.at(-1)).toContain(`UPDATE crawl_state SET mainline_sha = '${bump.sha}'`);
+    expect(all.at(-1)).toContain(`AND mainline_sha = '${cursor.sha}'`);
   });
 
   it("writes no contributor rows before the full historical seed exists", () => {
@@ -225,7 +225,7 @@ describe("crawlSinceD1", () => {
     const all = statements(appliedSql());
     expect(all).toHaveLength(2); // only the cursor guard and the cursor advance
     expect(all[0]).toContain(`'${cursor.sha}', NULL WHERE NOT EXISTS`);
-    expect(all[1]).toContain(`SET last_sha = '${head.sha}'`);
+    expect(all[1]).toContain(`SET mainline_sha = '${head.sha}'`);
   });
 
   it("ships bottle loss and regain transitions without version events", () => {
@@ -305,7 +305,7 @@ describe("crawlSinceD1", () => {
     d1SelectMock.mockImplementation((_mode, sql) => db.prepare(sql).all());
     const events = () => db.prepare("SELECT version FROM version_events ORDER BY id").all();
     const lastSha = () =>
-      db.prepare("SELECT last_sha FROM crawl_state WHERE source = ?").get(tap.source.id);
+      db.prepare("SELECT mainline_sha FROM crawl_state WHERE source = ?").get(tap.source.id);
 
     // A reseed lands between the crawl's cursor read and its import.
     d1ApplyMock.mockImplementationOnce((_mode, sql) => {
@@ -314,7 +314,7 @@ describe("crawlSinceD1", () => {
     });
     expect(() => crawlSinceD1(tap.source, "local", T0 + 2)).toThrow(/NOT NULL/);
     expect(events()).toEqual([]);
-    expect(lastSha()).toEqual({ last_sha: bump.sha });
+    expect(lastSha()).toEqual({ mainline_sha: bump.sha });
 
     setCrawlState(db, tap.source.id, cursor.sha, T0 + 3);
     d1ApplyMock.mockImplementationOnce((_mode, sql) => {
@@ -322,7 +322,7 @@ describe("crawlSinceD1", () => {
     });
     crawlSinceD1(tap.source, "local", T0 + 4);
     expect(events()).toEqual([{ version: "1.1" }]);
-    expect(lastSha()).toEqual({ last_sha: bump.sha });
+    expect(lastSha()).toEqual({ mainline_sha: bump.sha });
     db.close();
   });
 
