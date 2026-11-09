@@ -15,8 +15,11 @@ export interface Lifecycle {
 // stanza once that date has passed — and a `because:` that is a quoted string or a
 // symbol (:repo_archived, :discontinued, …). Both stanzas are kept verbatim; which is
 // in effect is a read-time decision against today's date, not the parser's job.
-const DISABLE = /^\s*disable!/m;
-const DEPRECATE = /^\s*deprecate!/m;
+// Indentation before these keywords is any whitespace except a line terminator, never
+// \s: in multiline mode \s spans newlines, so every line start of a blank run would
+// rescan the whole run.
+const DISABLE = /^[^\S\r\n\u2028\u2029]*disable!/m;
+const DEPRECATE = /^[^\S\r\n\u2028\u2029]*deprecate!/m;
 const DATE = /\bdate:\s*"([^"]+)"/;
 const BECAUSE_STR = /\bbecause:\s*"((?:[^"\\]|\\.)*)"/;
 const BECAUSE_SYM = /\bbecause:\s*:([a-z0-9_]+)/i;

@@ -186,6 +186,21 @@ __END__
     expect(parseFormula("class X < Formula\nend").version).toBeNull();
   });
 
+  it("scans a long blank run in linear time", () => {
+    const src = `class Foo < Formula\n  url "https://example.com/foo-1.0.tar.gz"\n${"\n".repeat(200_000)}end\n`;
+    const start = performance.now();
+    expect(parseFormula(src).version).toBe("1.0");
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it("accepts any whitespace but a newline as indentation", () => {
+    expect(parseFormula("class X < Formula\n\f\v\xa0@version = '1.0'\nend").version).toBe("1.0");
+    expect(
+      parseFormula("class X < Formula\n\f\xa0@url = 'https://example.com/x-2.0.tar.gz'\nend")
+        .version,
+    ).toBe("2.0");
+  });
+
   it("recognizes artifact bottle blocks but not modifiers, comments, or nested calls", () => {
     expect(
       parseFormula('class X < Formula\n  bottle do\n    sha256 "abc" => :arm64_tahoe\n  end\nend')
@@ -428,6 +443,25 @@ end`;
   end
 end`;
     expect(parseLifecycle(src)).toEqual({ deprecate: null, disable: null });
+  });
+
+  it("scans a long blank run in linear time", () => {
+    const src = `class Foo < Formula\n  disable! because: :unmaintained\n${"\n".repeat(200_000)}end\n`;
+    const start = performance.now();
+    expect(parseLifecycle(src)).toEqual({
+      deprecate: null,
+      disable: { date: null, reason: "is not maintained upstream" },
+    });
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
+  it("accepts any whitespace but a newline as indentation", () => {
+    const src =
+      "class Foo < Formula\n\f\v\xa0deprecate! because: :unmaintained\n\f\xa0disable! because: :no_license\nend";
+    expect(parseLifecycle(src)).toEqual({
+      deprecate: { date: null, reason: "is not maintained upstream" },
+      disable: { date: null, reason: "has no license" },
+    });
   });
 });
 

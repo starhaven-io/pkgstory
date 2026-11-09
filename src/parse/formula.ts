@@ -15,7 +15,10 @@ export interface ParsedFormula {
 // Quote-agnostic: 2009-era formulae wrote `version '1.0'` with single quotes.
 const VERSION_STANZA = /^ {2}version\s+(["'])([^"']+)\1/m;
 const STABLE_VERSION_STANZA = /^ {4}version\s+(["'])([^"']+)\1/m;
-const OLD_VERSION_STANZA = /^\s*@version\s*=\s*(["'])(.*?)\1/m;
+// Indentation before these keywords is any whitespace except a line terminator, never
+// \s: in multiline mode \s spans newlines, so every line start of a blank run would
+// rescan the whole run.
+const OLD_VERSION_STANZA = /^[^\S\r\n\u2028\u2029]*@version\s*=\s*(["'])(.*?)\1/m;
 const REVISION = /^ {2}revision\s+([^\s#]+)/m;
 const STABLE_REVISION = /^ {4}revision\s+([^\s#]+)/m;
 // A bottle block records an actual built artifact. Historical `bottle :unneeded`
@@ -26,7 +29,7 @@ const LEGACY_BOTTLE = /^ {2}bottle\s+["']/m;
 // archives, not package versions. The old @url form lived inside initialize.
 const URL_LINE = /^ {2}url\s+(["'])(.*?)\1/m;
 const STABLE_URL_LINE = /^ {4}url\s+(["'])(.*?)\1/m;
-const OLD_URL_LINE = /^\s*@url\s*=\s*(["'])(.*?)\1/m;
+const OLD_URL_LINE = /^[^\S\r\n\u2028\u2029]*@url\s*=\s*(["'])(.*?)\1/m;
 const TAG_OPT = /\btag:\s*(["'])([^"']+)\1/;
 const SEMVERISH = /(\d+(?:\.\d+)+(?:[._-][0-9A-Za-z.]+)?)/;
 // Build/artifact/platform labels that ride along in a download filename
