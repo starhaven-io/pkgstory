@@ -15,7 +15,7 @@ import {
   changeDates,
   contributors,
   getDb,
-  lastCheckedBySource,
+  sourceCrawl,
   packageMeta,
   timeline,
   TIMELINE_LIMIT,
@@ -48,13 +48,13 @@ if (page === null || bottlePage === null) return Astro.rewrite('/404');
 
 const encodedName = encodeURIComponent(name);
 const db = getDb();
-const [events, meta, packageContributors, bottleRanges, allChangeDates, checkedBySource] = await Promise.all([
+const [events, meta, packageContributors, bottleRanges, allChangeDates, crawl] = await Promise.all([
   timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
   packageMeta(db, source, name),
   contributors(db, source, name),
   source === 'homebrew-formula' ? bottleIntervals(db, source, name) : Promise.resolve([]),
   changeDates(db, source, name),
-  lastCheckedBySource(db),
+  sourceCrawl(db, source),
 ]);
 
 // Unknown package — or a page past the end of the timeline.
@@ -94,7 +94,7 @@ const bottlePageHref = (p: number) => packageHref(page, p);
 // A package page only changes when that package updates; let the edge cache it.
 Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600');
 
-const checkedAt = checkedBySource.get(source) ?? null;
+const checkedAt = crawl.checkedAt;
 const repo = source === 'homebrew-cask' ? 'homebrew/homebrew-cask' : 'homebrew/homebrew-core';
 const feedHref = `/${source}/${encodedName}/rss.xml`;
 const sourceName = sourceLabel(source);
@@ -143,7 +143,7 @@ const monthFmt = (t: number) =>
         <Chip source={source} />
         {status && <StatusChip code={status} />}
       </div>
-      <p class="pkg-subtitle">{sourceName} timeline from Homebrew git history.</p>
+      {crawl.versionSelection && <p class="pkg-subtitle">{crawl.versionSelection}</p>}
       {meta?.removedAt == null && (
         <p class="track">
           Track <b>{name}</b> with the <a href={feedHref}>RSS feed</a>.

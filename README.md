@@ -64,6 +64,15 @@ the source URL. For example, Swift's `6.2.4-RELEASE` archive yields `6.2.4`,
 while a source archive named `foo-1.2.3-rc1.tar.gz` yields `1.2.3-rc1`.
 The commit subject supplies a fallback when the formula provides no version.
 
+Cask timelines record one representative version per commit. History model 3
+also reads single-quoted cask versions, recovering releases from older tap files
+that previous models skipped. When the DSL declares
+platform-specific versions, pkgstory selects the newest matching macOS branch
+and prefers Apple Silicon over Intel on that release. It also records Intel-only,
+older macOS and Linux-only casks. A change confined to a secondary platform
+leaves the representative version unchanged. A package page and its JSON
+`versionSelection` field identify histories built with this policy.
+
 A `git ls-tree` pass over the crawl's pinned Git revision reconciles which packages
 still exist in the tap. For absent packages, pkgstory consults that revision's tap-root
 `formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files before

@@ -3,7 +3,7 @@ import {
   bottleIntervals,
   BOTTLE_HISTORY_LIMIT,
   getDb,
-  lastCheckedBySource,
+  sourceCrawl,
   packageMeta,
   timeline,
   TIMELINE_LIMIT,
@@ -33,11 +33,11 @@ export const GET: APIRoute = async ({ params, url }) => {
     return packageJsonNotFound();
 
   const db = getDb();
-  const [events, bottleRanges, meta, checkedBySource] = await Promise.all([
+  const [events, bottleRanges, meta, crawl] = await Promise.all([
     timeline(db, source, name, TIMELINE_LIMIT, (page - 1) * TIMELINE_LIMIT),
     source === 'homebrew-formula' ? bottleIntervals(db, source, name) : Promise.resolve([]),
     packageMeta(db, source, name),
-    lastCheckedBySource(db),
+    sourceCrawl(db, source),
   ]);
   const payload = packageJsonPayload({
     source,
@@ -45,7 +45,7 @@ export const GET: APIRoute = async ({ params, url }) => {
     events,
     bottleIntervals: bottleRanges,
     meta,
-    checkedAt: checkedBySource.get(source) ?? null,
+    ...crawl,
     page,
     timelineLimit: TIMELINE_LIMIT,
     bottlePage,

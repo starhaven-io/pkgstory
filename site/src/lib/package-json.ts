@@ -27,6 +27,7 @@ interface PackageJsonInput {
   bottleIntervals: BottleInterval[];
   meta: PackageMeta | null;
   checkedAt: number | null;
+  versionSelection?: string | null;
   page: number;
   timelineLimit: number;
   bottlePage: number;
@@ -41,6 +42,7 @@ export function packageJsonPayload({
   bottleIntervals,
   meta,
   checkedAt,
+  versionSelection,
   page,
   timelineLimit,
   bottlePage,
@@ -62,6 +64,7 @@ export function packageJsonPayload({
   return {
     source,
     name,
+    ...(versionSelection ? { versionSelection } : {}),
     status: meta ? lifecycleState(meta, today) : 'active',
     latest: {
       version: latestVersion,
