@@ -48,7 +48,9 @@ export async function GET(context: APIContext) {
       return [
         {
           title: `${name} ${version}`,
-          link: `/${source}/${encodedName}/#${encodeURIComponent(version)}`,
+          link: e.commitSha
+            ? `https://github.com/Homebrew/${source === 'homebrew-cask' ? 'homebrew-cask' : 'homebrew-core'}/commit/${encodeURIComponent(e.commitSha)}`
+            : `/${source}/${encodedName}/`,
           pubDate,
           description: `${name} updated to ${version}`,
           customData: `<guid isPermaLink="false">urn:pkgstory:${source}:${encodedName}:${changeId}</guid>`,

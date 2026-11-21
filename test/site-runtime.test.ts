@@ -448,6 +448,12 @@ describe("package RSS", () => {
     expect(xml.match(/<item>/g)).toHaveLength(2);
     expect(xml).toContain(`urn:pkgstory:homebrew-formula:foo:${"c".repeat(40)}`);
     expect(xml).toContain(`urn:pkgstory:homebrew-formula:foo:${"a".repeat(40)}`);
+    expect(xml).toContain(
+      `<link>https://github.com/Homebrew/homebrew-core/commit/${"c".repeat(40)}</link>`,
+    );
+    expect(xml).toContain(
+      `<link>https://github.com/Homebrew/homebrew-core/commit/${"a".repeat(40)}</link>`,
+    );
   });
 });
 
