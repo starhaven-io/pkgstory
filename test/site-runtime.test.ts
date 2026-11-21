@@ -13,9 +13,11 @@ import {
   lastChecked,
   lastCheckedBySource,
   packageMeta,
+  sourceCrawl,
   timeline,
 } from "../site/src/lib/d1.ts";
 import { GET as badgeGet } from "../site/src/pages/[source]/[name]/badge.json.ts";
+import { GET as packageGet } from "../site/src/pages/[source]/[name]/index.json.ts";
 import { GET as rssGet } from "../site/src/pages/[source]/[name]/rss.xml.ts";
 import { GET as healthGet } from "../site/src/pages/health.json.ts";
 import { GET as sitemapGet, HEAD as sitemapHead } from "../site/src/pages/sitemap.xml.ts";
@@ -314,6 +316,62 @@ describe("site D1 helpers", () => {
     await expect(packageMeta(db, "homebrew-formula", "foo")).resolves.toEqual(legacy);
     expect(calls).toHaveLength(2);
   });
+});
+
+describe("cask version selection", () => {
+  it.each([2, 3])(
+    "publishes the cask policy on the JSON, badge and feed routes for model %s",
+    async (model) => {
+      const policy =
+        "Cask versions follow the newest matching macOS branch, preferring Apple Silicon to Intel. Linux-only versions are included.";
+      const event = {
+        version: "5.2.1",
+        revision: 0,
+        introducedAt: 123,
+        commitSha: "a".repeat(40),
+        subject: "betterdisplay 5.2.1",
+      };
+      env.DB = fakeDb((sql) =>
+        sql.includes("FROM crawl_state")
+          ? { first: { history_model: model, last_crawled_at: 123 } }
+          : { all: [event] },
+      ).db;
+      const context = {
+        params: { source: "homebrew-cask", name: "betterdisplay" },
+        url: new URL("https://pkgstory.dev/homebrew-cask/betterdisplay/index.json"),
+      } as never;
+      const payload = await (await packageGet(context)).json();
+      const badge = await (await badgeGet(context)).json();
+      const feed = await (await rssGet(context)).text();
+      if (model === 3) expect(payload).toHaveProperty("versionSelection", policy);
+      else expect(payload).not.toHaveProperty("versionSelection");
+      expect(badge).toMatchObject({
+        label: model === 3 ? "homebrew cask (macOS/Arm preferred)" : "homebrew cask",
+      });
+      expect(feed).toContain(
+        `<description>Version updates for betterdisplay (cask).${model === 3 ? ` ${policy}` : ""}</description>`,
+      );
+    },
+  );
+
+  it.each([
+    [undefined, false],
+    [2, false],
+    [3, true],
+    [4, true],
+  ] as const)(
+    "labels cask history model %s according to its stored policy",
+    async (model, labeled) => {
+      const { db } = fakeDb(() => ({ first: { last_crawled_at: 123, history_model: model } }));
+      await expect(sourceCrawl(db, "homebrew-cask")).resolves.toEqual({
+        checkedAt: 123,
+        versionSelection: labeled
+          ? expect.stringContaining("preferring Apple Silicon to Intel")
+          : null,
+      });
+      expect((await sourceCrawl(db, "homebrew-formula")).versionSelection).toBeNull();
+    },
+  );
 });
 
 describe("site KV helpers", () => {

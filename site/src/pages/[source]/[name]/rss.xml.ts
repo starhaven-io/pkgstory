@@ -1,6 +1,6 @@
 import rss from '@astrojs/rss';
 import type { APIContext } from 'astro';
-import { changes, getDb } from '../../../lib/d1.ts';
+import { changes, getDb, sourceCrawl } from '../../../lib/d1.ts';
 import {
   dateFromUnixSeconds,
   decodeRouteParam,
@@ -22,7 +22,11 @@ export async function GET(context: APIContext) {
     });
 
   const encodedName = encodeURIComponent(name);
-  const events = await changes(getDb(), source, name);
+  const db = getDb();
+  const [events, crawl] = await Promise.all([
+    changes(db, source, name),
+    source === 'homebrew-cask' ? sourceCrawl(db, source) : null,
+  ]);
   if (events.length === 0)
     return new Response('Not found', {
       status: 404,
@@ -32,7 +36,9 @@ export async function GET(context: APIContext) {
 
   const res = await rss({
     title: `${name} updates · pkgstory`,
-    description: `Version updates for ${name} (${sourceLabel(source)}).`,
+    description: [`Version updates for ${name} (${sourceLabel(source)}).`, crawl?.versionSelection]
+      .filter(Boolean)
+      .join(' '),
     site: context.site ?? 'https://pkgstory.dev',
     items: events.flatMap((e, index) => {
       const pubDate = dateFromUnixSeconds(e.introducedAt);

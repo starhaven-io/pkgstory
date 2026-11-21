@@ -294,3 +294,22 @@ export async function lastCheckedBySource(db: D1): Promise<Map<string, number>> 
     .all<{ source: string; at: number }>();
   return new Map(results.map((row) => [row.source, Number(row.at)]));
 }
+
+const FIRST_PLATFORM_AWARE_CASK_MODEL = 3;
+const CASK_VERSION_POLICY =
+  'Cask versions follow the newest matching macOS branch, preferring Apple Silicon to Intel. Linux-only versions are included.';
+
+export async function sourceCrawl(db: D1, source: string) {
+  // Older seeds lack history_model. SELECT * keeps their histories readable across a site deployment.
+  const row = await db
+    .prepare('SELECT * FROM crawl_state WHERE source = ?')
+    .bind(source)
+    .first<{ last_crawled_at: number; history_model?: number }>();
+  return {
+    checkedAt: row?.last_crawled_at ?? null,
+    versionSelection:
+      source === 'homebrew-cask' && (row?.history_model ?? 0) >= FIRST_PLATFORM_AWARE_CASK_MODEL
+        ? CASK_VERSION_POLICY
+        : null,
+  };
+}

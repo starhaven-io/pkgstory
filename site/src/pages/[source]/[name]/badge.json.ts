@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { getDb, packageMeta, timeline } from '../../../lib/d1.ts';
+import { getDb, packageMeta, sourceCrawl, timeline } from '../../../lib/d1.ts';
 import {
   decodeRouteParam,
   displayVersion,
@@ -39,7 +39,11 @@ export const GET: APIRoute = async ({ params }) => {
   if (!isKnownSource(source)) return notFound();
 
   const db = getDb();
-  const [events, meta] = await Promise.all([timeline(db, source, name, 1), packageMeta(db, source, name)]);
+  const [events, meta, crawl] = await Promise.all([
+    timeline(db, source, name, 1),
+    packageMeta(db, source, name),
+    source === 'homebrew-cask' ? sourceCrawl(db, source) : null,
+  ]);
   if (events.length === 0) return notFound();
 
   const state = meta ? lifecycleState(meta, todayISO()) : 'active';
@@ -51,7 +55,11 @@ export const GET: APIRoute = async ({ params }) => {
 
   const body = {
     schemaVersion: 1,
-    label: source === 'homebrew-cask' ? 'homebrew cask' : 'homebrew',
+    label: crawl?.versionSelection
+      ? 'homebrew cask (macOS/Arm preferred)'
+      : source === 'homebrew-cask'
+        ? 'homebrew cask'
+        : 'homebrew',
     message,
     color: BADGE_COLOR[state],
     cacheSeconds: 3600,
