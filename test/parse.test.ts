@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { MACOS_RELEASE_ORDER } from "../site/src/lib/macos-releases.ts";
 import { parseCask } from "../src/parse/cask.ts";
 import { extractVersion } from "../src/parse/extract.ts";
 import { parseFormula, versionFromUrl } from "../src/parse/formula.ts";
@@ -434,6 +435,87 @@ describe("versionFromUrl", () => {
 });
 
 describe("parseCask", () => {
+  it("reads the Apple Silicon version in Spotify's historical Intel conditional", () => {
+    const src = `cask "spotify" do
+  if Hardware::CPU.intel?
+    version "1.1.77.643,3c4c6fc6,21"
+  else
+    version "1.1.77.643,3c4c6fc6,18"
+  end
+end`;
+    expect(parseCask(src).version).toBe("1.1.77.643,3c4c6fc6,18");
+  });
+
+  it("uses the newest matching macOS branch through historical elsif and else clauses", () => {
+    const clauses = [
+      "if MacOS.version <= :el_capitan",
+      '  version "2018.5008"',
+      "elsif MacOS.version <= :sierra",
+      '  version "2019.5137"',
+      "elsif MacOS.version <= :high_sierra",
+      '  version "2020.5350"',
+      "else",
+      '  version "2022.5809"',
+      "end",
+    ];
+    const at = (indent: string) => clauses.map((line) => indent + line).join("\n");
+    expect(parseCask(`cask "araxis-merge" do\n${at("  ")}\nend`).version).toBe("2022.5809");
+    expect(parseCask(`  on_sierra do\n${at("    ")}\n  end`).version).toBe("2019.5137");
+    expect(
+      parseCask("  if unrelated?\n    version '9'\n  else\n    version '8'\n  end").version,
+    ).toBeNull();
+  });
+
+  it("ranks an unlisted macOS release above the newest known release", () => {
+    const older = '  on_golden_gate :or_older do\n    version "5.2.1"\n  end';
+    const newer = '  on_redwood :or_newer do\n    version "6.0.0"\n  end';
+    for (const branches of [
+      [older, newer],
+      [newer, older],
+    ]) {
+      expect(parseCask(branches.join("\n")).version).toBe("6.0.0");
+    }
+  });
+
+  it("recognizes the macOS releases in order through Golden Gate", () => {
+    expect([...MACOS_RELEASE_ORDER.keys()]).toEqual(
+      (
+        "cheetah puma jaguar panther tiger leopard snow_leopard lion mountain_lion mavericks yosemite " +
+        "el_capitan sierra high_sierra mojave catalina big_sur monterey ventura sonoma sequoia tahoe golden_gate"
+      ).split(" "),
+    );
+  });
+  it("selects BetterDisplay's current macOS release across nested ranges in either declaration order", () => {
+    const branches = [
+      '  on_big_sur :or_older do\n    version "1.4.15"\n  end',
+      '  on_monterey do\n    version "2.3.9"\n  end',
+      '  on_ventura :or_newer do\n    on_sequoia :or_older do\n      version "4.3.7"\n    end\n  end',
+      '  on_tahoe :or_newer do\n    version "5.2.1"\n  end',
+    ];
+    for (const order of [branches, branches.toReversed()]) {
+      expect(parseCask(`cask "betterdisplay" do\n${order.join("\n")}\nend`).version).toBe("5.2.1");
+    }
+  });
+
+  it("prefers macOS and Arm in nested blocks and retains Linux-only, Intel-only and older macOS versions", () => {
+    const branch = (name: string, v: string) => `  on_${name} do\n    version "${v}"\n  end`;
+    expect(
+      parseCask(
+        `${branch("linux", "linux")}\n  on_macos do\n    on_intel do\n      version "intel"\n    end\n    on_arm do\n      version "arm"\n    end\n  end`,
+      ).version,
+    ).toBe("arm");
+    expect(parseCask(branch("intel", "2.0")).version).toBe("2.0");
+    expect(parseCask(branch("linux", "3.0")).version).toBe("3.0");
+    expect(parseCask(`${branch("big_sur", "1.0")}\n${branch("monterey", "2.0")}`).version).toBe(
+      "2.0",
+    );
+    expect(
+      parseCask(
+        '  livecheck do\n    version "unrelated"\n  end\n  on_arm do\n    version :latest\n  end',
+      ).version,
+    ).toBe("latest");
+  });
+
   it("reads a version stanza with a build suffix", () => {
     expect(parseCask('cask "x" do\n  version "1.122.1,abc123"\nend').version).toBe(
       "1.122.1,abc123",
@@ -441,6 +523,17 @@ describe("parseCask", () => {
   });
   it("maps :latest", () => {
     expect(parseCask('cask "x" do\n  version :latest\nend').version).toBe("latest");
+  });
+  it("uses the default cask language when languages declare different versions", () => {
+    const src = `cask "cave-story" do
+  language "ja" do
+    version "0.2.0"
+  end
+  language "en", default: true do
+    version "0.1.0,2"
+  end
+end`;
+    expect(parseCask(src).version).toBe("0.1.0,2");
   });
   it("reads an arch-conditional version inside an on_arm block", () => {
     const src = `cask "y" do

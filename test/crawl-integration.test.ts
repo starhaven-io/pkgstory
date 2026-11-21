@@ -151,20 +151,63 @@ describe("buildCommitIndexAll", () => {
   });
 });
 
+function caskSource(tap: TapRepo) {
+  return makeSource(
+    { id: "homebrew-cask", label: "Test casks", tap: "test/cask", dir: "Casks", kind: "cask" },
+    tap.dir,
+  );
+}
+
+describe("cask platform history", () => {
+  it("keeps full and incremental versions aligned when current and legacy macOS branches move independently", async () => {
+    const tap = new TapRepo();
+    const source = caskSource(tap);
+    const write = (legacy: string, current: string) =>
+      tap.write(
+        "Casks/a/app.rb",
+        `cask "app" do
+  on_monterey :or_older do
+    version "${legacy}"
+  end
+  on_ventura :or_newer do
+    version "${current}"
+  end
+end`,
+      );
+    const seed = async () => {
+      const db = openDb(":memory:");
+      await buildCommitIndexAll(db, source);
+      buildSnapshots(db, source);
+      buildEvents(db, source);
+      finalizeLatest(db, source.id);
+      setCrawlState(db, source.id, headSha(tap.dir), T0);
+      return db;
+    };
+    write("1.4", "4.1");
+    tap.commit("app 4.1");
+    const incremental = await seed();
+    write("1.5", "4.1");
+    tap.commit("app 1.5");
+    write("1.5", "5.2");
+    tap.commit("app 5.2");
+    crawlSince(incremental, source, T0 + 100);
+    for (const db of [incremental, await seed()]) {
+      expect(
+        db.prepare("SELECT version FROM version_changes ORDER BY history_order").all(),
+      ).toEqual([{ version: "4.1" }, { version: "5.2" }]);
+      expect(db.prepare("SELECT latest_version FROM packages").get()).toEqual({
+        latest_version: "5.2",
+      });
+      db.close();
+    }
+  });
+});
+
 describe("buildCommitIndex curated paths", () => {
   it("finds a cask that historically occupied a noncanonical one-character shard", async () => {
     const tap = new TapRepo();
     const db = openDb(":memory:");
-    const source = makeSource(
-      {
-        id: "homebrew-cask",
-        label: "Test casks",
-        tap: "test/cask",
-        dir: "Casks",
-        kind: "cask",
-      },
-      tap.dir,
-    );
+    const source = caskSource(tap);
 
     tap.write("Casks/c/kuaitie.rb", 'cask "kuaitie" do\n  version "3.5.0"\nend\n');
     tap.commit("add kuaitie in historical shard");
