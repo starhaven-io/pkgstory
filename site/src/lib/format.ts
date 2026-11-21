@@ -1,3 +1,4 @@
+import { MAC_OS_X_VERSIONS, MACOS_RELEASE_ORDER, MACOS_VERSIONS, OS_X_VERSIONS } from './macos-releases.ts';
 import { publicContributorName } from './public-contributor.ts';
 
 export { publicContributorName };
@@ -233,42 +234,10 @@ function bottleOsName(tag: string): string {
     .join(' ');
 }
 
-const MAC_OS_X_VERSIONS = new Map([
-  ['cheetah', '10.0'],
-  ['puma', '10.1'],
-  ['jaguar', '10.2'],
-  ['panther', '10.3'],
-  ['tiger', '10.4'],
-  ['leopard', '10.5'],
-  ['snow_leopard', '10.6'],
-  ['lion', '10.7'],
-]);
 const BOTTLE_OS_ALIASES = new Map([
   ['mountainlion', 'mountain_lion'],
   ['snowleopard', 'snow_leopard'],
 ]);
-const OS_X_VERSIONS = new Map([
-  ['mountain_lion', '10.8'],
-  ['mavericks', '10.9'],
-  ['yosemite', '10.10'],
-  ['el_capitan', '10.11'],
-]);
-const MACOS_VERSIONS = new Map([
-  ['sierra', '10.12'],
-  ['high_sierra', '10.13'],
-  ['mojave', '10.14'],
-  ['catalina', '10.15'],
-  ['big_sur', '11'],
-  ['monterey', '12'],
-  ['ventura', '13'],
-  ['sonoma', '14'],
-  ['sequoia', '15'],
-  ['tahoe', '26'],
-  ['golden_gate', '27'],
-]);
-const BOTTLE_OS_RELEASE_ORDER = new Map(
-  [...MAC_OS_X_VERSIONS.keys(), ...OS_X_VERSIONS.keys(), ...MACOS_VERSIONS.keys()].map((tag, index) => [tag, index]),
-);
 const BOTTLE_RANGE_SUFFIX = '_or_later';
 
 function canonicalBottleOsTag(tag: string): string {
@@ -309,7 +278,7 @@ function bottlePlatformOrder(tag: string): number {
   if (osTag === 'all') return 10_003;
   if (osTag === 'linux') return 10_002;
   if (osTag === 'legacy') return 10_001;
-  return BOTTLE_OS_RELEASE_ORDER.get(osTag) ?? 10_000;
+  return MACOS_RELEASE_ORDER.get(osTag) ?? 10_000;
 }
 
 function compareBottlePlatforms(a: BottleInterval, b: BottleInterval): number {
