@@ -198,8 +198,67 @@ const monthFmt = (t: number) =>
     />
   )}
 
+  <nav aria-label="Package sections" class="package-sections">
+    <a href="#timeline">Version timeline</a>
+    {dates.length > 1 && <a href="#cadence">Update cadence</a>}
+    {totalBottleIntervals > 0 && <a href="#bottles">Bottle availability</a>}
+    {packageContributors.length > 0 && <a href="#contributors-title">Contributors</a>}
+  </nav>
+
+  <section id="timeline">
+    <div class="section-head">
+      <h2>Version timeline</h2>
+      <p>
+        {totalPages > 1
+          ? `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
+          : `${totalEvents.toLocaleString()} version-changing commits`}
+      </p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Version</th>
+            <th>Updated</th>
+            <th>Commit</th>
+            <th>Subject</th>
+          </tr>
+        </thead>
+        <tbody>
+          {events.map((e) => (
+            <tr id={displayVersion(e.version, e.revision)}>
+              <td>
+                <Version version={e.version} revision={e.revision} />
+              </td>
+              <td class="date">{isoDate(e.introducedAt)}</td>
+              <td>
+                {e.commitSha ? (
+                  <a class="commit-link" href={`https://github.com/${repo}/commit/${e.commitSha}`}>
+                    {e.commitSha.slice(0, 9)}
+                  </a>
+                ) : (
+                  '—'
+                )}
+              </td>
+              <td class="subject">{e.subject}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    {totalPages > 1 && (
+      <nav class="pager" aria-label="Timeline pages">
+        {page > 1 ? <a href={pageHref(page - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
+        <span class="pager-status">
+          Page {page} of {totalPages.toLocaleString()}
+        </span>
+        {page < totalPages ? <a href={pageHref(page + 1)}>Older &rarr;</a> : <span aria-hidden="true" />}
+      </nav>
+    )}
+  </section>
+
   {dates.length > 1 && (
-    <div class="spark-panel">
+    <div id="cadence" class="spark-panel">
       <div class="spark-head">
         <h2>Update cadence</h2>
         <p>
@@ -219,7 +278,7 @@ const monthFmt = (t: number) =>
   )}
 
   {source === 'homebrew-formula' && totalBottleIntervals > 0 && (
-    <section>
+    <section id="bottles">
       <div class="section-head">
         <h2>Bottle availability</h2>
         <p>
@@ -293,59 +352,4 @@ const monthFmt = (t: number) =>
   )}
 
   <Contributors contributors={packageContributors} sourceName={sourceName} />
-
-  <section>
-    <div class="section-head">
-      <h2>Version timeline</h2>
-      <p>
-        {totalPages > 1
-          ? `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${totalEvents.toLocaleString()} version-changing commits`
-          : `${totalEvents.toLocaleString()} version-changing commits`}
-      </p>
-    </div>
-    <div class="table-scroll">
-      <table>
-        <thead>
-          <tr>
-            <th>Version</th>
-            <th>Updated</th>
-            <th>Commit</th>
-            <th>Subject</th>
-          </tr>
-        </thead>
-        <tbody>
-          {
-            /* Row ids anchor the RSS item links (#<version>). */
-            events.map((e) => (
-              <tr id={displayVersion(e.version, e.revision)}>
-                <td>
-                  <Version version={e.version} revision={e.revision} />
-                </td>
-                <td class="date">{isoDate(e.introducedAt)}</td>
-                <td>
-                  {e.commitSha ? (
-                    <a class="commit-link" href={`https://github.com/${repo}/commit/${e.commitSha}`}>
-                      {e.commitSha.slice(0, 9)}
-                    </a>
-                  ) : (
-                    '—'
-                  )}
-                </td>
-                <td class="subject">{e.subject}</td>
-              </tr>
-            ))
-          }
-        </tbody>
-      </table>
-    </div>
-    {totalPages > 1 && (
-      <nav class="pager" aria-label="Timeline pages">
-        {page > 1 ? <a href={pageHref(page - 1)}>&larr; Newer</a> : <span aria-hidden="true" />}
-        <span class="pager-status">
-          Page {page} of {totalPages.toLocaleString()}
-        </span>
-        {page < totalPages ? <a href={pageHref(page + 1)}>Older &rarr;</a> : <span aria-hidden="true" />}
-      </nav>
-    )}
-  </section>
 </Base>

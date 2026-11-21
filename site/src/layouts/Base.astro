@@ -264,14 +264,12 @@ const ogDescription = description ?? tagline;
         color: var(--muted);
         font-size: 1rem;
       }
-      .metric-strip,
       .pkg-facts {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 0.65rem;
         margin: 0;
       }
-      .metric,
       .fact {
         min-width: 0;
         border: 1px solid var(--line);
@@ -280,7 +278,6 @@ const ogDescription = description ?? tagline;
         box-shadow: var(--shadow);
         padding: 0.75rem 0.85rem;
       }
-      .metric dt,
       .fact dt {
         margin: 0 0 0.2rem;
         color: var(--muted);
@@ -288,7 +285,6 @@ const ogDescription = description ?? tagline;
         text-transform: uppercase;
         letter-spacing: 0;
       }
-      .metric dd,
       .fact dd {
         min-width: 0;
         margin: 0;
@@ -319,7 +315,13 @@ const ogDescription = description ?? tagline;
         background: var(--surface);
         box-shadow: var(--shadow);
         padding: 0.95rem;
-        margin: 0 0 2.2rem;
+        margin: 0;
+      }
+      .package-sections {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1.1rem;
+        margin: 1rem 0;
       }
       .search-label {
         display: block;
@@ -713,10 +715,6 @@ const ogDescription = description ?? tagline;
           grid-template-columns: 1fr;
           align-items: start;
         }
-        .metric-strip,
-        .pkg-facts {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
         .spotlight-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
         }
@@ -739,10 +737,6 @@ const ogDescription = description ?? tagline;
       }
 
       @media (max-width: 520px) {
-        .metric-strip,
-        .pkg-facts {
-          grid-template-columns: 1fr;
-        }
         .spotlight-grid {
           grid-template-columns: 1fr;
         }
