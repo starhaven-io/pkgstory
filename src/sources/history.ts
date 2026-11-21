@@ -1,7 +1,7 @@
 export type HistoryParents = Readonly<Record<string, readonly [string, string]>>;
 
 // Bump whenever a history-policy change requires rebuilding persisted timelines.
-export const HISTORY_MODEL = 2;
+export const HISTORY_MODEL = 3;
 
 // These pull merges put the published upstream history in parent two. Bind both
 // parents so a replaced Git object fails closed. Evidence: docs/HISTORY.md.

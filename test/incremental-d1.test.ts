@@ -4,6 +4,7 @@ import { crawlSinceD1 } from "../src/crawl/incremental.ts";
 import { d1Apply, d1Select } from "../src/db/d1remote.ts";
 import { openDb, setCrawlState } from "../src/db/db.ts";
 import { exportSlice } from "../src/db/export.ts";
+import { HISTORY_MODEL } from "../src/sources/history.ts";
 import { cleanupFixtures, formula, T0, TapRepo } from "./helpers/tap.ts";
 
 // Real git fixture, scripted wrangler: the delta derivation runs for real, so
@@ -29,7 +30,9 @@ function scriptD1(state: D1State): void {
   d1SelectMock.mockImplementation((_mode, sql) => {
     if (sql.startsWith("UPDATE crawl_state")) return state.moved ? [] : [{ source: "x" }];
     if (sql.includes("FROM crawl_state")) {
-      return state.cursor === null ? [] : [{ mainline_sha: state.cursor, history_model: 2 }];
+      return state.cursor === null
+        ? []
+        : [{ mainline_sha: state.cursor, history_model: HISTORY_MODEL }];
     }
     if (sql.includes("FROM contributor_seeds")) return state.seeded ? [{ "1": 1 }] : [];
     if (sql.includes("FROM packages") && sql.includes("WHERE source")) return state.baselines;
@@ -103,7 +106,7 @@ describe("crawlSinceD1", () => {
     expect(d1ApplyMock).not.toHaveBeenCalled();
     const sql = d1SelectMock.mock.calls.at(-1)?.[1] ?? "";
     expect(sql).toBe(
-      `UPDATE crawl_state SET last_crawled_at = 1751000000 WHERE source = 'homebrew-formula' AND last_sha IS NULL AND history_model = 2 AND mainline_sha = '${head.sha}' RETURNING source`,
+      `UPDATE crawl_state SET last_crawled_at = 1751000000 WHERE source = 'homebrew-formula' AND last_sha IS NULL AND history_model = ${HISTORY_MODEL} AND mainline_sha = '${head.sha}' RETURNING source`,
     );
   });
 

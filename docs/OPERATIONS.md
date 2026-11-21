@@ -96,13 +96,49 @@ dispatches (the Worker logs errors meanwhile), the fallback schedule, and pushes
 Wait until no crawl run is queued or in progress, and do not run
 `crawl --d1 remote` by hand until the workflow is enabled again.
 
+Keep the previous full-crawl database and export it from the revision that wrote
+its history model with
+`node src/cli.ts export --db pkgstory-previous.db > pkgstory-previous.sql`.
+The exporter refuses a database from another model. Alternatively, record a D1 Time Travel bookmark while writers are
+stopped, before starting the import. [Cloudflare D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/)
+
+Build the replacement in a separate file. Before a reseed, run the manual tip
+comparison with both Homebrew taps cloned locally and Homebrew's cached package
+metadata for Apple Silicon on the newest macOS release. Pass the corresponding
+`packages.arm64_*.jws.json` file, for example:
+
 ```sh
-just crawl --all
+just crawl --all --db pkgstory-rebuilt.db
+node scripts/check-history-tip.ts pkgstory-rebuilt.db "$(brew --cache)/api/internal/packages.arm64_golden_gate.jws.json"
+```
+
+The script checks each Ruby source checksum at the metadata's tap revision and
+compares its parsed version and revision with Homebrew's published values. It
+also checks the stored current version and revision for packages with identical
+source at the seed's tap revision. It reports changed sources separately. Review
+historical transitions affected by a parser change against the original blobs.
+
+```sh
 gh workflow disable crawl.yml
 gh run list --workflow crawl.yml --limit 5
-just site-seed-remote
-gh workflow enable crawl.yml
+just site-seed-remote pkgstory-rebuilt.db
 ```
+
+Deploy the crawler revision matching the imported model, then run
+`gh workflow enable crawl.yml`. The seed carries a crawl timestamp for each source. If either
+timestamp is more than two hours old, `/health.json` reports 503 until a
+successful crawl advances it. Verify both source heartbeats, the refreshed KV
+catalog, and a package JSON response after the first crawl.
+
+For rollback, disable and drain crawls again. Restore the previous SQL export
+from the `site/` directory with
+`./node_modules/.bin/wrangler d1 execute pkgstory --remote --file ../pkgstory-previous.sql`,
+or restore the pre-import D1 Time Travel bookmark. Revert the crawler to the
+revision matching the restored model while writes are paused. Model 2 and model
+3 crawlers each reject the other's stored cursor. The model 3 site can serve
+model 2 data throughout recovery. Rebuild KV from the restored D1 using
+`node src/cli.ts cache --d1 remote` from the repository root, resume crawls and
+verify both source heartbeats.
 
 `crawl --all` pins one tap commit per source and rebuilds against a private copy
 of the local database. It atomically replaces the requested database only after
@@ -141,8 +177,8 @@ Caveats:
   an incremental crawl cannot rewrite their historical boundaries.
 - A `HISTORY_MODEL` bump requires a full crawl of both sources into a new
   database file, then a remote reseed; keep the previous seed for recovery.
-  Incremental crawls and export reject any other model, and older crawlers find
-  no cursor in a new seed.
+  Incremental crawls and export reject an incompatible model. Previous crawlers
+  reject the newer model or see an empty legacy cursor.
 - The `version_changes` table preserves reverts for RSS and recent updates.
   Its online migration backfills canonical introductions only; run a full crawl
   and reseed once after deploying it to recover older revert transitions.

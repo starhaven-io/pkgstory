@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { type ContributionAggregate, contributionStatements } from "../src/crawl/incremental.ts";
 import { openDb, openReadonlyDb } from "../src/db/db.ts";
 import { exportSlice } from "../src/db/export.ts";
+import { HISTORY_MODEL } from "../src/sources/history.ts";
 
 describe("exportSlice round-trip", () => {
   it("recreates the full site slice in a fresh database, seed marker last", () => {
@@ -49,7 +50,7 @@ describe("exportSlice round-trip", () => {
       INSERT INTO package_contributors (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 2, 2, 1700000000, 1700000100);
       INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
-      VALUES ('homebrew-formula', '${"b".repeat(40)}', 1700000300, 2);
+      VALUES ('homebrew-formula', '${"b".repeat(40)}', 1700000300, ${HISTORY_MODEL});
       INSERT INTO contributor_seeds (source, seeded_at_sha) VALUES ('homebrew-formula', '${"b".repeat(40)}');
     `);
 
@@ -151,7 +152,7 @@ describe("exportSlice contributors", () => {
         (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 1, 0, 1700000000, 1700000100);
       INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
-      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, 2);
+      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, ${HISTORY_MODEL});
     `);
 
     let sql = "";
@@ -185,7 +186,7 @@ describe("exportSlice contributors", () => {
         (package_id, contributor_key, touch_count, version_count, first_at, last_at)
       VALUES (1, 'github:alice', 3, 2, 1700000000, 1700000100);
       INSERT INTO crawl_state (source, mainline_sha, last_crawled_at, history_model)
-      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, 2);
+      VALUES ('homebrew-formula', '${"a".repeat(40)}', 1700000200, ${HISTORY_MODEL});
       INSERT INTO contributor_seeds (source, seeded_at_sha)
       VALUES ('homebrew-formula', '${"a".repeat(40)}');
     `);
