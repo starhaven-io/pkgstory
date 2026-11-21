@@ -25,7 +25,7 @@ export function extractVersion(
   let bottleTags: string[] = [];
 
   if (kind === "formula") {
-    const parsed = parseFormula(blob);
+    const parsed = parseFormula(blob, name);
     version = parsed.version;
     revision = parsed.revision;
     versionSrc = parsed.versionSrc;
