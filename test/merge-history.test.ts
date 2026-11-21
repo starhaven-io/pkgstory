@@ -10,6 +10,7 @@ import { d1Apply, d1Select } from "../src/db/d1remote.ts";
 import { finalizeLatest, openDb, setCrawlState } from "../src/db/db.ts";
 import { exportSlice } from "../src/db/export.ts";
 import { headSha } from "../src/git.ts";
+import { HISTORY_MODEL } from "../src/sources/history.ts";
 import { cleanupFixtures, T0, TapRepo } from "./helpers/tap.ts";
 
 vi.mock("../src/db/d1remote.ts", async (importOriginal) => {
@@ -333,7 +334,7 @@ describe("integrated package history", () => {
     for (const db of [local, d1]) {
       expect(
         db.prepare("SELECT last_sha, mainline_sha, history_model FROM crawl_state").get(),
-      ).toEqual({ last_sha: null, mainline_sha: root.sha, history_model: 2 });
+      ).toEqual({ last_sha: null, mainline_sha: root.sha, history_model: HISTORY_MODEL });
       db.prepare("UPDATE crawl_state SET last_sha = ?").run(root.sha);
     }
     expect(() => crawlSince(local, tap.source, T0 + 10000)).toThrow(/rebuild and reseed/);
@@ -578,26 +579,29 @@ describe("integrated package history", () => {
     expect(() => computeDelta(tap.source, cursor.sha)).toThrow(/selected mainline history/);
   });
 
-  it.each([0, 1])("refuses history model %s before incremental writes or export", async (model) => {
-    const tap = new TapRepo();
-    tap.write("Formula/f/foo.rb", formula("1.0"));
-    tap.commit("foo 1.0");
-    const local = await full(tap);
-    const d1 = remote(local);
-    local.prepare("UPDATE crawl_state SET history_model = ?").run(model);
-    d1.prepare("UPDATE crawl_state SET history_model = ?").run(model);
-    expect(() => crawlSince(local, tap.source, T0 + 10000)).toThrow(/rebuild and reseed/);
-    expect(() => crawlSinceD1(tap.source, "local", T0 + 10000)).toThrow(/rebuild and reseed/);
-    d1.exec("ALTER TABLE crawl_state DROP COLUMN history_model");
-    expect(() => crawlSinceD1(tap.source, "local", T0 + 10000)).toThrow(/rebuild and reseed/);
-    const write = vi.fn();
-    expect(() => exportSlice(local, write)).toThrow(/crawl --all/);
-    expect(write).not.toHaveBeenCalled();
-    for (const db of [local, d1])
-      expect(db.prepare("SELECT last_crawled_at FROM crawl_state").get()).toEqual({
-        last_crawled_at: T0,
-      });
-    local.close();
-    d1.close();
-  });
+  it.each([0, 1, 2])(
+    "refuses history model %s before incremental writes or export",
+    async (model) => {
+      const tap = new TapRepo();
+      tap.write("Formula/f/foo.rb", formula("1.0"));
+      tap.commit("foo 1.0");
+      const local = await full(tap);
+      const d1 = remote(local);
+      local.prepare("UPDATE crawl_state SET history_model = ?").run(model);
+      d1.prepare("UPDATE crawl_state SET history_model = ?").run(model);
+      expect(() => crawlSince(local, tap.source, T0 + 10000)).toThrow(/rebuild and reseed/);
+      expect(() => crawlSinceD1(tap.source, "local", T0 + 10000)).toThrow(/rebuild and reseed/);
+      d1.exec("ALTER TABLE crawl_state DROP COLUMN history_model");
+      expect(() => crawlSinceD1(tap.source, "local", T0 + 10000)).toThrow(/rebuild and reseed/);
+      const write = vi.fn();
+      expect(() => exportSlice(local, write)).toThrow(/crawl --all/);
+      expect(write).not.toHaveBeenCalled();
+      for (const db of [local, d1])
+        expect(db.prepare("SELECT last_crawled_at FROM crawl_state").get()).toEqual({
+          last_crawled_at: T0,
+        });
+      local.close();
+      d1.close();
+    },
+  );
 });
