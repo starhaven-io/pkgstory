@@ -30,45 +30,33 @@ Astro.response.headers.set('cache-control', 'public, max-age=300, s-maxage=600')
         Search package histories
       </h2>
       <p class="scope">
-        Tracking <b>Homebrew</b> formulae and casks across version changes, lifecycle states, removals, migrations, and
-        renames.
+        Browse the version history of{' '}
+        <b>
+          {formulae.toLocaleString()} Homebrew {formulae === 1 ? 'formula' : 'formulae'}
+        </b>{' '}
+        and{' '}
+        <b>
+          {casks.toLocaleString()} {casks === 1 ? 'cask' : 'casks'}
+        </b>
+        , including renamed and removed packages.
       </p>
     </div>
-    <dl class="metric-strip">
-      <div class="metric">
-        <dt>Total</dt>
-        <dd>{total.toLocaleString()}</dd>
-      </div>
-      <div class="metric">
-        <dt>Formulae</dt>
-        <dd>{formulae.toLocaleString()}</dd>
-      </div>
-      <div class="metric">
-        <dt>Casks</dt>
-        <dd>{casks.toLocaleString()}</dd>
-      </div>
-      <div class="metric">
-        <dt>Shown</dt>
-        <dd>{recent.length.toLocaleString()} latest</dd>
-      </div>
-    </dl>
+    <section class="search-panel" aria-labelledby="search-title">
+      <label id="search-title" class="search-label" for="q">
+        Search packages
+      </label>
+      <input
+        id="q"
+        class="search"
+        type="search"
+        placeholder={`Search ${total.toLocaleString()} packages …`}
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+      />
+    </section>
   </section>
-
-  <section class="search-panel" aria-labelledby="search-title">
-    <label id="search-title" class="search-label" for="q">
-      Search packages
-    </label>
-    <input
-      id="q"
-      class="search"
-      type="search"
-      placeholder={`Search ${total.toLocaleString()} packages …`}
-      autocomplete="off"
-      autocapitalize="off"
-      spellcheck="false"
-    />
-    <div id="results" class="results" aria-live="polite" hidden></div>
-  </section>
+  <div id="results" class="results" aria-live="polite" hidden></div>
 
   {spotlight.length > 0 && (
     <section class="spotlight" aria-labelledby="spotlight-title">
