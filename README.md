@@ -58,6 +58,12 @@ three-layer index, drawn so the expensive extraction happens exactly once:
   dedicated email fields are hashed, and email-shaped display names are redacted
   before export.
 
+For formulae, a literal `version` takes precedence. The crawler otherwise applies
+Homebrew's ordered version detection to the Git tag or, when no tag is declared,
+the source URL. For example, Swift's `6.2.4-RELEASE` archive yields `6.2.4`,
+while a source archive named `foo-1.2.3-rc1.tar.gz` yields `1.2.3-rc1`.
+The commit subject supplies a fallback when the formula provides no version.
+
 A `git ls-tree` pass over the crawl's pinned Git revision reconciles which packages
 still exist in the tap. For absent packages, pkgstory consults that revision's tap-root
 `formula_renames.json`/`cask_renames.json` and `tap_migrations.json` files before

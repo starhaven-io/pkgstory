@@ -6,6 +6,100 @@ import { parseLifecycle } from "../src/parse/lifecycle.ts";
 import { versionFromSubject } from "../src/parse/subject.ts";
 
 describe("parseFormula", () => {
+  it("reads the named package in a formula file that also declares a helper formula", () => {
+    const helper = `class GitFlowCompletion < Formula
+  url 'https://github.com/bobthecow/git-flow-completion/archive/0.4.2.2.tar.gz'
+end`;
+    const formula = `class GitFlow < Formula
+  url 'https://github.com/nvie/gitflow.git', :tag => '0.4.1'
+end`;
+    for (const src of [
+      [helper, formula],
+      [formula, helper],
+    ]) {
+      expect(extractVersion("formula", "git-flow", "", src.join("\n")).version).toBe("0.4.1");
+    }
+  });
+
+  it("retains historical URL and metadata selection when the package has no stable tag", () => {
+    const src = `class BuildHelper < Formula
+  url "https://example.org/helper-1.5.tar.gz"
+  revision 2
+  bottle do
+    sha256 "abc" => :arm64_sonoma
+  end
+end
+class Package < Formula
+  url "https://example.org/package-3.0.tar.gz"
+  head "https://example.org/development.git", tag: "unrelated-9.0"
+end`;
+    expect(parseFormula(src, "package")).toEqual({
+      version: "1.5",
+      revision: 2,
+      versionSrc: "url",
+      bottled: true,
+      bottleTags: ["arm64_sonoma"],
+    });
+  });
+
+  it.each(['tag: "stable-2.2.1"', ':tag => "stable-2.2.1"', ":tag=>'stable-2.2.1'"])(
+    "reads Linkerd's version from the Git option %s",
+    (tag) => {
+      const src = `class Linkerd < Formula
+  url "https://github.com/linkerd/linkerd2.git",
+      ${tag},
+      :revision => "5e47cb150a33150e5aeddc6672d8a64701a970de"
+end`;
+      expect(parseFormula(src)).toMatchObject({ version: "2.2.1", versionSrc: "url" });
+    },
+  );
+  it.each([
+    ["make", 'url "https://ftpmirror.gnu.org/make/make-4.4.1.tar.lz"', "4.4.1"],
+    [
+      "action-validator",
+      'url "https://static.crates.io/crates/action-validator/action-validator-0.9.0.crate"',
+      "0.9.0",
+    ],
+    ["antlr", 'url "https://www.antlr.org/download/antlr-4.13.2-complete.jar"', "4.13.2"],
+    [
+      "linkerd",
+      'url "https://github.com/linkerd/linkerd2.git",\n      tag: "version-2.20"',
+      "2.20",
+    ],
+    ["bun", 'url "https://github.com/oven-sh/bun.git", tag: "bun-v1.4.4"', "1.4.4"],
+    ["autossh", 'url "https://www.harding.motd.ca/autossh/autossh-1.4g.tgz"', "1.4g"],
+    ["quickjs", 'url "https://bellard.org/quickjs/quickjs-2026-06-04.tar.xz"', "2026-06-04"],
+    [
+      "boost",
+      'url "https://github.com/boostorg/boost/releases/download/boost-1.92.0/boost-1.92.0-b2-nodocs.tar.xz"',
+      "1.92.0",
+    ],
+    [
+      "openjdk",
+      'url "https://github.com/openjdk/jdk27u/archive/refs/tags/jdk-27.0.1.0.3-ga.tar.gz"',
+      "27.0.1.0.3",
+    ],
+    [
+      "kafka",
+      'url "https://www.apache.org/dyn/closer.lua?path=kafka/4.4.0/kafka_2.13-4.4.0.tgz"',
+      "4.4.0",
+    ],
+    ["pypy", 'url "https://downloads.python.org/pypy/pypy2.7-v8.0.1-src.tar.gz"', "8.0.1"],
+    ["wolfssl", 'url "https://github.com/wolfSSL/wolfssl.git", tag: "v5.9.4-stable"', "5.9.4"],
+    ["jenkins", 'url "https://get.jenkins.io/war/2.590/jenkins.war"', "2.590"],
+    ["nauty", 'url "https://pallini.di.uniroma1.it/nauty2_9_3.tar.gz"', "2.9.3"],
+    ["apparix", 'url "https://micans.org/apparix/src/apparix-11-062.tar.gz"', "11-062"],
+    ["lft", 'url "https://pwhois.org/dl/index.who?file=lft-4.03.tar.gz"', "4.03"],
+    ["tzdb", 'url "https://data.iana.org/time-zones/releases/tzdb-2026f.tar.lz"', "2026f"],
+    [
+      "basis_universal",
+      'url "https://github.com/BinomialLLC/basis_universal/archive/refs/tags/v2_50.tar.gz"',
+      "2.50",
+    ],
+  ])("agrees with the Homebrew stable version of %s", (_name, stanza, expected) => {
+    expect(parseFormula(`class Package < Formula\n  ${stanza}\nend`).version).toBe(expected);
+  });
+
   it("prefers an explicit version stanza and reads revision", () => {
     const src = `class Foo < Formula
   url "https://example.com/foo.tar.gz"
@@ -91,6 +185,18 @@ end`;
       revision: "deadbeef"
 end`;
     expect(parseFormula(src).version).toBe("3.1.4");
+  });
+
+  it("honors a literal version even when Homebrew strips its qualifier during tag detection", () => {
+    const stanza = '  url "https://example.org/tool-9.0.tar.gz", tag: "tool-1.2.3-RELEASE"';
+    expect(parseFormula(stanza)).toMatchObject({ version: "1.2.3", versionSrc: "url" });
+    expect(parseFormula([stanza, '  version "1.2.3-RELEASE"'].join("\n"))).toMatchObject({
+      version: "1.2.3-RELEASE",
+      versionSrc: "version-stanza",
+    });
+    expect(
+      parseFormula('  url "https://example.org/tool-9.0.tar.gz", tag: "stable"').version,
+    ).toBeNull();
   });
 
   it("reads version metadata from a historical stable block", () => {
@@ -276,7 +382,6 @@ describe("versionFromUrl", () => {
     expect(versionFromUrl("https://x/activemq/6.2.6/apache-activemq-6.2.6-bin.tar.gz")).toBe(
       "6.2.6",
     );
-    // -src sits mid-stem (before -builtpkgs), so a $-anchored stem strip would miss it.
     expect(versionFromUrl("https://x/installers/8.0/racket-minimal-8.0-src-builtpkgs.tgz")).toBe(
       "8.0",
     );
@@ -287,16 +392,37 @@ describe("versionFromUrl", () => {
       versionFromUrl("https://downloads.sourceforge.net/project/x/v1.9.2/ispc-v1.9.2-osx.tar.gz"),
     ).toBe("1.9.2");
   });
-  it("keeps upstream release-stage qualifiers, not just packaging labels", () => {
+  it("follows Homebrew's numeric version detection for Swift release tags and artifact names", () => {
     expect(
       versionFromUrl(
         "https://github.com/swiftlang/swift/archive/refs/tags/swift-6.2.4-RELEASE.tar.gz",
       ),
-    ).toBe("6.2.4-RELEASE");
-    expect(versionFromUrl("https://x/foo-1.2.3-beta.tar.gz")).toBe("1.2.3-beta");
+    ).toBe("6.2.4");
+    expect(versionFromUrl("https://x/foo-1.2.3-binutils.tar.gz")).toBe("1.2.3");
   });
-  it("only strips a label as a whole trailing word", () => {
-    expect(versionFromUrl("https://x/foo-1.2.3-binutils.tar.gz")).toBe("1.2.3-binutils");
+  it.each([
+    "1.2.3-beta",
+    "1.2.3-beta.1",
+    "1.2.3rc4",
+    "1.2.3-p34",
+    "1.2.3.post2",
+    "1.2.3-post2",
+    "1.2.3_post2",
+  ])("keeps the release qualifier in %s", (version) => {
+    expect(versionFromUrl(`https://x/foo-${version}.tar.gz`)).toBe(version);
+  });
+  it("reads SourceForge download redirects and URI-encoded release paths", () => {
+    expect(versionFromUrl("https://sourceforge.net/project/foo/tool-1.9.tar.gz/download")).toBe(
+      "1.9",
+    );
+    expect(versionFromUrl("https://sourceforge.net/pkg.1/download")).toBeNull();
+    expect(versionFromUrl("https://example.org/releases/v%31%2e%39/tool.jar")).toBe("1.9");
+    expect(versionFromUrl("https://example.org/broken%/tool-1.9.tar.gz")).toBe("1.9");
+  });
+  it("gives a numeric GitHub release directory precedence over an asset's version", () => {
+    expect(
+      versionFromUrl("https://github.com/example/tool/releases/download/v3.2/tool-3.2.0-src.tgz"),
+    ).toBe("3.2");
   });
   it("finds the tarball inside a closer.lua mirror query", () => {
     expect(

@@ -1,4 +1,7 @@
+import { versionFromUrl } from "./homebrew-version.ts";
 import { continuedStatement } from "./ruby.ts";
+
+export { versionFromUrl };
 
 export type VersionSource = "version-stanza" | "url" | "subject" | "none";
 
@@ -30,20 +33,14 @@ const LEGACY_BOTTLE = /^ {2}bottle\s+["']/m;
 const URL_LINE = /^ {2}url\s+(["'])(.*?)\1/m;
 const STABLE_URL_LINE = /^ {4}url\s+(["'])(.*?)\1/m;
 const OLD_URL_LINE = /^[^\S\r\n\u2028\u2029]*@url\s*=\s*(["'])(.*?)\1/m;
-const TAG_OPT = /\btag:\s*(["'])([^"']+)\1/;
-const SEMVERISH = /(\d+(?:\.\d+)+(?:[._-][0-9A-Za-z.]+)?)/;
-// Build/artifact/platform labels that ride along in a download filename
-// (apache-activemq-6.2.6-bin, ack-2.24-single-file, racket-8.0-src, ispc-1.9.2-osx)
-// but aren't the version. Upstream release-stage qualifiers (-stable, -rc, -beta,
-// -RELEASE) are deliberately absent — those distinguish real versions.
-const PACKAGING_LABEL = /[-_.](?:src|source|bin|single|osx|macos|darwin|linux)$/i;
+const TAG_OPT = /(?:\btag:|:tag\s*=>)\s*(["'])([^"']+)\1/;
 
 /**
  * Lean extraction: explicit `version` stanza → git `tag:` → version mined from the
  * `url`. Ground-truth dependency/bottle diffing is the rich phase (operates on the
  * same blobs this reads, so it needs no re-crawl).
  */
-export function parseFormula(src: string): ParsedFormula {
+export function parseFormula(src: string, name?: string): ParsedFormula {
   const body = beforeDataSection(src);
   const stable = stableBody(body);
   const revMatch = body.match(REVISION) ?? stable?.match(STABLE_REVISION);
@@ -59,21 +56,13 @@ export function parseFormula(src: string): ParsedFormula {
   if (oldStanza?.[2])
     return { version: oldStanza[2], revision, versionSrc: "version-stanza", bottled, bottleTags };
 
-  const modernUrls: Array<{ source: string; match: RegExpMatchArray | null }> = [
-    { source: body, match: body.match(URL_LINE) },
-  ];
-  if (stable) modernUrls.push({ source: stable, match: stable.match(STABLE_URL_LINE) });
-  for (const candidate of modernUrls) {
-    const url = candidate.match;
-    if (!url?.[2]) continue;
-    const tag = continuedStatement(candidate.source, url.index ?? 0).match(TAG_OPT);
-    if (tag?.[2]) {
-      const v = cleanVersion(tag[2]);
-      if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
-    }
-    const v = versionFromUrl(url[2]);
-    if (v) return { version: v, revision, versionSrc: "url", bottled, bottleTags };
-  }
+  // Some old files declare an untagged helper formula ahead of the package's
+  // tagged stable source. Retain the usual URL order when no package tag exists.
+  const named = name && TAG_OPT.test(body) ? namedFormulaBody(body, name) : null;
+  const own = named ? versionFromFormulaUrl(named, stableBody(named)) : null;
+  const inferred = own?.tagged ? own : versionFromFormulaUrl(body, stable);
+  if (inferred)
+    return { version: inferred.version, revision, versionSrc: "url", bottled, bottleTags };
 
   const oldUrl = body.match(OLD_URL_LINE);
   if (oldUrl?.[2]) {
@@ -84,9 +73,42 @@ export function parseFormula(src: string): ParsedFormula {
   return { version: null, revision, versionSrc: "none", bottled, bottleTags };
 }
 
+function versionFromFormulaUrl(body: string, stable: string | null) {
+  const modernUrls: Array<{ source: string; match: RegExpMatchArray | null }> = [
+    { source: body, match: body.match(URL_LINE) },
+  ];
+  if (stable) modernUrls.push({ source: stable, match: stable.match(STABLE_URL_LINE) });
+  for (const candidate of modernUrls) {
+    const url = candidate.match;
+    if (!url?.[2]) continue;
+    const tag = continuedStatement(candidate.source, url.index ?? 0).match(TAG_OPT);
+    const version = versionFromUrl(url[2], tag?.[2]);
+    if (version) return { version, tagged: !!tag };
+  }
+  return null;
+}
+
 function beforeDataSection(src: string): string {
   const marker = src.search(/^__END__\s*$/m);
   return marker === -1 ? src : src.slice(0, marker);
+}
+
+function namedFormulaBody(src: string, name: string): string | null {
+  const classes = [...src.matchAll(/^class[ \t]+([A-Z]\w*)\b/gm)];
+  if (classes.length < 2) return null;
+  // Formulary.class_s derives the package class from its filename. Older files
+  // sometimes define a helper formula with its own URL before the package.
+  const expected = name
+    .toLowerCase()
+    .replace(/^[a-z]/, (letter) => letter.toUpperCase())
+    .replace(/[-_.\s]([a-z0-9])/gi, (_, letter: string) => letter.toUpperCase())
+    .replaceAll("+", "x")
+    .replace(/(.)@(\d)/, "$1AT$2");
+  const target = classes.find((match) => match[1] === expected);
+  if (!target) return null;
+  const body = src.slice(target.index);
+  const end = body.search(/^end\b/m);
+  return end === -1 ? body : body.slice(0, end);
 }
 
 // `stable do` is a package metadata region, unlike resource/livecheck/on_* blocks.
@@ -141,46 +163,4 @@ export function parseBottleTags(src: string): string[] {
     if (legacy) tags.add(legacy.toLowerCase());
   }
   return tags.size ? [...tags].sort() : hasChecksum ? ["legacy"] : [];
-}
-
-export function versionFromUrl(url: string): string | null {
-  // GitHub-style tag directories give the cleanest signal.
-  for (const re of [
-    /\/archive\/refs\/tags\/v?([0-9][^/"]*?)(?:\.tar\.(?:gz|xz|bz2)|\.tgz|\.zip)?$/,
-    /\/releases\/download\/v?([0-9][^/]+?)\//,
-  ]) {
-    const m = url.match(re);
-    if (m?.[1]) {
-      const v = cleanVersion(m[1]);
-      if (v) return v;
-    }
-  }
-
-  // Otherwise mine the filename — the last path segment (which also captures the
-  // tarball inside mirror queries like closer.lua?path=…/foo-23.tar.gz), minus any
-  // query/fragment and archive/packaging suffixes.
-  const file = (url.split("/").pop() ?? "").split(/[?#]/)[0] ?? "";
-  const stem = file
-    .replace(/\.(?:tar\.(?:gz|xz|bz2|zst)|tgz|tbz2?|txz|tar|zip|gz|xz|bz2)$/i, "")
-    .replace(/\.orig$/i, "");
-
-  // A dotted version anywhere wins (git-2.54.0, jq-1.7.1), minus any trailing
-  // build/artifact label SEMVERISH swept in (6.2.6-bin, 8.0-src, 2.24-single).
-  const dotted = stem.match(SEMVERISH);
-  if (dotted?.[1]) return cleanVersion(dotted[1].replace(PACKAGING_LABEL, ""));
-
-  // Else a trailing numeric token: bare integer (bsdmake-24, crm114_20100106) or
-  // underscore-encoded (CLENS_0_7_0 → 0.7.0).
-  const tail = stem.match(/[-_]v?((?:\d+_)*\d+)$/);
-  if (tail?.[1]) return tail[1].replace(/_/g, ".");
-
-  return null;
-}
-
-function cleanVersion(raw: string): string | null {
-  const v = raw
-    .replace(/^v/, "")
-    .replace(/\.(?:tar\.gz|tar\.xz|tar\.bz2|tgz|tar|zip)$/, "")
-    .trim();
-  return v.length ? v : null;
 }
